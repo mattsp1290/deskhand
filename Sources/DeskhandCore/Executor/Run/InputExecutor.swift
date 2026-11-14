@@ -20,8 +20,8 @@ public actor InputExecutor {
         /// How long the executor waits for an append to the action log, the frame check of step 9
         /// and the patch recapture of step 13 (contract 9.5, 12.3). An intent the writer has not
         /// acknowledged by then is `log_unavailable`, a recapture that has not answered is
-        /// `stale_frame` `pixels_changed`, and an outcome or refusal entry is given up as not
-        /// written (contract 11.3).
+        /// `stale_frame` `pixels_changed`, and an outcome or refusal entry counts as not written
+        /// until the writer answers (contract 11.3).
         public var waitLimit: Duration
 
         public init(
