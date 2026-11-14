@@ -9,7 +9,8 @@ public enum ScreenshotEncoder {
     /// JPEG tries quality 85, 75, 65 and 60 and returns the first that is at most `maxImageBytes`;
     /// PNG is encoded once. Neither switches format. `maxImageBytes` is measured before base64.
     public static func encode(
-        _ image: CGImage, format: ImageFormat, maxLongEdge: Int, maxImageBytes: Int
+        _ image: CGImage, format: ImageFormat, maxLongEdge: Int,
+        maxImageBytes: Int = ContractConstants.maxImageBytes
     ) throws(ScreenshotEncodingError) -> EncodedScreenshot {
         let size: ScreenshotSize
         do {

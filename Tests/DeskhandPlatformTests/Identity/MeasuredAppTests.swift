@@ -3,6 +3,7 @@ import DeskhandPlatform
 import Testing
 
 private let team = IdentityFixtures.team
+private let deskhandID = BundleID("com.example.deskhand.test")!
 
 struct SignatureCase: Sendable, CustomTestStringConvertible {
     let lookup: CodeSignatureLookup
@@ -92,7 +93,7 @@ private let signatureCases: [SignatureCase] = [
             bundleIDs.flatMap { id in
                 [AllowedApp(bundleID: id, signer: .apple), AllowedApp(bundleID: id, signer: .team(team))]
             })
-        let policy = AppPolicy(allowed: allowed, denied: [])
+        let policy = AppPolicy(deskhandBundleID: deskhandID, allowed: allowed, denied: [])
         #expect((policy.refusal(of: app.identity) == nil) == app.isCertain)
     }
 
@@ -105,7 +106,7 @@ private let signatureCases: [SignatureCase] = [
         #expect(app.identity == .unknown)
         #expect(app.uncertainty == reason)
         #expect(!app.isCertain)
-        #expect(AppPolicy().refusal(of: app.identity) == .unidentified)
+        #expect(AppPolicy(deskhandBundleID: deskhandID).refusal(of: app.identity) == .unidentified)
         #expect(app.appRef == AppRef(bundleID: nil, teamID: nil, name: ""))
     }
 
