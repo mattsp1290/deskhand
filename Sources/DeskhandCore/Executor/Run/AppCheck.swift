@@ -92,8 +92,11 @@ struct AppCheck: Sendable {
     ) -> AppCheck {
         let now = snapshot.reading.wall
         let policy = snapshot.policy
+        // A window of an app the policy refuses has no title in `measured`, also when the check
+        // ends for a cause that outranks `denied_app` (contract 6.7 nulls it on `denied_app`).
         func title(of window: ObservedWindow) -> WindowTitle? {
-            policy.windowTitle(window.title, of: window.owner.appRef)
+            guard policy.refusal(of: window.owner.policyIdentity) == nil else { return nil }
+            return policy.windowTitle(window.title, of: window.owner.appRef)
         }
         let frontmost = identity.frontmostApp()
         var subjects = [Subject(app: frontmost, point: nil)]

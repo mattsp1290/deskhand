@@ -73,7 +73,15 @@ struct AdmissionOrderTests {
                 #expect(mac.posted.count == postedBefore, "step \(fault.step) posted input")
                 if operation != "op-1" { #expect(try await harness.status(operation) == .notFound) }
                 expected.append(fault.code)
-                if fault.counts { clearCeiling() }
+                // The ceiling holds one call a minute and is empty from step 7 on, so a refusal
+                // that counts makes the next call rate_limited, and one that wrongly counts makes
+                // the next step's code rate_limited.
+                if fault.counts {
+                    let limited = await harness.executor.perform(try call())
+                    #expect(limited.code == .rateLimited, "step \(fault.step) did not count toward the ceiling")
+                    expected.append(.rateLimited)
+                    clearCeiling()
+                }
                 try await fault.fix(self)
             }
             let answer = await harness.executor.perform(try call())

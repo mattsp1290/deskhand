@@ -108,22 +108,24 @@ public enum EffectAnswer: Sendable {
 }
 
 /// Why the watchdog stops the executing effect (contract 10.3, 12.4, 13).
+///
+/// A closed connection is not one of them: the executor reads the call's own
+/// ``EffectCall/connection`` before every event and at every poll, so a close stops only the call
+/// that connection carried, never another call that holds the section by then.
 public enum Interruption: Hashable, Sendable {
     /// The state left `ok`; also a deadline of the allowance or of arming that passed.
     case state(BlockingState)
     /// The person at the Mac used the keyboard or pointer, or deskhand can no longer tell.
     case userActive(idleMs: Int)
-    /// A lease ended. It stops the effect only if that effect runs under this lease.
+    /// A lease ended. It stops the effect only if that effect runs under this lease, so the
+    /// watchdog may forward every lease end.
     case leaseEnded(LeaseEnd)
-    /// The caller closed the connection.
-    case cancelled
 
     var reason: ToolErrorReason {
         switch self {
         case .state(let state): .blocked(state)
         case .userActive(let idleMs): .userActive(idleMs: idleMs)
         case .leaseEnded(let end): end.cause.abortReason
-        case .cancelled: .cancelled
         }
     }
 }
