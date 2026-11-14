@@ -3,8 +3,13 @@
 # Mac-session gate without the other. The `.requiresMacSession` tag alone skips
 # nothing (Tests/DeskhandTestSupport/Tags.swift), so a test with the tag but
 # without `.macSessionTestsEnabled` would run in CI and on any plain
-# `swift test`. The tag is also refused outside an attribute, so it cannot be
-# smuggled in through a variable. Comments (`//` to end of line) are ignored.
+# `swift test`, and the trait without the tag is unreachable by tag filters.
+#
+# Deliberately no comment handling: comments are not stripped, so text inside
+# an attribute (even a string such as "see https://x") can never hide the tag.
+# An attribute is everything from `@Test(` / `@Suite(` to its matching `)`,
+# possibly across lines; parens inside string literals are skipped. A commented
+# out `// @Test(...)` is therefore linted like live code (conservative).
 #
 # Usage: scripts/check-mac-session-gate.sh [dir ...]   (default: Tests Sources)
 set -eu
@@ -22,12 +27,6 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
     fi
     # shellcheck disable=SC2086 # file names in this repo have no spaces
     awk '
-    function stray(text) {
-        if (text ~ /requiresMacSession/) {
-            printf "%s:%d: .requiresMacSession outside a @Test or @Suite attribute\n", FILENAME, FNR
-            bad = 1
-        }
-    }
     function check() {
         tag = (buf ~ /requiresMacSession/)
         trait = (buf ~ /macSessionTestsEnabled/)
@@ -42,21 +41,15 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
         if (tag && trait) gated++
         attrs++
     }
-    FNR == 1 { inattr = 0; instr = 0 }
+    FNR == 1 { inattr = 0 }
     {
         rest = $0
-        cut = index(rest, "//")
-        if (cut > 0) rest = substr(rest, 1, cut - 1)
         while (length(rest) > 0) {
             if (!inattr) {
-                a = index(rest, "@Test(")
-                b = index(rest, "@Suite(")
-                s = a
-                if (s == 0 || (b > 0 && b < s)) s = b
-                if (s == 0) { stray(rest); break }
-                stray(substr(rest, 1, s - 1))
-                rest = substr(rest, s)
-                inattr = 1; depth = 0; instr = 0; buf = ""; start = FNR
+                if (!match(rest, /@(Test|Suite)[ \t]*\(/)) break
+                buf = substr(rest, RSTART, RLENGTH)
+                rest = substr(rest, RSTART + RLENGTH)
+                inattr = 1; depth = 1; instr = 0; start = FNR
             }
             n = length(rest)
             closed = 0
