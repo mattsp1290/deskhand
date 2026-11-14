@@ -45,7 +45,7 @@ extension InputExecutor {
         let state = seams.state
         let snapshot = state.snapshot()
         _ = pendingCleanup.releaseOperation(
-            pressed, from: &ledger, through: seams.releases, poster: seams.poster,
+            pressed, from: &ledger, through: seams.releases, poster: releasePoster(),
             authorization: { state.snapshot().cleanupAuthorization }, context: CleanupContext(snapshot),
             at: snapshot.reading.monotonic)
     }
@@ -53,9 +53,16 @@ extension InputExecutor {
     private func releaseOwed(context: CleanupContext, at instant: ContinuousClock.Instant) -> CleanupOutcome {
         let state = seams.state
         let outcome = pendingCleanup.releaseOwed(
-            from: &ledger, through: seams.releases, poster: seams.poster,
+            from: &ledger, through: seams.releases, poster: releasePoster(),
             authorization: { state.snapshot().cleanupAuthorization }, context: context, at: instant)
         seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
         return outcome
+    }
+
+    /// The poster a release handler gets, which tells the observer of every release it posts, at
+    /// the time it went out.
+    private func releasePoster() -> ReleaseOnlyPoster {
+        let (state, observer) = (seams.state, seams.observer)
+        return ReleaseOnlyPoster(seams.poster) { observer.didPostEvent(at: state.snapshot().reading.monotonic) }
     }
 }

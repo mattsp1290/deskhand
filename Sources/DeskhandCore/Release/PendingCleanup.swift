@@ -16,7 +16,7 @@ struct PendingCleanup {
     /// remembered from before it still applies.
     mutating func releaseOperation(
         _ pressed: [HeldInput], from ledger: inout HeldInputLedger, through handler: any ReleaseHandler,
-        poster: any EventPoster, authorization: () -> CleanupAuthorization, context: CleanupContext,
+        poster: ReleaseOnlyPoster, authorization: () -> CleanupAuthorization, context: CleanupContext,
         at instant: ContinuousClock.Instant
     ) -> CleanupOutcome? {
         reset()
@@ -30,7 +30,7 @@ struct PendingCleanup {
     /// cleanup (contract 12.7 item 5, 12.9 step 5). A ledger that a failed write left unavailable is
     /// read again first. An entry whose release already went out is only cleared.
     mutating func releaseOwed(
-        from ledger: inout HeldInputLedger, through handler: any ReleaseHandler, poster: any EventPoster,
+        from ledger: inout HeldInputLedger, through handler: any ReleaseHandler, poster: ReleaseOnlyPoster,
         authorization: () -> CleanupAuthorization, context: CleanupContext, at instant: ContinuousClock.Instant
     ) -> CleanupOutcome {
         if !ledger.isAvailable { try? ledger.reload() }
@@ -64,12 +64,12 @@ struct PendingCleanup {
 
     private mutating func post(
         _ inputs: [HeldInput], from ledger: inout HeldInputLedger, through handler: any ReleaseHandler,
-        poster: any EventPoster, authorization: () -> CleanupAuthorization
+        poster: ReleaseOnlyPoster, authorization: () -> CleanupAuthorization
     ) -> CleanupOutcome {
-        let tally = ReleaseOnlyPoster(poster)
-        let outcome = handler.release(inputs, from: &ledger, poster: tally, authorization: authorization)
+        let before = poster.released.count
+        let outcome = handler.release(inputs, from: &ledger, poster: poster, authorization: authorization)
         let pending = ledger.pending()
-        postedUncleared.formUnion(tally.released.filter(pending.contains))
+        postedUncleared.formUnion(poster.released.dropFirst(before).filter(pending.contains))
         return outcome
     }
 
@@ -84,7 +84,8 @@ struct PendingCleanup {
 
 /// The poster as a release handler gets it: releases pass through and are counted, and anything
 /// else is refused, because cleanup posts a key-up or a button-up and nothing else, and never moves
-/// the pointer (contract 12.4, 12.8).
+/// the pointer (contract 12.4, 12.8). ``didRelease`` runs after each release that went out: a
+/// release is an event deskhand posted, which the arming lookback counts from (contract 10.4).
 final class ReleaseOnlyPoster: EventPoster {
     struct NotARelease: Error, CustomStringConvertible {
         let event: InputEvent
@@ -93,9 +94,13 @@ final class ReleaseOnlyPoster: EventPoster {
     }
 
     private let poster: any EventPoster
+    private let didRelease: @Sendable () -> Void
     private let posted = Mutex<[HeldInput]>([])
 
-    init(_ poster: any EventPoster) { self.poster = poster }
+    init(_ poster: any EventPoster, didRelease: @escaping @Sendable () -> Void) {
+        self.poster = poster
+        self.didRelease = didRelease
+    }
 
     /// The releases that went out, in order.
     var released: [HeldInput] { posted.withLock { $0 } }
@@ -105,5 +110,6 @@ final class ReleaseOnlyPoster: EventPoster {
     func postRelease(_ input: HeldInput) throws {
         try poster.postRelease(input)
         posted.withLock { $0.append(input) }
+        didRelease()
     }
 }
