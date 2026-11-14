@@ -71,7 +71,8 @@ public struct LeaseManager: Hashable, Sendable {
     }
 
     /// The lease check of an effect call (contract 9.5 step 6). Returns the live lease the holder
-    /// holds; the executor keeps it and runs ``endCause(of:now:)`` before every event.
+    /// holds; the executor keeps it and runs ``endCause(of:now:)`` at the last look and before every
+    /// later event.
     public func check(principal: Principal, holderID: HolderID, now: ClockReading) throws(LeaseDenial) -> Lease {
         let caller = LeaseHolder(principal: principal, holderID: holderID)
         switch state(at: now) {
@@ -82,9 +83,12 @@ public struct LeaseManager: Hashable, Sendable {
         }
     }
 
-    /// The per-event check of an admitted effect (contract 13.1): `nil` while `admitted` is still the
-    /// live lease, otherwise why it ended, which is the code the effect is aborted with. A lease that
-    /// ended before ``lastEnd`` no longer holds either way and counts as released (`lease_not_held`).
+    /// The lease check of an admitted effect: one of the checks of the last look, immediately
+    /// before the first event, and of every later event (contract 12.3 steps 5 and 6, 12.4, 13.1).
+    /// `nil` while `admitted` is still the live lease, otherwise why it ended, which is the code the
+    /// effect is aborted with (``LeaseEndCause/abortReason``); at the last look that abort has 0
+    /// events. A lease that ended before ``lastEnd`` no longer holds either way and counts as
+    /// released (`lease_not_held`).
     public func endCause(of admitted: Lease, now: ClockReading) -> LeaseEndCause? {
         if case .held(let held) = lease, held.serial == admitted.serial {
             return held.isLive(at: now) ? nil : .expired
