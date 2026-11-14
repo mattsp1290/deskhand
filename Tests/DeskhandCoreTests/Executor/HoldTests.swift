@@ -75,8 +75,10 @@ struct HoldTests {
     func frozenClockEndsHold() async throws {
         let mac = FakeMac { $0.frozenOffsetMs = 0 }
         let harness = try Harness(mac: mac)
+        // Closes long after the bound, so a hold that ignores it ends as cancelled instead of never.
+        let connection = FakeConnection(openReads: 100)
         let answer = await harness.executor.perform(
-            try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300]))
+            try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300], connection: connection))
         #expect(answer.code == .internalError)
         #expect(answer.operation == OperationView(status: .failed, eventsPosted: 1))
         #expect(mac.read(\.sleeps).count == 3 + InputExecutor.holdPollSlack)

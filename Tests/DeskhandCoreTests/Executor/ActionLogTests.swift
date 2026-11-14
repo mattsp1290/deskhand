@@ -35,7 +35,7 @@ struct ActionLogTests {
     @Test("an intent the writer never acknowledges is log_unavailable once the wait runs out")
     func hungWriterRefusesIntent() async throws {
         let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate()
+        let gate = Gate.opening(after: .seconds(2))
         await harness.onLog(.intent) { await gate.pass() }
         let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 3, "y": 4]))
         #expect(answer.code == .logUnavailable)
@@ -54,7 +54,7 @@ struct ActionLogTests {
     @Test("an outcome entry the writer never acknowledges does not hold the answer")
     func hungWriterReleasesAnswer() async throws {
         let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate()
+        let gate = Gate.opening(after: .seconds(2))
         await harness.onLog(.outcome) { await gate.pass() }
         let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
         #expect(answer.result?.eventsPosted == 1)
@@ -64,7 +64,7 @@ struct ActionLogTests {
 
     @Test("a frame check that does not answer refuses with internal_error, and frees the section")
     func hungFrameCheck() async throws {
-        let gate = Gate()
+        let gate = Gate.opening(after: .seconds(2))
         let harness = try Harness(frames: FakeFrames(gate: gate), waitLimit: Self.shortWait)
         let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
         #expect(answer.code == .internalError)
@@ -75,7 +75,7 @@ struct ActionLogTests {
 
     @Test("a patch recapture that does not answer is stale_frame pixels_changed")
     func hungRecapture() async throws {
-        let gate = Gate()
+        let gate = Gate.opening(after: .seconds(2))
         let mac = FakeMac { $0.patchGate = gate }
         let harness = try Harness(mac: mac, waitLimit: Self.shortWait)
         let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 3, "y": 4]))
@@ -110,7 +110,7 @@ struct ActionLogTests {
 
     @Test("a caller hanging up during admission: the intent is committed, the call dropped, the pair closed")
     func intentAfterHangUp() async throws {
-        let gate = Gate()
+        let gate = Gate.opening(after: .seconds(2))
         let harness = try Harness(frames: FakeFrames(gate: gate))
         await harness.log.base.failWhenCancelled()
         let call = try harness.pointer(["type": "move", "x": 1, "y": 1], connection: TaskCancellationLiveness())

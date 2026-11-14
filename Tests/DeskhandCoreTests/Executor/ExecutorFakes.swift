@@ -369,6 +369,17 @@ actor Gate {
         for continuation in waiting { continuation.resume() }
         waiting = []
     }
+
+    /// A gate that opens on its own after `delay`, so a wait that should have been cut short ends
+    /// the test with a failure rather than a hang.
+    static func opening(after delay: Duration) -> Gate {
+        let gate = Gate()
+        Task {
+            try? await Task.sleep(for: delay)
+            await gate.open()
+        }
+        return gate
+    }
 }
 
 /// Loads the operation store from a disk that outlives it. `failNextLoad` refuses one load;
