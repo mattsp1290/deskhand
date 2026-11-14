@@ -42,11 +42,27 @@ private enum Examples {
         LeaseToolResult(result: LeaseResult(operation: op, outcome: outcome), lease: view)
     }
 
-    static func effect(_ id: String, events: Int, replayed: Bool, measured: Measured, completedAt: Int64)
+    /// The drag of `pointer.input.drag.json`.
+    static let drag: PointerAction = {
+        // A fixture that does not decode fails every test that reads it, so a trap here is enough.
+        let arguments = try! Fixtures.json("examples/pointer.input.drag.json").objectValue!
+        return try! PointerArguments(arguments: arguments).action
+    }()
+    static let move = PointerAction.move(FramePoint(x: 1204, y: 778))
+
+    /// The facts of the user_active abort of a drag: the last look, `drag_end` included.
+    static let dragMeasured = Measured(
+        frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt", globalPoint: pointerPoint,
+        dragEnd: DragEnd(
+            targetApp: textEdit, windowTitle: "notes.txt",
+            globalPoint: GlobalPoint(x: 1045.2382165605095, y: 747.4799605781866)),
+        measuredAt: at(1_794_668_539_730))
+
+    static func effect(_ id: String, events: Int, replayed: Bool, measured: SuccessMeasured?, completedAt: Int64)
         -> EffectResult
     {
         EffectResult(
-            operationID: op(id), frameID: frame, eventsPosted: events, replayed: replayed, measured: measured,
+            operationID: op(id), frameID: frame, eventsPosted: events, replayed: replayed, measured: measured!,
             completedAt: at(completedAt))
     }
 
@@ -129,16 +145,19 @@ private enum Examples {
             message: "The PNG is 7204113 bytes; the limit is 3750000. Ask for jpeg or a smaller max_long_edge.",
             state: .ok),
         "pointer.output.completed.json": effect(
-            "call_01HZX3M9Q3", events: 3, replayed: false, measured: pointerMeasured, completedAt: 1_794_668_539_781),
+            "call_01HZX3M9Q3", events: 3, replayed: false,
+            measured: SuccessMeasured(pointer: pointerMeasured, action: move),
+            completedAt: 1_794_668_539_781),
         "pointer.output.completed-drag.json": effect(
             "call_01HZX3M9Q5", events: 34, replayed: false,
-            measured: Measured(
-                frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt",
-                globalPoint: GlobalPoint(x: 220.49426751592355, y: 293.92805519053877),
-                dragEnd: DragEnd(
-                    targetApp: textEdit, windowTitle: "notes.txt",
-                    globalPoint: GlobalPoint(x: 381.92101910828023, y: 470.06471747700397)),
-                measuredAt: at(1_794_668_539_730)), completedAt: 1_794_668_539_781),
+            measured: SuccessMeasured(
+                pointer: Measured(
+                    frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt",
+                    globalPoint: GlobalPoint(x: 220.49426751592355, y: 293.92805519053877),
+                    dragEnd: DragEnd(
+                        targetApp: textEdit, windowTitle: "notes.txt",
+                        globalPoint: GlobalPoint(x: 381.92101910828023, y: 470.06471747700397)),
+                    measuredAt: at(1_794_668_539_730)), action: drag), completedAt: 1_794_668_539_781),
         "pointer.output.error-denied-app.json": ToolError(
             .deniedApp(
                 .permittedApps,
@@ -162,7 +181,7 @@ private enum Examples {
             message:
                 "The drag was about to cross a window of an app that is not allowed. It was stopped and the button released.",
             state: .ok, operationID: op("call_01HZX3M9Q5"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 19), replayed: false)),
+            operation: .result(OperationView(status: .aborted, eventsPosted: 19))),
         "pointer.output.error-lease-held-by-other.json": ToolError(
             .leaseHeldByOther(expiresInMs: 21_500), message: "Another holder has the lease.", state: .ok,
             operationID: op("call_01HZX3M9Q3")),
@@ -174,7 +193,7 @@ private enum Examples {
             .blocked(.paused), message: "The kill switch was used during the drag. The button was released.",
             state: .paused,
             operationID: op("call_01HZX3M9Q5"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 5), replayed: false),
+            operation: .result(OperationView(status: .aborted, eventsPosted: 5)),
             measured: pointerMeasured),
         "pointer.output.error-stale-frame.json": ToolError(
             .staleFrame(.pixelsChanged(pointIndex: 0)),
@@ -186,19 +205,21 @@ private enum Examples {
             message:
                 "The target patch was checked more than 250 ms before the first event could be posted. Nothing was posted. Take a new screenshot.",
             state: .ok, operationID: op("call_01HZX3M9Q3"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 0), replayed: false),
+            operation: .result(OperationView(status: .aborted, eventsPosted: 0)),
             measured: pointerMeasured),
         "pointer.output.error-user-active-aborted.json": ToolError(
             .userActive(idleMs: 40),
             message:
                 "The person at the Mac used the keyboard or pointer. The drag was aborted and the button released.",
             state: .ok, operationID: op("call_01HZX3M9Q5"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 7), replayed: false),
-            measured: pointerMeasured),
+            operation: .result(OperationView(status: .aborted, eventsPosted: 7)),
+            measured: dragMeasured),
         "keyboard.output.completed.json": effect(
-            "call_01HZX3M9R1", events: 66, replayed: false, measured: keyboardMeasured, completedAt: 1_794_668_544_512),
+            "call_01HZX3M9R1", events: 66, replayed: false, measured: SuccessMeasured(keyboard: keyboardMeasured),
+            completedAt: 1_794_668_544_512),
         "keyboard.output.replayed.json": effect(
-            "call_01HZX3M9R1", events: 66, replayed: true, measured: keyboardMeasured, completedAt: 1_794_668_544_512),
+            "call_01HZX3M9R1", events: 66, replayed: true, measured: SuccessMeasured(keyboard: keyboardMeasured),
+            completedAt: 1_794_668_544_512),
         "keyboard.output.error-busy.json": ToolError(
             .busy, message: "Another effect call is being admitted or is executing.", state: .ok,
             operationID: op("call_01HZX3M9R2")),
@@ -206,7 +227,7 @@ private enum Examples {
             .cancelled,
             message: "The caller closed the connection during the earlier call. Typing stopped part-way.", state: .ok,
             operationID: op("call_01HZX3M9R1"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 20), replayed: true),
+            operation: .replayed(OperationView(status: .aborted, eventsPosted: 20), currentState: .ok),
             measured: keyboardMeasured),
         "keyboard.output.error-denied-app-focus.json": ToolError(
             .deniedApp(
@@ -226,7 +247,7 @@ private enum Examples {
             .interrupted,
             message: "deskhand restarted while this operation was executing. Input may have been posted.", state: .ok,
             operationID: op("call_01HZX3M9R1"),
-            operation: .result(OperationView(status: .abortedByRestart, eventsPosted: 12), replayed: true)),
+            operation: .replayed(OperationView(status: .abortedByRestart, eventsPosted: 12), currentState: .ok)),
         "keyboard.output.error-log-unavailable.json": ToolError(
             .logUnavailable(measured: keyboardMeasured),
             message: "The action log could not record the intent. Nothing was typed.",
@@ -251,7 +272,14 @@ private enum Examples {
         "keyboard.output.error-secure-input-aborted.json": ToolError(
             .blocked(.secureInput), message: "Secure input turned on while typing. The rest of the text was not typed.",
             state: .secureInput, operationID: op("call_01HZX3M9R1"),
-            operation: .result(OperationView(status: .aborted, eventsPosted: 18), replayed: false),
+            operation: .result(OperationView(status: .aborted, eventsPosted: 18)),
+            measured: keyboardMeasured),
+        "keyboard.output.replayed-state-abort.json": ToolError(
+            .blocked(.secureInput),
+            message:
+                "Secure input turned on while typing during the earlier call. The rest of the text was not typed.",
+            state: .secureInput, operationID: op("call_01HZX3M9R1"),
+            operation: .replayed(OperationView(status: .aborted, eventsPosted: 18), currentState: .ok),
             measured: keyboardMeasured),
     ]
 }
@@ -272,17 +300,79 @@ private enum Examples {
         let error = ToolError(
             .deniedApp(.policy, measured: Examples.keyboardMeasured, pointIndex: nil), message: "", state: .ok,
             measured: nil)
-        #expect(error.jsonValue["measured"] == Examples.keyboardMeasured.withoutWindowTitles.jsonValue)
+        #expect(error.jsonValue["measured"] == Examples.keyboardMeasured.forDeniedApp.jsonValue)
         #expect(error.jsonValue["measured"]?["window_title"] == .null)
         #expect(error.jsonValue["details"] == ["denied_by": "policy"])
-        let drag = Measured(
-            frontmostApp: Examples.textEdit, targetApp: Examples.textEdit, windowTitle: "a",
-            globalPoint: Examples.pointerPoint,
-            dragEnd: DragEnd(targetApp: Examples.textEdit, windowTitle: "b", globalPoint: Examples.pointerPoint),
-            measuredAt: Examples.at(0))
-        let denied = ToolError(.deniedApp(.policy, measured: drag, pointIndex: 3), message: "", state: .ok)
-        #expect(denied.jsonValue["measured"]?["drag_end"]?["window_title"] == .null)
+        let denied = ToolError(
+            .deniedApp(.policy, measured: Examples.dragMeasured, pointIndex: 3), message: "", state: .ok,
+            measured: Examples.dragMeasured)
+        // Contract 9.2: on denied_app `measured` describes only the check that failed.
+        #expect(denied.jsonValue["measured"]?["drag_end"] == nil)
+        #expect(denied.jsonValue["measured"]?["window_title"] == .null)
+        #expect(denied.jsonValue["measured"]?["global_point"] == Examples.pointerPoint.jsonValue)
         #expect(denied.jsonValue["details"] == ["denied_by": "policy", "point_index": 3])
+    }
+
+    /// Contract 9.2: `current_state` is present exactly when `replayed` is `true`.
+    @Test func currentStateComesOnlyWithAReplay() {
+        let view = OperationView(status: .aborted, eventsPosted: 2)
+        let first = ToolError(.blocked(.locked), message: "", state: .locked, operation: .result(view))
+        #expect(first.jsonValue["replayed"] == false && first.jsonValue["current_state"] == nil)
+        let replayed = ToolError(
+            .blocked(.locked), message: "", state: .locked, operation: .replayed(view, currentState: .ok))
+        #expect(replayed.jsonValue["replayed"] == true)
+        #expect(replayed.jsonValue["state"] == "locked" && replayed.jsonValue["current_state"] == "ok")
+        let existing = ToolError(.blocked(.paused), message: "", state: .paused, operation: .existing(view))
+        #expect(existing.jsonValue["replayed"] == nil && existing.jsonValue["current_state"] == nil)
+    }
+
+    static let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
+
+    static func measured(
+        frontmost: AppRef = Examples.textEdit, target: AppRef? = Examples.textEdit,
+        point: GlobalPoint? = Examples.pointerPoint, dragEnd: AppRef? = nil
+    ) -> Measured {
+        Measured(
+            frontmostApp: frontmost, targetApp: target, windowTitle: nil, globalPoint: point,
+            dragEnd: dragEnd.map { DragEnd(targetApp: $0, windowTitle: nil, globalPoint: Examples.pointerPoint) },
+            measuredAt: Examples.at(0))
+    }
+
+    /// Contract 6.7 (D7): a success names every app with a `bundle_id`; a `pointer` success has a
+    /// global point and `drag_end` exactly for a drag; a `keyboard` success has neither.
+    @Test func aSuccessHasEveryFactItNeeds() {
+        #expect(SuccessMeasured(pointer: Self.measured(), action: Examples.move) != nil)
+        #expect(SuccessMeasured(pointer: Self.measured(dragEnd: Self.preview), action: Examples.drag) != nil)
+        #expect(SuccessMeasured(keyboard: Self.measured(point: nil)) != nil)
+
+        let refused: [(String, SuccessMeasured?)] = [
+            ("pointer without a target", SuccessMeasured(pointer: Self.measured(target: nil), action: Examples.move)),
+            ("pointer without a point", SuccessMeasured(pointer: Self.measured(point: nil), action: Examples.move)),
+            (
+                "unidentified target",
+                SuccessMeasured(pointer: Self.measured(target: .undetermined), action: Examples.move)
+            ),
+            (
+                "unidentified frontmost",
+                SuccessMeasured(pointer: Self.measured(frontmost: .undetermined), action: Examples.move)
+            ),
+            ("drag without drag_end", SuccessMeasured(pointer: Self.measured(), action: Examples.drag)),
+            (
+                "drag_end on a move",
+                SuccessMeasured(pointer: Self.measured(dragEnd: Self.preview), action: Examples.move)
+            ),
+            (
+                "unidentified drag end",
+                SuccessMeasured(pointer: Self.measured(dragEnd: .undetermined), action: Examples.drag)
+            ),
+            ("keyboard without a target", SuccessMeasured(keyboard: Self.measured(target: nil, point: nil))),
+            ("keyboard with a point", SuccessMeasured(keyboard: Self.measured())),
+            (
+                "keyboard with drag_end",
+                SuccessMeasured(keyboard: Self.measured(point: nil, dragEnd: Self.preview))
+            ),
+        ]
+        for (name, success) in refused { #expect(success == nil, "\(name)") }
     }
 
     @Test func staleFrameCarriesPointIndexOnlyForPixelsChanged() {

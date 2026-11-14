@@ -98,7 +98,10 @@ public struct DragEnd: Hashable, Sendable, JSONRepresentable {
     }
 }
 
-/// Facts taken at the app-policy check before an effect's first event (contract 6.7).
+/// Facts taken at an app-policy check (contract 6.7). On a success, and on every error of an
+/// admitted call but `denied_app`, they come from the last look, the check immediately before the
+/// first event. `log_unavailable` reports the check before admission, and `denied_app` the check
+/// that failed.
 public struct Measured: Hashable, Sendable, JSONRepresentable {
     public static let maxWindowTitleLength = 512
 
@@ -126,12 +129,18 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
         self.measuredAt = measuredAt
     }
 
-    /// The same facts with every window title removed: what `denied_app` reports (contract 6.7).
-    public var withoutWindowTitles: Measured {
+    /// What `denied_app` reports (contract 6.7, 9.2): no window title, and no `drag_end`, because
+    /// the facts then describe only the check that failed.
+    public var forDeniedApp: Measured {
         Measured(
             frontmostApp: frontmostApp, targetApp: targetApp, windowTitle: nil, globalPoint: globalPoint,
-            dragEnd: dragEnd.map { DragEnd(targetApp: $0.targetApp, windowTitle: nil, globalPoint: $0.globalPoint) },
             measuredAt: measuredAt)
+    }
+
+    /// The frontmost app, the target app and the app at the end of a drag all carry a `bundle_id`.
+    fileprivate var identifiesEveryApp: Bool {
+        frontmostApp.bundleID != nil && targetApp?.bundleID != nil
+            && (dragEnd.map { $0.targetApp.bundleID != nil } ?? true)
     }
 
     public var jsonValue: JSONValue {
@@ -142,6 +151,32 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
         ]
         object["drag_end"] = dragEnd?.jsonValue
         return .object(object)
+    }
+}
+
+/// `measured` of a success (contract 6.7), checked once when it is built: the frontmost app, the
+/// target app and, for a drag, the app at its last point all carry a `bundle_id`; a `pointer`
+/// success has the global point of its first target, and `drag_end` exactly for a `drag`; a
+/// `keyboard` success has neither. The app policy refuses a call for which these could not be
+/// measured, so the last look of a call that completes has them, and an ``EffectResult`` cannot be
+/// built without them.
+public struct SuccessMeasured: Hashable, Sendable {
+    public let measured: Measured
+
+    /// `nil` unless `measured` has the shape of a `pointer` success for `action`.
+    public init?(pointer measured: Measured, action: PointerAction) {
+        let isDrag: Bool
+        if case .drag = action { isDrag = true } else { isDrag = false }
+        guard measured.identifiesEveryApp, measured.globalPoint != nil, (measured.dragEnd != nil) == isDrag else {
+            return nil
+        }
+        self.measured = measured
+    }
+
+    /// `nil` unless `measured` has the shape of a `keyboard` success.
+    public init?(keyboard measured: Measured) {
+        guard measured.identifiesEveryApp, measured.globalPoint == nil, measured.dragEnd == nil else { return nil }
+        self.measured = measured
     }
 }
 
@@ -174,18 +209,19 @@ public struct EffectResult: Hashable, Sendable, JSONRepresentable {
     public var eventsPosted: Int
     /// `true` when this is the stored result returned to a repeat; that call posted nothing.
     public var replayed: Bool
-    public var measured: Measured
+    /// Taken at the last look, and always of a shape ``SuccessMeasured`` accepts.
+    public let measured: Measured
     public var completedAt: Timestamp
 
     public init(
-        operationID: OperationID, frameID: FrameID, eventsPosted: Int, replayed: Bool, measured: Measured,
+        operationID: OperationID, frameID: FrameID, eventsPosted: Int, replayed: Bool, measured: SuccessMeasured,
         completedAt: Timestamp
     ) {
         self.operationID = operationID
         self.frameID = frameID
         self.eventsPosted = eventsPosted
         self.replayed = replayed
-        self.measured = measured
+        self.measured = measured.measured
         self.completedAt = completedAt
     }
 

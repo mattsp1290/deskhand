@@ -20,6 +20,8 @@ public struct Drag: Hashable, Sendable {
     public let path: [FramePoint]
     public let button: MouseButton
     public let modifiers: Set<Modifier>
+    /// The least time from button down to button up (contract 6.4). A long path takes longer,
+    /// because every step is checked before the pointer moves there.
     public let durationMs: Int
 }
 

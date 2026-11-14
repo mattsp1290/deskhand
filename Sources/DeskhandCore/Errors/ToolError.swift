@@ -69,8 +69,8 @@ public enum ToolErrorReason: Hashable, Sendable {
 
     var measured: Measured? {
         switch self {
-        // A title that the policy refused is never sent (contract 6.7).
-        case .deniedApp(_, let measured, _): measured.withoutWindowTitles
+        // A title that the policy refused is never sent, nor a drag's end past the failed check (6.7).
+        case .deniedApp(_, let measured, _): measured.forDeniedApp
         case .logUnavailable(let measured): measured
         default: nil
         }
@@ -103,8 +103,12 @@ public enum OperationContext: Hashable, Sendable {
     /// A record exists for the `operation_id`, but this response is not that call's result
     /// (`operation_in_progress`, `operation_id_conflict`, or a state's name returned to a repeat).
     case existing(OperationView)
-    /// This is the result of the admitted call: `replayed` is `false` when first returned.
-    case result(OperationView, replayed: Bool)
+    /// This is the result of the admitted call, returned the first time: `replayed` is `false`.
+    case result(OperationView)
+    /// This is the result of the admitted call returned to a repeat: `replayed` is `true`, and
+    /// `current_state` is the state as this response is produced, while the error's own `state` is
+    /// the one stored with the result (contract 12.5).
+    case replayed(OperationView, currentState: DeskhandState)
 }
 
 /// `structuredContent` of an `isError: true` tool result (`defs.json#/$defs/tool_error`). Every
@@ -113,7 +117,8 @@ public struct ToolError: Error, Hashable, Sendable, JSONRepresentable {
     public let reason: ToolErrorReason
     /// For people and models; not stable.
     public let message: String
-    /// The highest-precedence state when the error was produced.
+    /// The highest-precedence state when the error was produced. On a replay, the state stored with
+    /// the result; the state now is the `currentState` of ``OperationContext/replayed(_:currentState:)``.
     public let state: DeskhandState
     public let operationID: OperationID?
     public let operation: OperationContext?
@@ -142,9 +147,13 @@ public struct ToolError: Error, Hashable, Sendable, JSONRepresentable {
         object["operation_id"] = operationID.map { .string($0.rawValue) }
         switch operation {
         case .existing(let view): object["operation"] = view.jsonValue
-        case .result(let view, let replayed):
+        case .result(let view):
             object["operation"] = view.jsonValue
-            object["replayed"] = .bool(replayed)
+            object["replayed"] = false
+        case .replayed(let view, let currentState):
+            object["operation"] = view.jsonValue
+            object["replayed"] = true
+            object["current_state"] = .string(currentState.rawValue)
         case nil: break
         }
         if case .rateLimited(let retryAfter) = reason { object["retry_after_ms"] = JSONValue(retryAfter) }

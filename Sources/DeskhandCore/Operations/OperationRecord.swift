@@ -186,7 +186,7 @@ extension ToolError {
     fileprivate func recording(_ key: OperationKey, _ view: OperationView) -> ToolError {
         ToolError(
             reason, message: message, state: state, operationID: key.operationID,
-            operation: .result(view, replayed: false), measured: measured)
+            operation: .result(view), measured: measured)
     }
 }
 
@@ -218,7 +218,7 @@ public struct OperationReplay: Hashable, Sendable {
                 : "deskhand stopped while this operation was executing. Input may have been posted."
             return ToolError(
                 .interrupted, message: message, state: state, operationID: record.key.operationID,
-                operation: .result(record.view, replayed: true)
+                operation: .replayed(record.view, currentState: state)
             ).jsonValue
         }
     }

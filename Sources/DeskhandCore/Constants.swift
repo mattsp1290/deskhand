@@ -1,7 +1,7 @@
 /// The constants of contract section 16. Configured values appear here as their defaults and ranges;
 /// the values in force are reported by ``Limits``.
 public enum ContractConstants {
-    public static let contractVersion = "0.10-draft"
+    public static let contractVersion = "0.11-draft"
     public static let mcpProtocolVersion = "2026-07-28"
 
     // Screenshot sizing and encoding (contract 7).

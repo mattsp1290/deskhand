@@ -136,16 +136,18 @@ enum Sample {
         RequestDigest(sha256: SHA256Hex(hashing: Array(seed.utf8)))
     }
 
+    static let textEdit = AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit")
+
+    /// A `keyboard` last look: TextEdit in front and owning keyboard focus.
     static let measured = Measured(
-        frontmostApp: AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit"), targetApp: nil,
-        windowTitle: "notes.txt", globalPoint: nil, measuredAt: start)
+        frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt", globalPoint: nil, measuredAt: start)
 
     /// A completed result whose echoed members are deliberately wrong, so tests see the store set them.
     static func completed(eventsPosted: Int = 999) -> OperationOutcome {
         .completed(
             EffectResult(
                 operationID: OperationID("unrelated")!, frameID: FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!,
-                eventsPosted: eventsPosted, replayed: true, measured: measured,
+                eventsPosted: eventsPosted, replayed: true, measured: SuccessMeasured(keyboard: measured)!,
                 completedAt: start.adding(milliseconds: 400)))
     }
 

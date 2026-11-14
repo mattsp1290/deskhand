@@ -40,8 +40,9 @@ public struct StatusArguments: Hashable, Sendable {
 
 /// `status.operation` in a result: the record's status and count, never its stored result.
 public enum StatusOperation: Hashable, Sendable, JSONRepresentable {
-    /// No record, and no call with that key being admitted: no input was ever posted for it, or its
-    /// record has passed the retention window.
+    /// No record now, and no call with that key inside the admission section: no input has been
+    /// posted for it so far, or its record has passed the retention window. A request still on its
+    /// way can yet be admitted, so the caller decides when this is final (contract 12.5).
     case notFound
     /// A call that is being admitted is reported as `accepted` with 0 events.
     case found(OperationView)
