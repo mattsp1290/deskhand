@@ -175,6 +175,51 @@ struct ScreenshotToolTests {
         #expect(error?.code == .internalError)
     }
 
+    @Test("an image over MAX_IMAGE_BYTES from the capturer is image_too_large and mints no frame")
+    func oversizedCapture() async throws {
+        let harness = try ToolHarness()
+        let first = try await harness.screenshot().result.frameID
+        harness.capturer.configure { $0.imageBytes = ContractConstants.maxImageBytes }
+        let atLimit = try await harness.screenshot().result
+        #expect(atLimit.imageBytes == 3_750_000)
+        #expect(await harness.check(first) == .notLatest)
+
+        harness.capturer.configure { $0.imageBytes = ContractConstants.maxImageBytes + 1 }
+        let error = await refusal { () async throws(ToolError) in try await harness.screenshot() }
+        #expect(error?.code == .imageTooLarge)
+        #expect(error?.jsonValue["details"] == ["image_bytes": 3_750_001, "max_image_bytes": 3_750_000])
+        #expect(await harness.check(atLimit.frameID) == nil)
+    }
+
+    @Test("an oversized image while the state left ok is refused with the state's name")
+    func oversizedCaptureAfterStateChange() async throws {
+        let harness = try ToolHarness()
+        let owner = harness.owner
+        harness.capturer.configure {
+            $0.imageBytes = ContractConstants.maxImageBytes + 1
+            $0.during = { owner.reduce(signals: ToolFixture.signals(holding: [.locked])) }
+        }
+        let error = await refusal { () async throws(ToolError) in try await harness.screenshot() }
+        #expect(error?.code == .locked)
+    }
+
+    @Test("an image in a format not asked for is internal_error and mints no frame")
+    func wrongFormat() async throws {
+        let harness = try ToolHarness()
+        let first = try await harness.screenshot().result.frameID
+        harness.capturer.configure { $0.reportedEncoding = .png }
+        let error = await refusal { () async throws(ToolError) in try await harness.screenshot() }
+        #expect(error?.code == .internalError)
+        #expect(await harness.check(first) == nil)
+
+        harness.capturer.configure { $0.reportedEncoding = .jpeg(.q60) }
+        let png = await refusal { () async throws(ToolError) in
+            try await harness.screenshot(ToolHarness.shot(["format": "png"]))
+        }
+        #expect(png?.code == .internalError)
+        #expect(await harness.check(first) == nil)
+    }
+
     @Test("excludes the Mac's capture exclusion list and deskhand's own bundle")
     func captureExclusions() async throws {
         let harness = try ToolHarness()
