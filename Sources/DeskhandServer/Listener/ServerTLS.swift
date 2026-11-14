@@ -112,8 +112,8 @@ public struct ServerTLSCredentials: Sendable {
     }
 }
 
-/// The TLS context new connections use. Credential reload (deskhand-zkt0) validates a new pair and
-/// calls ``replace(with:)``; connections already open keep the context they started with.
+/// The TLS context new connections are made from. Credential reload (deskhand-zkt0) validates a new
+/// pair and calls ``replace(with:)``; connections already open keep the context they started with.
 public final class ServerTLSContextHolder: Sendable {
     private let context: Mutex<NIOSSLContext>
 
@@ -121,9 +121,17 @@ public final class ServerTLSContextHolder: Sendable {
         self.context = Mutex(context)
     }
 
+    /// The validated context whose configuration each connection's context copies.
     public var current: NIOSSLContext { context.withLock { $0 } }
 
     public func replace(with newContext: NIOSSLContext) {
         context.withLock { $0 = newContext }
+    }
+
+    /// A new context with ``current``'s configuration, for one connection. BoringSSL keeps the
+    /// session-ticket keys and the session cache per context, so a session from any other
+    /// connection cannot be resumed on this one and its client certificate is verified in full.
+    public func makeConnectionContext() throws -> NIOSSLContext {
+        try NIOSSLContext(configuration: current.configuration)
     }
 }

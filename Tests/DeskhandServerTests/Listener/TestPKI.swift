@@ -22,6 +22,7 @@ struct TestPKI: Sendable {
         let certificate: NIOSSLCertificate
         let key: NIOSSLPrivateKey
         let certificatePath: String
+        let keyPath: String
     }
 
     static let serverName = "deskhand-test.forge.svc"
@@ -78,10 +79,12 @@ struct TestPKI: Sendable {
             let ca = client == .wrongCA ? "other-ca" : "ca"
             try makeLeaf(name, subject: subject, ca: ca, section: section, serial: serial, in: directory)
             let certificatePath = directory.appendingPathComponent("\(name).pem").path
+            let keyPath = directory.appendingPathComponent("\(name).key").path
             clients[client] = Identity(
                 certificate: try NIOSSLCertificate.fromPEMFile(certificatePath)[0],
-                key: try NIOSSLPrivateKey(file: directory.appendingPathComponent("\(name).key").path, format: .pem),
-                certificatePath: certificatePath
+                key: try NIOSSLPrivateKey(file: keyPath, format: .pem),
+                certificatePath: certificatePath,
+                keyPath: keyPath
             )
         }
         for file in try FileManager.default.contentsOfDirectory(atPath: directory.path) {

@@ -9,12 +9,17 @@ final class ConnectionSession {
 }
 
 /// One connection's HTTP side: contract 2.4 checks 2 to 10, the hand-off to the ``RequestHandler``,
-/// cancellation on disconnect and the 5-minute connection cap.
+/// cancellation on disconnect, the request body deadline and the 5-minute connection cap.
 ///
 /// The socket is read even while a call runs, so a caller hanging up is seen at once and cancels
 /// the call (contract 2.1). That rules out NIO's pipelining helper, which stops reading until the
 /// response is written. A request pipelined behind a running call is not served: its bytes are
 /// dropped and the connection closes after the running call's response.
+///
+/// Every way the connection can end leads through `enterClosing()`, which cancels a running call:
+/// a clean close, a reset, a hang-up without TLS close_notify, the caller closing its sending side,
+/// a parse error and each timer. Once the connection is going away nobody can receive the
+/// response, so the call must not go on.
 final class ConnectionHandler: ChannelInboundHandler {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
@@ -33,6 +38,7 @@ final class ConnectionHandler: ChannelInboundHandler {
     private let maxResponseBodyBytes: Int
     private let maxAge: TimeAmount
     private let handshakeTimeout: TimeAmount
+    private let bodyTimeout: TimeAmount
     private let linger: TimeAmount
     private let events: @Sendable (ListenerEvent) -> Void
 
@@ -41,6 +47,7 @@ final class ConnectionHandler: ChannelInboundHandler {
     private var closeAfterResponse = false
     private var handshakeTimer: Scheduled<Void>?
     private var maxAgeTimer: Scheduled<Void>?
+    private var bodyTimer: Scheduled<Void>?
     private var lingerTimer: Scheduled<Void>?
 
     init(
@@ -57,6 +64,7 @@ final class ConnectionHandler: ChannelInboundHandler {
         maxResponseBodyBytes = configuration.maxResponseBodyBytes
         maxAge = configuration.connectionMaxAge
         handshakeTimeout = configuration.handshakeTimeout
+        bodyTimeout = configuration.requestBodyTimeout
         linger = configuration.closeLinger
         self.events = events
     }
@@ -71,16 +79,26 @@ final class ConnectionHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        if case .handling(let task) = state { task.cancel() }
-        state = .closing
+        enterClosing()
         handshakeTimer?.cancel()
         maxAgeTimer?.cancel()
         lingerTimer?.cancel()
         context.fireChannelInactive()
     }
 
+    /// The caller closed its sending side. Nothing more can arrive, so a request still being
+    /// received never completes, and for a running call it is the caller closing the stream.
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if case .inputClosed? = event as? ChannelEvent {
+            close(context: context)
+            return
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
     /// A malformed request gets `400`, an oversized head `431` (check 2), when no response is under
-    /// way; anything else just closes the connection, which also cancels a running call.
+    /// way. Anything else (a reset, a TLS hang-up without close_notify, a parse error behind a
+    /// running call) closes the connection, which also cancels a running call.
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         switch (error as? HTTPParserError, state) {
         case (.some(let parserError), .idle), (.some(let parserError), .receiving):
@@ -88,8 +106,7 @@ final class ConnectionHandler: ChannelInboundHandler {
                 parserError == .headerOverflow ? .requestHeaderFieldsTooLarge : .badRequest
             answerAndClose(status: status, headers: [], context: context)
         default:
-            state = .closing
-            context.close(promise: nil)
+            close(context: context)
         }
     }
 
@@ -99,8 +116,7 @@ final class ConnectionHandler: ChannelInboundHandler {
             // The verification callback sets the principal before any application data is read,
             // so its absence means the handshake did not authenticate the peer.
             guard session.principal != nil else {
-                state = .closing
-                context.close(promise: nil)
+                close(context: context)
                 return
             }
             switch screen.screenHead(head, tokens: tokens.acceptedTokens(), now: ContinuousClock.now) {
@@ -109,6 +125,7 @@ final class ConnectionHandler: ChannelInboundHandler {
             case .success(let admitted):
                 let capacity = min(admitted.declaredLength ?? 0, screen.maxBodyBytes)
                 state = .receiving(admitted, context.channel.allocator.buffer(capacity: capacity))
+                startBodyTimer(context: context)
             }
         case (.head, .handling):
             closeAfterResponse = true
@@ -121,6 +138,7 @@ final class ConnectionHandler: ChannelInboundHandler {
             body.writeBuffer(&part)
             state = .receiving(admitted, body)
         case (.end, .receiving(let admitted, let body)):
+            cancelBodyTimer()
             if let refusal = screen.screenAccept(admitted) {
                 answerAndClose(status: refusal.status, headers: refusal.headers, context: context)
                 return
@@ -167,7 +185,7 @@ final class ConnectionHandler: ChannelInboundHandler {
             context.write(
                 wrapOutboundOut(.body(.byteBuffer(context.channel.allocator.buffer(bytes: body)))), promise: nil)
         }
-        state = mustClose ? .closing : .idle
+        if mustClose { enterClosing() } else { state = .idle }
         let written = context.writeAndFlush(wrapOutboundOut(.end(nil)))
         if mustClose { closeGracefully(after: written, context: context) }
     }
@@ -176,13 +194,26 @@ final class ConnectionHandler: ChannelInboundHandler {
     /// so the connection is not reused.
     private func answerAndClose(status: HTTPResponseStatus, headers: [(String, String)], context: ChannelHandlerContext)
     {
-        state = .closing
+        enterClosing()
         var allHeaders = HTTPHeaders(headers)
         allHeaders.add(name: "Content-Length", value: "0")
         allHeaders.add(name: "Connection", value: "close")
         let head = HTTPResponseHead(version: .http1_1, status: status, headers: allHeaders)
         context.write(wrapOutboundOut(.head(head)), promise: nil)
         closeGracefully(after: context.writeAndFlush(wrapOutboundOut(.end(nil))), context: context)
+    }
+
+    /// The only transition into `.closing`. A running call is cancelled before its task handle is
+    /// dropped, whatever ended the connection (contract 2.1).
+    private func enterClosing() {
+        if case .handling(let task) = state { task.cancel() }
+        state = .closing
+        cancelBodyTimer()
+    }
+
+    private func close(context: ChannelHandlerContext) {
+        enterClosing()
+        context.close(promise: nil)
     }
 
     /// Closing outright while request bytes are still arriving makes the kernel answer them with a
@@ -214,16 +245,32 @@ final class ConnectionHandler: ChannelInboundHandler {
         // The verification callback sets the principal just before the handshake completes.
         handshakeTimer = loop.scheduleTask(in: handshakeTimeout) {
             guard self.session.principal == nil else { return }
-            self.state = .closing
-            context.close(promise: nil)
+            self.close(context: context)
         }
         maxAgeTimer = loop.scheduleTask(in: maxAge) {
             self.closeAfterResponse = true
-            // A request already received runs to completion; the connection closes after its
-            // response (contract 2.1).
-            guard case .idle = self.state else { return }
-            self.state = .closing
-            context.close(promise: nil)
+            switch self.state {
+            case .handling, .closing:
+                // A request already received runs to completion; the connection closes after its
+                // response (contract 2.1).
+                return
+            case .idle, .receiving:
+                // A request whose body is still arriving has not started a call.
+                self.close(context: context)
+            }
         }
+    }
+
+    /// A body that stops arriving would otherwise hold the connection until the max age.
+    private func startBodyTimer(context: ChannelHandlerContext) {
+        bodyTimer = context.eventLoop.assumeIsolated().scheduleTask(in: bodyTimeout) {
+            guard case .receiving = self.state else { return }
+            self.close(context: context)
+        }
+    }
+
+    private func cancelBodyTimer() {
+        bodyTimer?.cancel()
+        bodyTimer = nil
     }
 }

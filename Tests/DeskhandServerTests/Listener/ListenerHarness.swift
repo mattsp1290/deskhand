@@ -101,6 +101,7 @@ enum ListenerHarness {
     static func withListener(
         configuration: ListenerConfiguration = configuration(),
         handler: any RequestHandler = RecordingHandler(),
+        wallClock: @escaping @Sendable () -> Timestamp = { ClockReading.now().wall },
         _ body: (SocketAddress, TestPKI, EventLog) async throws -> Void
     ) async throws {
         let pki = try TestPKI.get()
@@ -110,6 +111,7 @@ enum ListenerHarness {
             tls: try makeTLS(pki),
             tokens: FixedTokenProvider(tokens: acceptedTokens),
             handler: handler,
+            wallClock: wallClock,
             events: { log.record($0) }
         )
         let address = try await listener.start()
