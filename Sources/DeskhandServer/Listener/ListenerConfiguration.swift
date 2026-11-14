@@ -56,6 +56,10 @@ public struct ListenerConfiguration: Sendable {
     public var connectionMaxAge = TimeAmount.seconds(Int64(ContractConstants.connectionMaxAgeSeconds))
     /// A peer that has not finished the TLS handshake by then is disconnected.
     public var handshakeTimeout = TimeAmount.seconds(10)
+    /// After deskhand closes its output, how long it waits for the caller to close its side before
+    /// closing outright. Request bytes that reach a fully closed socket are answered with a reset,
+    /// which can destroy a response the caller has not read yet.
+    public var closeLinger = TimeAmount.seconds(2)
     /// D14: how often to retry binding while the LAN address is not on any interface.
     public var bindRetryInterval = TimeAmount.seconds(5)
 

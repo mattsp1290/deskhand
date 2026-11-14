@@ -49,6 +49,21 @@ private enum DER {
     }
 
     static func utf8(_ text: String) -> [UInt8] { tlv(DERTag.utf8String, Array(text.utf8)) }
+
+    /// A certificate with only what ``X509Certificate`` reads: `subject` and EKU `clientAuth`. The
+    /// policy runs after BoringSSL has verified the chain, so nothing here is signed.
+    static func clientLeaf(commonName: String) -> [UInt8] {
+        let subject = tlv(
+            DERTag.sequence, tlv(DERTag.set, tlv(DERTag.sequence, oid("2.5.4.3") + utf8(commonName))))
+        let usage = tlv(DERTag.sequence, oid(OID.clientAuth))
+        let extensions = tlv(
+            DERTag.explicitExtensions,
+            tlv(DERTag.sequence, tlv(DERTag.sequence, oid(OID.extendedKeyUsage) + tlv(DERTag.octetString, usage))))
+        let empty = tlv(DERTag.sequence, [])
+        let tbs = tlv(
+            DERTag.sequence, tlv(DERTag.integer, [1]) + empty + empty + empty + subject + empty + extensions)
+        return tlv(DERTag.sequence, tbs + empty + tlv(0x03, [0]))
+    }
 }
 
 private let commonName = "2.5.4.3"
@@ -151,6 +166,25 @@ private let organizationalUnit = "2.5.4.11"
         let leaf = try der(.wrongSubject)
         #expect(throws: ClientCertificateRefusal.unexpectedSubject("CN=someone-else,O=forge")) {
             try policy.authenticate(leafDER: leaf)
+        }
+    }
+
+    /// D11: `é` precomposed and `e` with a combining acute are equal as `String`s but are different
+    /// subjects, so neither spelling admits a certificate carrying the other.
+    @Test func canonicallyEquivalentSubjectIsRefused() throws {
+        let precomposed = "caf\u{E9}"
+        let decomposed = "cafe\u{301}"
+        #expect(precomposed == decomposed)
+        let leaf = DER.clientLeaf(commonName: precomposed)
+        #expect(
+            try ClientCertificatePolicy(expectedSubject: "CN=\(precomposed)").authenticate(leafDER: leaf)
+                == Principal(certificateSubject: "CN=\(precomposed)"))
+        #expect(throws: ClientCertificateRefusal.unexpectedSubject("CN=\(precomposed)")) {
+            try ClientCertificatePolicy(expectedSubject: "CN=\(decomposed)").authenticate(leafDER: leaf)
+        }
+        let decomposedLeaf = DER.clientLeaf(commonName: decomposed)
+        #expect(throws: ClientCertificateRefusal.unexpectedSubject("CN=\(decomposed)")) {
+            try ClientCertificatePolicy(expectedSubject: "CN=\(precomposed)").authenticate(leafDER: decomposedLeaf)
         }
     }
 

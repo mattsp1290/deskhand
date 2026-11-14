@@ -33,6 +33,7 @@ final class ConnectionHandler: ChannelInboundHandler {
     private let maxResponseBodyBytes: Int
     private let maxAge: TimeAmount
     private let handshakeTimeout: TimeAmount
+    private let linger: TimeAmount
     private let events: @Sendable (ListenerEvent) -> Void
 
     private var state = State.idle
@@ -41,9 +42,6 @@ final class ConnectionHandler: ChannelInboundHandler {
     private var handshakeTimer: Scheduled<Void>?
     private var maxAgeTimer: Scheduled<Void>?
     private var lingerTimer: Scheduled<Void>?
-
-    /// How long a connection whose output is closed waits for the caller to close its side.
-    static let linger = TimeAmount.seconds(2)
 
     init(
         configuration: ListenerConfiguration,
@@ -59,6 +57,7 @@ final class ConnectionHandler: ChannelInboundHandler {
         maxResponseBodyBytes = configuration.maxResponseBodyBytes
         maxAge = configuration.connectionMaxAge
         handshakeTimeout = configuration.handshakeTimeout
+        linger = configuration.closeLinger
         self.events = events
     }
 
@@ -151,7 +150,7 @@ final class ConnectionHandler: ChannelInboundHandler {
         guard case .handling = state, context.channel.isActive else { return }
         var status = response.status
         var body = response.body
-        var mustClose = !admitted.keepAlive || closeAfterResponse || isPastMaxAge
+        var mustClose = !admitted.keepAlive || closeAfterResponse || isPastMaxAge(now: context.eventLoop.now)
         if let bytes = body, bytes.count > maxResponseBodyBytes {
             events(.responseTooLarge(byteCount: bytes.count))
             status = .internalServerError
@@ -189,26 +188,28 @@ final class ConnectionHandler: ChannelInboundHandler {
     /// Closing outright while request bytes are still arriving makes the kernel answer them with a
     /// reset, which can destroy the response before the caller reads it. So only the output side is
     /// closed (TLS close_notify, then FIN); whatever the caller still sends is discarded, and the
-    /// connection closes when the caller closes its side or after ``linger``.
+    /// connection closes when the caller closes its side or after
+    /// ``ListenerConfiguration/closeLinger``.
     private func closeGracefully(after written: EventLoopFuture<Void>, context: ChannelHandlerContext) {
         written.assumeIsolated().whenComplete { _ in
             let outputClosed = context.eventLoop.makePromise(of: Void.self)
             context.close(mode: .output, promise: outputClosed)
             outputClosed.futureResult.assumeIsolated().whenFailure { _ in context.close(promise: nil) }
-            self.lingerTimer = context.eventLoop.assumeIsolated().scheduleTask(in: Self.linger) {
+            self.lingerTimer = context.eventLoop.assumeIsolated().scheduleTask(in: self.linger) {
                 context.close(promise: nil)
             }
         }
     }
 
-    private var isPastMaxAge: Bool {
+    /// Read from the event loop's clock, the one the max-age timer runs on.
+    private func isPastMaxAge(now: NIODeadline) -> Bool {
         guard let openedAt else { return false }
-        return NIODeadline.now() - openedAt >= maxAge
+        return now - openedAt >= maxAge
     }
 
     private func startTimers(context: ChannelHandlerContext) {
         guard openedAt == nil else { return }
-        openedAt = .now()
+        openedAt = context.eventLoop.now
         let loop = context.eventLoop.assumeIsolated()
         // The verification callback sets the principal just before the handshake completes.
         handshakeTimer = loop.scheduleTask(in: handshakeTimeout) {

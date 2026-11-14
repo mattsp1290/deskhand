@@ -23,8 +23,9 @@ public enum ClientCertificateRefusal: Error, Hashable, Sendable, CustomStringCon
 /// leaf must carry EKU `clientAuth` and its subject must be the one configured for this Mac. The
 /// principal is the RFC 4514 string of that subject (see ``DistinguishedName``).
 public struct ClientCertificatePolicy: Hashable, Sendable {
-    /// Compared exactly with the RFC 4514 rendering of the presented subject, e.g.
-    /// `CN=crew-executor,O=forge`.
+    /// Compared with the RFC 4514 rendering of the presented subject, e.g. `CN=crew-executor,O=forge`,
+    /// as a sequence of Unicode scalars, the way ``Principal`` compares: a canonically equivalent
+    /// spelling is another certificate's subject.
     public let expectedSubject: String
 
     public init(expectedSubject: String) {
@@ -42,7 +43,10 @@ public struct ClientCertificatePolicy: Hashable, Sendable {
             throw .malformed(error)
         }
         guard let usages, usages.contains(OID.clientAuth) else { throw .missingClientAuthUsage }
-        guard !subject.isEmpty, subject == expectedSubject else { throw .unexpectedSubject(subject) }
-        return Principal(certificateSubject: subject)
+        let principal = Principal(certificateSubject: subject)
+        guard !subject.isEmpty, principal == Principal(certificateSubject: expectedSubject) else {
+            throw .unexpectedSubject(subject)
+        }
+        return principal
     }
 }

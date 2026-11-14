@@ -66,7 +66,7 @@ enum ListenerHarness {
     static var acceptedTokens: AcceptedTokens { AcceptedTokens(current: BearerToken(secret: Array(token.utf8))) }
 
     static func configuration() -> ListenerConfiguration {
-        ListenerConfiguration(
+        var configuration = ListenerConfiguration(
             bindHost: "127.0.0.1",
             bindPort: 0,
             hosts: HostAllowlist(
@@ -75,6 +75,12 @@ enum ListenerHarness {
             ),
             clientCertificates: ClientCertificatePolicy(expectedSubject: TestPKI.expectedSubject)
         )
+        // A refusal closes deskhand's output and lingers. A test client starved past the linger can
+        // flush its request body after the full close; the reset that answers it makes NIO close
+        // the client before it reads the refusal. Lingering past the suite's time limit leaves every
+        // close to the client, so a loaded machine changes how long a test takes, not its outcome.
+        configuration.closeLinger = .minutes(2)
+        return configuration
     }
 
     static func makeTLS(_ pki: TestPKI) throws -> ServerTLSContextHolder {

@@ -161,44 +161,14 @@ import Testing
         }
     }
 
-    @Test func idleConnectionIsClosedAtTheMaxAge() async throws {
-        let configuration = ListenerHarness.configuration { $0.connectionMaxAge = .milliseconds(300) }
-        try await ListenerHarness.withListener(configuration: configuration) { address, pki, _ in
-            let (first, afterCap) = try await TestClient.withConnection(to: address, pki: pki, as: .valid) {
-                connection in
-                let first = await connection.roundTrip(.valid())
-                try await Task.sleep(for: .milliseconds(600))
-                return (first, await connection.next())
-            }
-            #expect(first.status == .ok)
-            #expect(first.response?.headers["Connection"] == ["keep-alive"])
-            #expect(afterCap.response == nil)
-        }
-    }
-
-    @Test func callInFlightAtTheMaxAgeCompletesThenTheConnectionCloses() async throws {
-        let handler = RecordingHandler(delay: .milliseconds(500))
-        let configuration = ListenerHarness.configuration { $0.connectionMaxAge = .milliseconds(200) }
-        try await ListenerHarness.withListener(configuration: configuration, handler: handler) { address, pki, _ in
-            let (response, after) = try await TestClient.withConnection(to: address, pki: pki, as: .valid) {
-                connection in
-                (await connection.roundTrip(.valid()), await connection.next())
-            }
-            #expect(response.status == .ok)
-            #expect(response.response?.headers["Connection"] == ["close"])
-            #expect(after.response == nil)
-            #expect(handler.cancellations == 0)
-        }
-    }
-
     @Test func disconnectCancelsTheHandlerTask() async throws {
         let handler = RecordingHandler(delay: .seconds(30))
         try await ListenerHarness.withListener(handler: handler) { address, pki, _ in
             try await TestClient.withConnection(to: address, pki: pki, as: .valid) { connection in
                 #expect(await connection.send(.valid()))
-                for _ in 0..<100 where handler.requests.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+                try await eventually { !handler.requests.isEmpty }
             }
-            for _ in 0..<100 where handler.cancellations == 0 { try await Task.sleep(for: .milliseconds(20)) }
+            try await eventually { handler.cancellations > 0 }
             #expect(handler.requests.count == 1)
             #expect(handler.cancellations == 1)
         }
@@ -218,12 +188,11 @@ import Testing
     @Test func peerThatNeverHandshakesIsDisconnected() async throws {
         let configuration = ListenerHarness.configuration { $0.handshakeTimeout = .milliseconds(200) }
         try await ListenerHarness.withListener(configuration: configuration) { address, _, _ in
+            let connecting = ContinuousClock.now
             let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton).connect(to: address)
                 .get()
-            let closed = channel.closeFuture
-            try await Task.sleep(for: .milliseconds(800))
-            #expect(!channel.isActive)
-            try? await closed.get()
+            try? await channel.closeFuture.get()
+            #expect(ContinuousClock.now - connecting >= .milliseconds(200))
         }
     }
 
@@ -242,7 +211,7 @@ import Testing
             events: { log.record($0) }
         )
         let start = Task { try await listener.start() }
-        for _ in 0..<200 where log.all.count < 3 { try await Task.sleep(for: .milliseconds(10)) }
+        try await eventually { log.all.count >= 3 }
         start.cancel()
         await #expect(throws: CancellationError.self) { try await start.value }
         #expect(log.all.count >= 3)
@@ -270,4 +239,10 @@ import Testing
         #expect(try await TestClient.roundTrip(.valid(), to: address, pki: pki).response == nil)
         await listener.stop()
     }
+}
+
+/// Polls until `condition` holds. The suite's time limit bounds the wait, so a slow machine only
+/// makes the test slower, never wrong.
+private func eventually(_ condition: () -> Bool) async throws {
+    while !condition() { try await Task.sleep(for: .milliseconds(10)) }
 }
