@@ -1,4 +1,5 @@
-/// A key together with the exact set of modifiers held while it is pressed.
+/// A key together with the exact set of modifiers held while it is pressed. A bare key has no
+/// modifiers.
 public struct Chord: Hashable, Sendable, CustomStringConvertible {
     public let modifiers: Set<Modifier>
     public let key: Key
@@ -28,39 +29,39 @@ public struct DeniedChordEntry: Sendable {
 }
 
 extension DeniedChordEntry {
-    /// Global shortcuts that reach past the frontmost app: launchers, app and Space switchers, Force
-    /// Quit, screenshots, log out and lock, input-source switching, and keyboard focus moves to the menu
-    /// bar, Dock and status menus (where deskhand's own arming menu lives). A chord is matched exactly,
-    /// so `command+space` does not deny `shift+command+space`.
+    /// The default denied global shortcut list of contract 6.9, exactly: shortcuts that reach past
+    /// the frontmost app, and those that move keyboard focus to the menu bar, the Dock or a status
+    /// menu, where deskhand's own menu is. ``AppPolicy/evaluate(chord:)`` also denies every press
+    /// that adds modifiers to an entry, so `shift+command+tab` and `control+shift+command+4` need no
+    /// rows of their own, and `f11` denies the bare key.
     public static let all: [DeniedChordEntry] =
         [
             row([.command], .space, "Spotlight"),
-            row([.option, .command], .space, "Finder search window"),
-            row([.control], .space, "Previous input source"),
-            row([.control, .option], .space, "Next input source"),
-            row([.command], .tab, "App switcher"),
-            row([.shift, .command], .tab, "App switcher, backwards"),
-            row([.option, .command], .escape, "Force Quit Applications"),
+            row([.control], .space, "Input source switching"),
+            row([.command], .tab, "Switch app"),
+            row([.option, .command], .escape, "Force Quit"),
             row([.control], .up, "Mission Control"),
             row([.control], .down, "Application windows"),
             row([.control], .left, "Move left a Space"),
             row([.control], .right, "Move right a Space"),
-            row([.shift, .command], .digit3, "Screenshot of the screen to a file"),
-            row([.shift, .command], .digit4, "Screenshot of an area to a file"),
+            row([.shift, .command], .digit3, "Screenshot of the screen"),
+            row([.shift, .command], .digit4, "Screenshot of an area"),
             row([.shift, .command], .digit5, "Screenshot and recording options"),
-            row([.shift, .command], .digit6, "Screenshot of the Touch Bar"),
-            row([.control, .shift, .command], .digit3, "Screenshot of the screen to the clipboard"),
-            row([.control, .shift, .command], .digit4, "Screenshot of an area to the clipboard"),
+        ]
+        + zip([Key.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8], focusPurposes).map { row([.control], $0, $1) }
+        + [
+            row([], .f11, "Show Desktop"),
+            row([.command], .f5, "VoiceOver"),
+            row([.option, .command], .digit8, "Zoom"),
             row([.control, .command], .q, "Lock Screen"),
             row([.shift, .command], .q, "Log Out"),
-            row([.option, .shift, .command], .q, "Log Out without confirming"),
-            row([.control], .f2, "Move focus to the menu bar"),
-            row([.control], .f3, "Move focus to the Dock"),
-            row([.control], .f8, "Move focus to status menus"),
         ]
-        + [Key.digit1, .digit2, .digit3, .digit4, .digit5, .digit6, .digit7, .digit8, .digit9].map {
-            row([.control], $0, "Switch to Desktop \($0.rawValue)")
-        }
+
+    private static let focusPurposes = [
+        "Turn keyboard access on or off", "Move focus to the menu bar", "Move focus to the Dock",
+        "Move focus to the active or next window", "Move focus to the window toolbar",
+        "Move focus to the floating window", "Change the way Tab moves focus", "Move focus to the status menus",
+    ]
 
     private static func row(_ modifiers: Set<Modifier>, _ key: Key, _ purpose: String) -> DeniedChordEntry {
         DeniedChordEntry(chord: Chord(modifiers, key), purpose: purpose)

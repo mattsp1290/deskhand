@@ -11,7 +11,7 @@ public enum SensitiveAppCategory: String, CaseIterable, Sendable {
     case browser
 
     /// Whether apps of this category are also left out of screenshots by default. Browsers and System
-    /// Settings stay visible: an owner who allows a browser needs to see it, and settings hold no secrets.
+    /// Settings stay visible: they are denied for input, and what they show is not secret by default.
     public var excludedFromCaptureByDefault: Bool {
         switch self {
         case .terminal, .keychain, .passwordManager, .mail, .messaging: true
@@ -82,6 +82,7 @@ extension DefaultDenyEntry {
         row("desktop.WhatsApp", "WhatsApp (Electron)", .messaging, .unconfirmed),
         row("ru.keepcoder.Telegram", "Telegram", .messaging),
         row("org.telegram.desktop", "Telegram Desktop", .messaging, .unconfirmed),
+        row("com.tdesktop.Telegram", "Telegram Desktop (direct download)", .messaging, .unconfirmed),
         row("org.whispersystems.signal-desktop", "Signal", .messaging),
         row("com.microsoft.teams2", "Microsoft Teams", .messaging),
         row("com.microsoft.teams", "Microsoft Teams classic", .messaging),
@@ -99,6 +100,7 @@ extension DefaultDenyEntry {
         row("com.microsoft.edgemac", "Microsoft Edge", .browser),
         row("com.brave.Browser", "Brave", .browser),
         row("com.operasoftware.Opera", "Opera", .browser),
+        row("com.operasoftware.OperaGX", "Opera GX", .browser, .unconfirmed),
         row("com.vivaldi.Vivaldi", "Vivaldi", .browser),
         row("com.kagi.kagimacOS", "Orion", .browser, .unconfirmed),
         row("app.zen-browser.zen", "Zen", .browser, .unconfirmed),

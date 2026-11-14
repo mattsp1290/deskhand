@@ -2,6 +2,7 @@ import DeskhandCore
 import Testing
 
 private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
+private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhand")!)
 
 @Suite struct DefaultDenyListTests {
     /// The apps the bean and the plan name, each with the category it must be denied under.
@@ -20,7 +21,7 @@ private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
         let entry = DefaultDenyEntry.all.first { $0.family.contains(bundle(raw)) }
         #expect(entry?.category == category)
         #expect(entry?.confidence == .known)
-        let decision = AppPolicy().refusal(of: AppIdentity(bundleID: bundle(raw), signer: .apple))
+        let decision = standard.refusal(of: AppIdentity(bundleID: bundle(raw), signer: .apple))
         #expect(decision == .denyListed(BundleIDFamily(bundle(raw))))
     }
 
@@ -43,68 +44,88 @@ private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
         }
     }
 
-    @Test(arguments: SensitiveAppCategory.allCases)
-    func captureExclusionsFollowTheCategory(_ category: SensitiveAppCategory) {
-        let policy = AppPolicy()
-        for entry in DefaultDenyEntry.all where entry.category == category {
-            #expect(policy.excludesFromCapture(entry.family.root) == category.excludedFromCaptureByDefault)
-        }
+    /// Which apps are hidden from screenshots by default is a privacy decision, so it is written out
+    /// here rather than derived from the predicate that builds the list.
+    @Test(arguments: [
+        ("com.apple.Terminal", true), ("com.googlecode.iterm2", true), ("com.apple.keychainaccess", true),
+        ("com.1password.1password", true), ("com.apple.mail", true), ("com.apple.MobileSMS", true),
+        ("com.tinyspeck.slackmacgap", true), ("com.apple.Safari", false), ("com.google.Chrome", false),
+        ("com.apple.systempreferences", false), ("com.apple.TextEdit", false),
+    ])
+    func captureExclusionsByDefault(_ raw: String, _ excluded: Bool) {
+        #expect(standard.excludesFromCapture(bundle(raw)) == excluded)
     }
 
     @Test func captureExclusionsAreConfigurable() {
-        let policy = AppPolicy(captureExclusions: [BundleIDFamily(bundle("com.example.Secret"))])
+        let policy = AppPolicy(
+            deskhandBundleID: bundle("com.example.deskhand"),
+            captureExclusions: [BundleIDFamily(bundle("com.example.Secret"))])
         #expect(policy.excludesFromCapture(bundle("com.example.Secret")))
         #expect(policy.excludesFromCapture(bundle("com.example.secret.helper")))
         #expect(!policy.excludesFromCapture(bundle("com.apple.keychainaccess")))
-        #expect(!AppPolicy().excludesFromCapture(bundle("com.apple.TextEdit")))
-        #expect(AppPolicy().excludesFromCapture(bundle("com.1password.1password")))
+        #expect(!standard.excludesFromCapture(bundle("com.apple.TextEdit")))
+        #expect(standard.excludesFromCapture(bundle("com.1password.1password")))
     }
 }
 
 @Suite struct DeniedChordTests {
-    /// The chords the bean and the plan name, spelled as `details.shortcut`.
-    static let required: [(Chord, String)] = [
+    /// Contract 6.9's default list, written out: every row is denied as it is spelled there.
+    static let contractList: [String] = [
+        "command+space", "control+space", "command+tab", "option+command+escape", "control+up", "control+down",
+        "control+left", "control+right", "shift+command+3", "shift+command+4", "shift+command+5", "control+f1",
+        "control+f2", "control+f3", "control+f4", "control+f5", "control+f6", "control+f7", "control+f8", "f11",
+        "command+f5", "option+command+8", "control+command+q", "shift+command+q",
+    ]
+
+    @Test func theDefaultListIsTheContractList() {
+        #expect(DeniedChordEntry.all.map(\.chord.shortcut).sorted() == Self.contractList.sorted())
+        #expect(AppPolicy.defaultDeniedChords.count == Self.contractList.count)
+    }
+
+    static let denied: [(Chord, String)] = [
         (Chord([.command], .space), "command+space"),
         (Chord([.command], .tab), "command+tab"),
         (Chord([.command, .option], .escape), "option+command+escape"),
         (Chord([.control], .left), "control+left"),
-        (Chord([.control], .right), "control+right"),
-        (Chord([.control], .up), "control+up"),
-        (Chord([.control], .down), "control+down"),
-        (Chord([.command, .shift], .digit3), "shift+command+3"),
         (Chord([.command, .shift], .digit4), "shift+command+4"),
-        (Chord([.command, .shift], .digit5), "shift+command+5"),
+        (Chord([.control], .f2), "control+f2"),
+        (Chord([.control], .f3), "control+f3"),
+        (Chord([.control], .f8), "control+f8"),
+        (Chord([], .f11), "f11"),
+        (Chord([.command], .f5), "command+f5"),
+        // Supersets of a listed chord are denied too.
+        (Chord([.command, .shift], .tab), "shift+command+tab"),
         (Chord([.command, .shift, .control], .digit4), "control+shift+command+4"),
+        (Chord([.command, .shift], .space), "shift+command+space"),
+        (Chord([.command, .option], .space), "option+command+space"),
+        (Chord([.option, .command], .f5), "option+command+f5"),
+        (Chord([.shift], .f11), "shift+f11"),
+        (Chord([.option, .shift, .command], .q), "option+shift+command+q"),
     ]
 
-    @Test(arguments: required)
-    func deniesEachNamedChord(_ chord: Chord, _ shortcut: String) {
-        let decision = AppPolicy().evaluate(chord: chord)
+    @Test(arguments: denied)
+    func deniesListedChordsAndTheirSupersets(_ chord: Chord, _ shortcut: String) {
+        let decision = standard.evaluate(chord: chord)
         #expect(decision == .deny(chord))
         #expect(decision.toolErrorReason == .deniedShortcut(shortcut: shortcut))
         #expect(decision.toolErrorReason?.code == .deniedShortcut)
     }
 
-    @Test func deniesEveryDefaultEntry() {
-        #expect(AppPolicy.defaultDeniedChords.count == DeniedChordEntry.all.count)
-        for entry in DeniedChordEntry.all {
-            #expect(AppPolicy().evaluate(chord: entry.chord) == .deny(entry.chord), "\(entry.purpose)")
-        }
-    }
-
     @Test(arguments: [
-        Chord([.command], .c), Chord([.command], .v), Chord([.command, .shift], .space), Chord([], .space),
-        Chord([], .tab), Chord([], .left), Chord([.option], .left), Chord([.command], .digit3), Chord([.control], .a),
+        Chord([.command], .c), Chord([.command], .v), Chord([], .space), Chord([], .tab), Chord([], .left),
+        Chord([.option], .left), Chord([.command], .digit3), Chord([.control], .a), Chord([], .f5),
+        Chord([.shift], .tab), Chord([.option], .space), Chord([], .q),
     ])
     func allowsOtherChords(_ chord: Chord) {
-        #expect(AppPolicy().evaluate(chord: chord) == .allow)
-        #expect(AppPolicy().evaluate(chord: chord).toolErrorReason == nil)
+        #expect(standard.evaluate(chord: chord) == .allow)
+        #expect(standard.evaluate(chord: chord).toolErrorReason == nil)
     }
 
     @Test func theDeniedSetIsConfigurable() {
-        let custom = AppPolicy(deniedChords: [Chord([.command], .w)])
+        let custom = AppPolicy(deskhandBundleID: bundle("com.example.deskhand"), deniedChords: [Chord([.command], .w)])
         #expect(custom.evaluate(chord: Chord([.command], .space)) == .allow)
         #expect(custom.evaluate(chord: Chord([.command], .w)) == .deny(Chord([.command], .w)))
+        #expect(custom.evaluate(chord: Chord([.command, .shift], .w)) == .deny(Chord([.command, .shift], .w)))
     }
 
     @Test func aDecodedPressSpellsItsChordTheSameWay() throws {
@@ -118,6 +139,6 @@ private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
         }
         let chord = Chord(press)
         #expect(chord.shortcut == press.shortcut)
-        #expect(AppPolicy().evaluate(chord: chord) == .deny(Chord([.option, .command], .space)))
+        #expect(standard.evaluate(chord: chord) == .deny(Chord([.option, .command], .space)))
     }
 }
