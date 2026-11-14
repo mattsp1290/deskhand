@@ -2,7 +2,7 @@ import DeskhandCore
 import DeskhandTestSupport
 import Testing
 
-@Suite struct ActionLogClientTests {
+@Suite(.timeLimit(.minutes(1))) struct ActionLogClientTests {
     private func intent(_ operation: String = "op-1") throws -> ActionLogIntent {
         try LogSamples.intent(keyboard: LogSamples.typing("abc"), operation: operation)
     }

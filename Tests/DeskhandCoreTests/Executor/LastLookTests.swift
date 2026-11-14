@@ -4,7 +4,7 @@ import Testing
 /// Contract 12.3 steps 5 and 6: the checks before every event, the last look first among them, with
 /// nothing slow between the reads of the state, the lease, the person and the connection and the
 /// post.
-@Suite("Executor: the checks before every event")
+@Suite("Executor: the checks before every event", .timeLimit(.minutes(1)))
 struct LastLookTests {
     /// A change of the world that a check must catch.
     enum Change: String, CaseIterable, Sendable {

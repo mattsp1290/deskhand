@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct AllowanceContentsTests {
+@Suite(.timeLimit(.minutes(1))) struct AllowanceContentsTests {
     @Test func decodesTheContractExample() throws {
         let allowance = try Allowance(contents: Array(AllowanceSample.json().utf8))
         #expect(allowance.mac == AllowanceSample.mac)

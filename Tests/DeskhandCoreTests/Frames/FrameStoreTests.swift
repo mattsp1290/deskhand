@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct FrameIDMintTests {
+@Suite(.timeLimit(.minutes(1))) struct FrameIDMintTests {
     @Test func mintsThePrefixAnd22Base64URLCharacters() {
         var counting = ScriptedGenerator(words: [0x0001_0203_0405_0607, 0x0809_0A0B_0C0D_0E0F])
         #expect(FrameID.mint(using: &counting).rawValue == "frm_AAECAwQFBgcICQoLDA0ODw")
@@ -21,7 +21,7 @@ import Testing
     }
 }
 
-@Suite struct FrameStoreTests {
+@Suite(.timeLimit(.minutes(1))) struct FrameStoreTests {
     typealias F = FrameFixtures
 
     @Test func recordsAFrameFromItsCapture() throws {

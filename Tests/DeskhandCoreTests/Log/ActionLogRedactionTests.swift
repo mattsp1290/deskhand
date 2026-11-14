@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct ActionLogRedactionTests {
+@Suite(.timeLimit(.minutes(1))) struct ActionLogRedactionTests {
     /// Fake secrets a caller might type. Distinctive, so no fragment occurs in an entry by chance.
     static let typedTexts = [
         "Hunter2-Zq9-correct-horse",

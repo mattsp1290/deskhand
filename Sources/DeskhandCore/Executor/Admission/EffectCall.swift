@@ -136,5 +136,8 @@ public enum OwedRelease: Sendable {
     case nothingOwed
     /// A call holds the admission section; its own abort releases what it pressed.
     case operationInSection
+    /// The ledger could not be read, so what it owes is not known: nothing was released.
+    /// ``InputExecutor/retryCleanup(now:)`` reads it again at every retry.
+    case ledgerUnreadable
     case attempted(CleanupOutcome)
 }

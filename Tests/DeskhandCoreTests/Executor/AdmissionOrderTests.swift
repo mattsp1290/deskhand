@@ -3,7 +3,7 @@ import Testing
 
 /// Contract 9.5: every refusal step fails at once, and each fix reveals the next step's code, in
 /// order, until the call is admitted.
-@Suite("Admission: the order of refusals")
+@Suite("Admission: the order of refusals", .timeLimit(.minutes(1)))
 struct AdmissionOrderTests {
     /// One refusal step, made to fail, and how to make it pass.
     struct Fault {

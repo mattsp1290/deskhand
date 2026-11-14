@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct StatePrecedenceTests {
+@Suite(.timeLimit(.minutes(1))) struct StatePrecedenceTests {
     private typealias F = StateFixture
 
     /// Every allowance value, every arming and every reading of every platform signal: the active

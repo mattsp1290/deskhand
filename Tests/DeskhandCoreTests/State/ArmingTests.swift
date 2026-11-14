@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct ArmingTests {
+@Suite(.timeLimit(.minutes(1))) struct ArmingTests {
     private typealias F = StateFixture
 
     struct Row: Sendable, CustomTestStringConvertible {

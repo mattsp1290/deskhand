@@ -284,7 +284,7 @@ private enum Examples {
     ]
 }
 
-@Suite struct OutputEncodingTests {
+@Suite(.timeLimit(.minutes(1))) struct OutputEncodingTests {
     @Test(arguments: Fixtures.names(in: "examples", kind: ".output."))
     func modelEncodesToTheExample(name: String) throws {
         let model = try #require(Examples.all[name], "no model for \(name)")

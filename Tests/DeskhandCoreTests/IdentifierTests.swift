@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct IdentifierTests {
+@Suite(.timeLimit(.minutes(1))) struct IdentifierTests {
     @Test func acceptsTheContractAlphabets() {
         #expect(HolderID("crew:inst-7f3a:desk-lunus")?.rawValue == "crew:inst-7f3a:desk-lunus")
         #expect(OperationID("call_01HZX3M9Q3.retry-1") != nil)

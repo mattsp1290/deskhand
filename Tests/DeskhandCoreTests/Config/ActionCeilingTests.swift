@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct ActionCeilingTests {
+@Suite(.timeLimit(.minutes(1))) struct ActionCeilingTests {
     private static let start = Timestamp(millisecondsSinceEpoch: 1_794_668_400_000)
 
     private static func at(_ milliseconds: Int64) -> Timestamp { start.adding(milliseconds: milliseconds) }

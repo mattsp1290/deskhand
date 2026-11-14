@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite("Action expansion")
+@Suite("Action expansion", .timeLimit(.minutes(1)))
 struct ExpansionTests {
     let mac = FakeMac()
     let geometry = FrameGeometry(

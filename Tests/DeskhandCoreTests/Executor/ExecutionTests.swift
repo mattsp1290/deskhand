@@ -2,7 +2,7 @@ import DeskhandCore
 import Testing
 
 /// Contract 12.2 to 12.8: posting, the ledger, aborts, releases and the record.
-@Suite("Executor: execution")
+@Suite("Executor: execution", .timeLimit(.minutes(1)))
 struct ExecutionTests {
     static let chord: JSONValue = [
         "type": "press", "key": "k", "modifiers": ["shift", "control", "option"], "hold_ms": 500,

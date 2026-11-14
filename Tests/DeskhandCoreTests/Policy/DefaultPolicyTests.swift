@@ -4,7 +4,7 @@ import Testing
 private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
 private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhand")!)
 
-@Suite struct DefaultDenyListTests {
+@Suite(.timeLimit(.minutes(1))) struct DefaultDenyListTests {
     /// The apps the bean and the plan name, each with the category it must be denied under.
     static let required: [(String, SensitiveAppCategory)] = [
         ("com.apple.Terminal", .terminal), ("com.googlecode.iterm2", .terminal),
@@ -68,7 +68,7 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
     }
 }
 
-@Suite struct DeniedChordTests {
+@Suite(.timeLimit(.minutes(1))) struct DeniedChordTests {
     /// Contract 6.9's default list, written out: every row is denied as it is spelled there.
     static let contractList: [String] = [
         "command+space", "control+space", "command+tab", "option+command+escape", "control+up", "control+down",

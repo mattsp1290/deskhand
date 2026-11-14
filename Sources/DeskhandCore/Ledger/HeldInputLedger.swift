@@ -67,7 +67,8 @@ public struct HeldInputLedger: ~Copyable {
 
     /// A ledger whose store could not be read at start. It is unavailable, so every effect call is
     /// refused with `internal_error` (contract 12.3), until ``reload()`` reads the store. Unlike
-    /// after a failed write, it knows no entries, so nothing is released until then.
+    /// after a failed write, it knows no entries, so nothing is released until then; the executor
+    /// tries the reload at every cleanup retry.
     public init(unreadable store: any HeldInputStore) {
         entries = []
         self.store = store

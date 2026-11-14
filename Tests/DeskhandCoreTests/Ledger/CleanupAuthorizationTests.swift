@@ -3,7 +3,7 @@ import Testing
 
 /// Contract 12.8: a release needs `locked`, `not_console`, `login_window` and `secure_input` all
 /// absent, each judged on its own. Nothing else holds a release back.
-@Suite struct CleanupAuthorizationTests {
+@Suite(.timeLimit(.minutes(1))) struct CleanupAuthorizationTests {
     /// What each state blocks when it holds alone.
     private static let stateTable: [(BlockingState, CleanupBlocker?)] = [
         (.gated, nil), (.paused, nil), (.disarmed, nil), (.notConsole, .notConsole), (.locked, .locked),

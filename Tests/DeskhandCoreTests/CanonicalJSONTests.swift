@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct CanonicalJSONTests {
+@Suite(.timeLimit(.minutes(1))) struct CanonicalJSONTests {
     /// RFC 8785 Appendix B: IEEE 754 bit patterns and their canonical JSON numbers.
     @Test(
         arguments: [

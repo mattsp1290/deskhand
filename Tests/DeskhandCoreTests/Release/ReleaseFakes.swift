@@ -145,7 +145,7 @@ struct ReleaseHarness {
         var seams = InputExecutor.Seams(
             state: mac, frames: frames, patches: FakePatches(mac: mac), identity: mac, activity: mac,
             poster: FaultyPoster(mac: mac, faults: faults), keyCodes: mac, log: InMemoryActionLog(), timer: mac,
-            observer: mac, operationStore: loader)
+            waitTimer: ManualWaitLimits(), observer: mac, operationStore: loader)
         if let releases { seams.releases = releases }
         let ledger = try HeldInputLedger(store: FaultyLedgerStore(mac: mac, faults: faults))
         executor = InputExecutor(seams: seams, ledger: ledger, now: mac.reading.wall)

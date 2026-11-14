@@ -134,6 +134,8 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
     }
 
     let world: Mutex<World>
+    /// Tests waiting for what the executor reports.
+    let reports = Waiters()
 
     init(_ configure: (inout World) -> Void = { _ in }) {
         var world = World()
@@ -253,7 +255,13 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
     // ExecutorObserver
     func executionDidChange(executing: Bool) { change { $0.executionChanges.append(executing) } }
     func didPostEvent(at instant: ContinuousClock.Instant) { change { $0.observedPosts.append(instant) } }
-    func actionLogDidAppend(succeeded: Bool) { change { $0.logAppends.append(succeeded) } }
+    func actionLogDidAppend(succeeded: Bool) {
+        change { $0.logAppends.append(succeeded) }
+        reports.changed()
+    }
+
+    /// Returns once the executor has reported `count` appends to the action log.
+    func waitForLogAppends(_ count: Int) async { await reports.wait { self.read(\.logAppends).count >= count } }
     func cleanupPendingDidChange(_ pending: Bool) { change { $0.cleanupPending.append(pending) } }
 
     // The ledger's disk
@@ -370,8 +378,8 @@ actor Gate {
         waiting = []
     }
 
-    /// A gate that opens on its own after `delay`, so a wait that should have been cut short ends
-    /// the test with a failure rather than a hang.
+    /// A gate that opens on its own after `delay`. Its outcome depends on the machine's speed:
+    /// prefer a gate the test opens, with ``ManualWaitLimits`` for the waits it should cut short.
     static func opening(after delay: Duration) -> Gate {
         let gate = Gate()
         Task {
@@ -428,6 +436,8 @@ actor HookedLog: ActionLogClient {
     let memory = InMemoryActionLog()
     private var hooks: [ActionLogEntryKind: @Sendable () async -> Void] = [:]
     private var failsWhenCancelled = false
+    private nonisolated let appended = Mutex(0)
+    private nonisolated let appends = Waiters()
 
     func on(_ kind: ActionLogEntryKind, _ hook: (@Sendable () async -> Void)?) { hooks[kind] = hook }
 
@@ -437,6 +447,13 @@ actor HookedLog: ActionLogClient {
         if let hook = hooks[line.entry.kind] { await hook() }
         if failsWhenCancelled, Task.isCancelled { throw .connectionLost }
         try await memory.append(line)
+        appended.withLock { $0 += 1 }
+        appends.changed()
+    }
+
+    /// Returns once `count` entries were committed.
+    nonisolated func waitForEntries(_ count: Int) async {
+        await appends.wait { self.appended.withLock { $0 } >= count }
     }
 }
 
@@ -457,22 +474,29 @@ struct Harness {
     let loader: FakeStoreLoader
     let executor: InputExecutor
 
+    /// The executor's wait limits pass only when the test lets them through `waitTimer`, unless the
+    /// test names a `waitLimit` and no timer: that limit then passes in real time.
     init(
         mac: FakeMac = FakeMac(), frames: FakeFrames? = nil, loader: FakeStoreLoader = FakeStoreLoader(),
-        actionsPerMinute: Int = 60, waitLimit: Duration = InputExecutor.Configuration.defaultWaitLimit,
+        actionsPerMinute: Int = 60, waitLimit: Duration? = nil, waitTimer: (any WaitLimitTimer)? = nil,
         overrides: Overrides = Overrides()
     ) throws {
         self.mac = mac
         self.frames = frames ?? FakeFrames()
         self.loader = loader
         log = FaultInjectingActionLog(wrapping: HookedLog())
+        let timer: any WaitLimitTimer =
+            if let waitTimer { waitTimer } else if waitLimit == nil { ManualWaitLimits() } else { TaskSleepTimer() }
         let seams = InputExecutor.Seams(
             state: overrides.state ?? mac, frames: self.frames, patches: FakePatches(mac: mac),
             identity: overrides.identity ?? mac, activity: overrides.activity ?? mac, poster: overrides.poster ?? mac,
-            keyCodes: mac, log: log, timer: mac, observer: mac, operationStore: loader)
+            keyCodes: mac, log: log, timer: mac, waitTimer: timer, observer: mac, operationStore: loader)
         let ledger = try HeldInputLedger(store: overrides.ledgerStore ?? mac.ledgerStore)
         executor = InputExecutor(
-            configuration: .init(actionsPerMinute: actionsPerMinute, waitLimit: waitLimit), seams: seams,
+            configuration: .init(
+                actionsPerMinute: actionsPerMinute, waitLimit: waitLimit ?? InputExecutor.Configuration.defaultWaitLimit
+            ),
+            seams: seams,
             ledger: ledger, now: mac.reading.wall)
     }
 

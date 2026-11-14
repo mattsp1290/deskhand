@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct TransitionEffectTests {
+@Suite(.timeLimit(.minutes(1))) struct TransitionEffectTests {
     private typealias F = StateFixture
 
     struct Row: Sendable, CustomTestStringConvertible {

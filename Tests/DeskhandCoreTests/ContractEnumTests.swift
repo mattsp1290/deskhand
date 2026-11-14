@@ -2,7 +2,7 @@ import DeskhandCore
 import Testing
 
 /// The Swift enums must list exactly the values of the schema enums, in the schema's order.
-@Suite struct ContractEnumTests {
+@Suite(.timeLimit(.minutes(1))) struct ContractEnumTests {
     private func schemaEnum(_ definition: String, in file: String = "defs.json") throws -> [String] {
         var node = try Fixtures.json(file)
         for name in definition.split(separator: "/") { node = try #require(node[String(name)]) }

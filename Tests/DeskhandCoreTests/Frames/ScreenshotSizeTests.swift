@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct ScreenshotSizeTests {
+@Suite(.timeLimit(.minutes(1))) struct ScreenshotSizeTests {
     struct Row: Sendable, CustomTestStringConvertible {
         let source: (Int, Int)
         let maxLongEdge: Int

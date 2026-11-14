@@ -45,7 +45,8 @@ struct RecoveryRig {
             }
             return InputExecutor.Seams(
                 state: mac, frames: frames, patches: FakePatches(mac: mac), identity: mac, activity: mac,
-                poster: poster ?? mac, keyCodes: mac, log: InMemoryActionLog(), timer: mac, observer: mac,
+                poster: poster ?? mac, keyCodes: mac, log: InMemoryActionLog(), timer: mac,
+                waitTimer: ManualWaitLimits(), observer: mac,
                 operationStore: records ?? FileOperationStoreLoader(path: journalPath))
         }
     }
