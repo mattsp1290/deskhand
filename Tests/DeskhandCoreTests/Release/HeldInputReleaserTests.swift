@@ -3,7 +3,7 @@ import Testing
 
 /// The release handler on its own (contract 12.4 step 2, 12.7, 12.8): what it posts, in which
 /// order, under which authorization, and what it leaves in the ledger.
-@Suite("Release: the release handler")
+@Suite("Release: the release handler", .timeLimit(.minutes(1)))
 struct HeldInputReleaserTests {
     /// A fake Mac whose ledger file holds `entries`, opened through the fault-injecting disk.
     private static func ledger(_ entries: [HeldInput], on mac: FakeMac, faults: ReleaseFaults) throws

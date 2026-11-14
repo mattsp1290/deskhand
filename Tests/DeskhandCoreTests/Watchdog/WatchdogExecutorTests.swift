@@ -4,7 +4,7 @@ import Testing
 
 /// The real executor built with the watchdog's activity source, and the watchdog driving its
 /// cleanup retries (contract 11.2, 13.2).
-@Suite("Watchdog: with the executor")
+@Suite("Watchdog: with the executor", .timeLimit(.minutes(1)))
 struct WatchdogExecutorTests {
     static let typing: JSONValue = ["type": "type", "text": "hello world"]
     static let drag: JSONValue = [
@@ -218,7 +218,7 @@ final class StaleLeaseOwner: WatchdogStateOwner {
 
 struct WatchdogFakeFault: Error {}
 
-@Suite("Watchdog: polling the allowance file")
+@Suite("Watchdog: polling the allowance file", .timeLimit(.minutes(1)))
 struct PollingFileChangeSourceTests {
     @Test("a change of the file or of its directory is reported at the next poll")
     func pollsSignatures() async {

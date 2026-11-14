@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct NodeAddressTests {
+@Suite(.timeLimit(.minutes(1))) struct NodeAddressTests {
     static let canonical: [([UInt8], String)] = [
         ([10, 0, 0, 149], "10.0.0.149"),
         ([0, 0, 0, 0], "0.0.0.0"),

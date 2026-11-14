@@ -65,7 +65,7 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
     .deny(AppDenial(deniedBy: by, subject: subject, reason: reason))
 }
 
-@Suite struct AppPolicyTests {
+@Suite(.timeLimit(.minutes(1))) struct AppPolicyTests {
     static let refusals: [RefusalCase] = [
         RefusalCase("Apple app on the allowlist", textEdit, nil),
         RefusalCase("team app on the allowlist", editor, nil),
@@ -294,7 +294,7 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
     }
 }
 
-@Suite struct AppIdentityTests {
+@Suite(.timeLimit(.minutes(1))) struct AppIdentityTests {
     @Test(arguments: ["ABCDE12345", "0123456789", "EQHXZ8M8AV"])
     func acceptsTeamIDs(_ raw: String) {
         #expect(TeamID(raw)?.rawValue == raw)

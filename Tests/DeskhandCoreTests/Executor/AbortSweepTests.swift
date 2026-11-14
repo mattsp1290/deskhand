@@ -5,7 +5,7 @@ import Testing
 /// Contract 6.6, 11.2, 12.4, 12.7: whatever stops an operation after whichever event, nothing it
 /// pressed stays down or owed, unless cleanup is not authorized; and nothing but the operation's
 /// own end releases what it holds.
-@Suite("Executor: aborts after every event")
+@Suite("Executor: aborts after every event", .timeLimit(.minutes(1)))
 struct AbortSweepTests {
     enum Cause: String, CaseIterable, Sendable { case userActive, paused, hangUp, postFails, locked }
 

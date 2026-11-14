@@ -4,7 +4,7 @@ import Testing
 
 /// What the executor hands the release handler (contract 12.7, 12.8): authorization read again
 /// before every release, and no release judged by what an earlier operation left behind.
-@Suite("Release: authorization per release and per operation")
+@Suite("Release: authorization per release and per operation", .timeLimit(.minutes(1)))
 struct ReleaseAuthorizationTests {
     @Test("an abort asks for authorization before every release: a lock after the first stops the rest")
     func abortAsksAuthorizationBeforeEveryRelease() async throws {

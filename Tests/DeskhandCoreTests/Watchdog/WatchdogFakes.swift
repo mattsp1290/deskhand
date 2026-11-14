@@ -357,7 +357,7 @@ struct ExecutorWatch {
         let activity = PersonActivitySource(signal: hid, posts: posts.recorder) { mac.reading.monotonic }
         let seams = InputExecutor.Seams(
             state: mac, frames: frames, patches: FakePatches(mac: mac), identity: mac, activity: activity,
-            poster: mac, keyCodes: mac, log: InMemoryActionLog(), timer: mac,
+            poster: mac, keyCodes: mac, log: InMemoryActionLog(), timer: mac, waitTimer: ManualWaitLimits(),
             observer: ReportingObserver(mac: mac, posts: posts), operationStore: FakeStoreLoader())
         executor = InputExecutor(
             seams: seams, ledger: try HeldInputLedger(store: mac.ledgerStore), now: mac.reading.wall)

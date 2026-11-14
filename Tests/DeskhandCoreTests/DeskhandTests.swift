@@ -3,7 +3,7 @@ import DeskhandCore
 import Foundation
 import Testing
 
-@Suite struct DeskhandTests {
+@Suite(.timeLimit(.minutes(1))) struct DeskhandTests {
     @Test func versionIsSet() {
         #expect(!Deskhand.version.isEmpty)
     }

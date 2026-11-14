@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct FrameGeometryTests {
+@Suite(.timeLimit(.minutes(1))) struct FrameGeometryTests {
     typealias F = FrameFixtures
 
     /// The contract 8.2 example: a 3456 x 2234 Retina display at 1728 x 1117 points.

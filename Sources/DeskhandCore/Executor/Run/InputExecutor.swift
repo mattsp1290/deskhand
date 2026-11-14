@@ -45,6 +45,8 @@ public actor InputExecutor {
         public var keyCodes: any KeyCodeMapper
         public var log: any ActionLogClient
         public var timer: any ExecutionTimer
+        /// Measures ``Configuration/waitLimit``.
+        public var waitTimer: any WaitLimitTimer
         public var releases: any ReleaseHandler
         public var observer: any ExecutorObserver
         public var operationStore: any OperationStoreLoader
@@ -53,8 +55,8 @@ public actor InputExecutor {
             state: any StateSource, frames: any FrameSource, patches: any TargetPatchVerifier,
             identity: any IdentityMeasurer, activity: any UserActivitySource, poster: any EventPoster,
             keyCodes: any KeyCodeMapper, log: any ActionLogClient, timer: any ExecutionTimer = TaskSleepTimer(),
-            releases: any ReleaseHandler = HeldInputReleaser(), observer: any ExecutorObserver,
-            operationStore: any OperationStoreLoader
+            waitTimer: any WaitLimitTimer = TaskSleepTimer(), releases: any ReleaseHandler = HeldInputReleaser(),
+            observer: any ExecutorObserver, operationStore: any OperationStoreLoader
         ) {
             self.state = state
             self.frames = frames
@@ -65,6 +67,7 @@ public actor InputExecutor {
             self.keyCodes = keyCodes
             self.log = log
             self.timer = timer
+            self.waitTimer = waitTimer
             self.releases = releases
             self.observer = observer
             self.operationStore = operationStore
@@ -72,7 +75,7 @@ public actor InputExecutor {
     }
 
     let seams: Seams
-    let waitLimit: Duration
+    let waitLimit: WaitLimit
     var ceiling: ActionCeiling
     /// `nil` when it could not be loaded, or after it refused a final write without marking itself
     /// unavailable; every effect is then `internal_error` until it is loaded again (contract 12.3).
@@ -92,7 +95,7 @@ public actor InputExecutor {
     ) {
         let owesReleases = !ledger.pending().isEmpty
         self.seams = seams
-        waitLimit = configuration.waitLimit
+        waitLimit = WaitLimit(duration: configuration.waitLimit, timer: seams.waitTimer)
         ceiling = ActionCeiling(actionsPerMinute: configuration.actionsPerMinute)
         store = try? seams.operationStore.load(now: now)
         self.ledger = ledger

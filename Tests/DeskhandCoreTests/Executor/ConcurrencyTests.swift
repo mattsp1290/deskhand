@@ -4,7 +4,7 @@ import Testing
 
 /// The admission section (contract 9.5): one call inside at a time, arrivals answered at once, and a
 /// repeated `operation_id` performed once however close together the calls arrive.
-@Suite("Executor: the admission section")
+@Suite("Executor: the admission section", .timeLimit(.minutes(1)))
 struct ConcurrencyTests {
     @Test("while a call is being admitted: same key in progress or conflict, any other busy")
     func duringAdmission() async throws {

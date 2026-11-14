@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct HeldInputLedgerTests {
+@Suite(.timeLimit(.minutes(1))) struct HeldInputLedgerTests {
     private let control = HeldInput.control
     private let keyA = HeldInput.keyA
     private let left = HeldInput.button(.left)

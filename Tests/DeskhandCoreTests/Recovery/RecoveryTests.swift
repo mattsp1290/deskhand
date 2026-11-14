@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// A start after a crash or a stop, on real files (contract 10.1, 11.2, 12.7 to 12.9).
-@Suite("Recovery: restart")
+@Suite("Recovery: restart", .timeLimit(.minutes(1)))
 struct RecoveryTests {
     static let accepted = Sample.key("op-accepted")
     static let executing = Sample.key("op-executing")

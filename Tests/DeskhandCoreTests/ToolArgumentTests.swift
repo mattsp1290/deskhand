@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct ToolArgumentTests {
+@Suite(.timeLimit(.minutes(1))) struct ToolArgumentTests {
     /// Every invalid input example and the `details.argument` pointer deskhand answers it with.
     static let invalidInputPointers: [String: String] = [
         "displays.input.unexpected-argument.json": "",

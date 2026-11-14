@@ -97,7 +97,7 @@ enum Situation: String, CaseIterable, Sendable {
     }
 }
 
-@Suite struct LeaseManagerTests {
+@Suite(.timeLimit(.minutes(1))) struct LeaseManagerTests {
     @Test(arguments: Situation.allCases)
     func operationsFollowTheContractTable(_ situation: Situation) {
         let expected = situation.expected

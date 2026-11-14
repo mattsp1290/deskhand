@@ -3,7 +3,7 @@ import Testing
 
 /// Contract 13.1 and 14.4: the deadline, its timer while idle, and revocation through the watch and
 /// the poll.
-@Suite("Watchdog: deadline and revocation")
+@Suite("Watchdog: deadline and revocation", .timeLimit(.minutes(1)))
 struct WatchdogDeadlineTests {
     struct Sources: CustomTestStringConvertible, Sendable {
         let armedMs: Int64

@@ -4,7 +4,7 @@ import Testing
 /// A fixed test key: the bytes 0 to 31.
 private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
 
-@Suite struct RequestDigestTests {
+@Suite(.timeLimit(.minutes(1))) struct RequestDigestTests {
     private func digest(_ tool: ToolName, _ arguments: String, key: DigestKey = key) throws -> RequestDigest {
         try RequestDigest(tool: tool, arguments: #require(JSONValue(parsing: arguments).objectValue), key: key)
     }

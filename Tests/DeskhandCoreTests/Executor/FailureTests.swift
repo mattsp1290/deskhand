@@ -3,7 +3,7 @@ import Testing
 
 /// Faults and hang-ups: nothing is posted that was not first recorded (contract 12.3), and a call
 /// whose connection closed before admission is dropped (contract 9.5).
-@Suite("Executor: faults")
+@Suite("Executor: faults", .timeLimit(.minutes(1)))
 struct FailureTests {
     @Test("an intent the log cannot commit refuses with log_unavailable: nothing posted, no record")
     func logUnavailable() async throws {

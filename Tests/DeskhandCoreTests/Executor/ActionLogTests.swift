@@ -4,9 +4,19 @@ import Testing
 /// The action log around an effect (contract 11.3, 12.3, 12.10): every admitted call gets its
 /// outcome entry, no append can hold the section or the answer for ever, and a caller hanging up
 /// does not cancel an append.
-@Suite("Executor: the action log")
+@Suite("Executor: the action log", .timeLimit(.minutes(1)))
 struct ActionLogTests {
-    static let shortWait: Duration = .milliseconds(100)
+    /// Runs `call` until it reaches `gate`, which holds it, then lets every wait limit pass and
+    /// returns the answer: `nil` when the call never answered.
+    static func answer(of call: EffectCall, on harness: Harness, after gate: Gate, limits: ManualWaitLimits) async
+        -> EffectAnswer?
+    {
+        let executor = harness.executor
+        let task = Task { await executor.perform(call) }
+        var arrivals = gate.arrived.makeAsyncIterator()
+        _ = await arrivals.next()
+        return await limits.passing { await finished(task) }
+    }
 
     @Test("a final record write that fails still gets an outcome entry: failed, with the events posted")
     func finalRecordWriteFails() async throws {
@@ -34,11 +44,13 @@ struct ActionLogTests {
 
     @Test("an intent the writer never acknowledges is log_unavailable once the wait runs out")
     func hungWriterRefusesIntent() async throws {
-        let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate.opening(after: .seconds(2))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.intent) { await gate.pass() }
-        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 3, "y": 4]))
-        #expect(answer.code == .logUnavailable)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "click", "x": 3, "y": 4]), on: harness, after: gate, limits: limits)
+        #expect(answer?.code == .logUnavailable)
         #expect(harness.mac.posted.isEmpty)
         #expect(harness.mac.read(\.logAppends).contains(false))
         #expect(await harness.executor.isInSection == false)
@@ -53,26 +65,30 @@ struct ActionLogTests {
 
     @Test("an outcome entry the writer never acknowledges does not hold the answer")
     func hungWriterReleasesAnswer() async throws {
-        let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate.opening(after: .seconds(2))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.outcome) { await gate.pass() }
-        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
-        #expect(answer.result?.eventsPosted == 1)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "move", "x": 1, "y": 1]), on: harness, after: gate, limits: limits)
+        #expect(answer?.result?.eventsPosted == 1)
         #expect(harness.mac.read(\.logAppends) == [true, false])
         await gate.open()
     }
 
     @Test("an intent that lands after its wait ran out is followed, not preceded, by its refusal entry")
     func lateIntentIsFollowedByItsRefusal() async throws {
-        let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate.opening(after: .seconds(3))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.intent) { await gate.pass() }
-        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
-        #expect(answer.code == .logUnavailable)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "move", "x": 1, "y": 1]), on: harness, after: gate, limits: limits)
+        #expect(answer?.code == .logUnavailable)
         #expect(await harness.logEntries.isEmpty, "the refusal entry went ahead of the intent it answers")
 
         await gate.open()
-        #expect(await eventually { await harness.logEntries.count == 2 })
+        await harness.log.base.waitForEntries(2)
         let entries = await harness.logEntries
         #expect(entries.map(\.kind) == [.intent, .refusal])
         guard case .refusal(let refusal)? = entries.last else { return }
@@ -84,22 +100,25 @@ struct ActionLogTests {
 
     @Test("an append that answers after its wait ran out reports its answer then")
     func lateAnswerIsReported() async throws {
-        let harness = try Harness(waitLimit: Self.shortWait)
-        let gate = Gate.opening(after: .seconds(3))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.outcome) { await gate.pass() }
-        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
-        #expect(answer.result?.eventsPosted == 1)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "move", "x": 1, "y": 1]), on: harness, after: gate, limits: limits)
+        #expect(answer?.result?.eventsPosted == 1)
         #expect(harness.mac.read(\.logAppends) == [true, false])
 
         await gate.open()
-        #expect(await eventually { harness.mac.read(\.logAppends).count == 3 })
+        await harness.mac.waitForLogAppends(3)
         #expect(harness.mac.read(\.logAppends) == [true, false, true])
     }
 
     @Test("an append that runs out of time after a newer append succeeded does not set log_unavailable")
     func staleFailureIsDropped() async throws {
-        let harness = try Harness(waitLimit: .seconds(1))
-        let gate = Gate.opening(after: .seconds(4))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.refusal) { await gate.pass() }
         let paused = ExecutorFixture.report([.paused], at: harness.mac.reading)
         harness.mac.change { $0.report = paused }
@@ -113,37 +132,46 @@ struct ActionLogTests {
         let admitted = await executor.perform(
             try harness.pointer(["type": "move", "x": 1, "y": 1], operation: "op-ok"))
         #expect(admitted.result?.eventsPosted == 1)
-        #expect(await refused.value.code == .paused)
+        #expect(harness.mac.read(\.logAppends) == [true, true])
+        let refusal = await limits.passing { await finished(refused) }
+        #expect(refusal?.code == .paused)
         #expect(harness.mac.read(\.logAppends) == [true, true])
 
         await gate.open()
-        #expect(await eventually { await harness.logEntries.count == 3 })
+        await harness.log.base.waitForEntries(3)
         #expect(harness.mac.read(\.logAppends) == [true, true])
     }
 
     @Test("the section is free while an outcome entry waits for the writer")
     func sectionIsFreeWhileTheOutcomeEntryWaits() async throws {
-        let harness = try Harness(waitLimit: .milliseconds(300))
-        let gate = Gate.opening(after: .seconds(3))
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
+        let gate = Gate()
         await harness.onLog(.outcome) { await gate.pass() }
         let executor = harness.executor
-        let first = try harness.pointer(["type": "move", "x": 1, "y": 1])
-        let task = Task { await executor.perform(first) }
+        let firstCall = try harness.pointer(["type": "move", "x": 1, "y": 1])
+        let secondCall = try harness.pointer(["type": "move", "x": 2, "y": 2], operation: "op-2")
+        let first = Task { await executor.perform(firstCall) }
         var arrivals = gate.arrived.makeAsyncIterator()
         _ = await arrivals.next()
-        let second = await executor.perform(try harness.pointer(["type": "move", "x": 2, "y": 2], operation: "op-2"))
-        #expect(second.code != .busy)
-        #expect(second.result?.eventsPosted == 1)
-        _ = await task.value
+        // The second call reaches its own outcome entry only if it was admitted and ran.
+        let second = Task { await executor.perform(secondCall) }
+        _ = await arrivals.next()
+        let answers = await limits.passing { (await finished(first), await finished(second)) }
+        #expect(answers.0?.result?.eventsPosted == 1)
+        #expect(answers.1?.code != .busy)
+        #expect(answers.1?.result?.eventsPosted == 1)
         await gate.open()
     }
 
     @Test("a frame check that does not answer refuses with internal_error, and frees the section")
     func hungFrameCheck() async throws {
-        let gate = Gate.opening(after: .seconds(2))
-        let harness = try Harness(frames: FakeFrames(gate: gate), waitLimit: Self.shortWait)
-        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
-        #expect(answer.code == .internalError)
+        let limits = ManualWaitLimits()
+        let gate = Gate()
+        let harness = try Harness(frames: FakeFrames(gate: gate), waitTimer: limits)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "move", "x": 1, "y": 1]), on: harness, after: gate, limits: limits)
+        #expect(answer?.code == .internalError)
         #expect(harness.mac.posted.isEmpty)
         #expect(await harness.executor.isInSection == false)
         await gate.open()
@@ -151,12 +179,14 @@ struct ActionLogTests {
 
     @Test("a patch recapture that does not answer is stale_frame pixels_changed")
     func hungRecapture() async throws {
-        let gate = Gate.opening(after: .seconds(2))
+        let limits = ManualWaitLimits()
+        let gate = Gate()
         let mac = FakeMac { $0.patchGate = gate }
-        let harness = try Harness(mac: mac, waitLimit: Self.shortWait)
-        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 3, "y": 4]))
-        #expect(answer.code == .staleFrame)
-        #expect(answer.details == ["reason": "pixels_changed", "point_index": 0])
+        let harness = try Harness(mac: mac, waitTimer: limits)
+        let answer = await Self.answer(
+            of: try harness.pointer(["type": "click", "x": 3, "y": 4]), on: harness, after: gate, limits: limits)
+        #expect(answer?.code == .staleFrame)
+        #expect(answer?.details == ["reason": "pixels_changed", "point_index": 0])
         #expect(mac.posted.isEmpty)
         await gate.open()
     }
@@ -186,7 +216,7 @@ struct ActionLogTests {
 
     @Test("a caller hanging up during admission: the intent is committed, the call dropped, the pair closed")
     func intentAfterHangUp() async throws {
-        let gate = Gate.opening(after: .seconds(2))
+        let gate = Gate()
         let harness = try Harness(frames: FakeFrames(gate: gate))
         await harness.log.base.failWhenCancelled()
         let call = try harness.pointer(["type": "move", "x": 1, "y": 1], connection: TaskCancellationLiveness())
@@ -196,7 +226,7 @@ struct ActionLogTests {
         _ = await arrivals.next()
         task.cancel()
         await gate.open()
-        guard case .dropped = await task.value else {
+        guard case .dropped? = await finished(task) else {
             Issue.record("not dropped")
             return
         }
@@ -246,16 +276,4 @@ struct ActionLogTests {
         #expect(refusals.map(\.code) == [.invalidArgument, .paused])
         #expect(refusals.allSatisfy { $0.tool == .keyboard && $0.operationID == OperationID("op-1") })
     }
-}
-
-/// Whether `condition` holds within `limit`, checking every 10 ms: for what an append that outlived
-/// its wait does later, in a task of its own.
-func eventually(within limit: Duration = .seconds(2), _ condition: () async -> Bool) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: limit)
-    while clock.now < deadline {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return await condition()
 }

@@ -2,7 +2,7 @@ import DeskhandCore
 import Foundation
 import Testing
 
-@Suite struct POSIXAllowanceFileProbeTests {
+@Suite(.timeLimit(.minutes(1))) struct POSIXAllowanceFileProbeTests {
     let probe = POSIXAllowanceFileProbe()
 
     /// A fresh `0755` directory per test; removed when the test's closure returns.

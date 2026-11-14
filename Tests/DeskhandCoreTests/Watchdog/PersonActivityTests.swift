@@ -3,7 +3,7 @@ import Synchronization
 import Testing
 
 /// Contract 11.5 and 13.2: telling the person's input from deskhand's own, and the watchdog's poll.
-@Suite("Watchdog: the person at the Mac")
+@Suite("Watchdog: the person at the Mac", .timeLimit(.minutes(1)))
 struct PersonActivityTests {
     struct Reading: CustomTestStringConvertible, Sendable {
         let name: String

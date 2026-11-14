@@ -4,7 +4,7 @@ import Testing
 /// Fault injection at the four boundaries of contract 12.7: before the ledger write, between the
 /// write and the post, after the post, and during cleanup. After each crash a new ledger recovers
 /// from the bytes on the fake disk. An extra key-up is allowed; a missed key-up never is.
-@Suite struct HeldInputLedgerCrashTests {
+@Suite(.timeLimit(.minutes(1))) struct HeldInputLedgerCrashTests {
     /// A crash in a `control+shift+command+t` press, placed relative to `shift`.
     enum NamedBoundary: CaseIterable, Sendable {
         /// The write that records `shift` never reached the disk, so its down was never posted.
