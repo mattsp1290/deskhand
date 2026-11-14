@@ -72,7 +72,9 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
     /// Contract 6.9's default list, written out: every row is denied as it is spelled there.
     static let contractList: [String] = [
         "command+space", "control+space", "command+tab", "option+command+escape", "control+up", "control+down",
-        "control+left", "control+right", "shift+command+3", "shift+command+4", "shift+command+5", "control+f1",
+        "control+left", "control+right", "control+1", "control+2", "control+3", "control+4", "control+5",
+        "control+6", "control+7", "control+8", "control+9", "shift+command+3", "shift+command+4", "shift+command+5",
+        "shift+command+6", "control+f1",
         "control+f2", "control+f3", "control+f4", "control+f5", "control+f6", "control+f7", "control+f8", "f11",
         "command+f5", "option+command+8", "control+command+q", "shift+command+q",
     ]
@@ -88,6 +90,9 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
         (Chord([.command, .option], .escape), "option+command+escape"),
         (Chord([.control], .left), "control+left"),
         (Chord([.command, .shift], .digit4), "shift+command+4"),
+        (Chord([.command, .shift], .digit6), "shift+command+6"),
+        (Chord([.control], .digit1), "control+1"),
+        (Chord([.control], .digit9), "control+9"),
         (Chord([.control], .f2), "control+f2"),
         (Chord([.control], .f3), "control+f3"),
         (Chord([.control], .f8), "control+f8"),
@@ -101,6 +106,8 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
         (Chord([.option, .command], .f5), "option+command+f5"),
         (Chord([.shift], .f11), "shift+f11"),
         (Chord([.option, .shift, .command], .q), "option+shift+command+q"),
+        (Chord([.control, .shift], .digit2), "control+shift+2"),
+        (Chord([.control, .shift, .command], .digit6), "control+shift+command+6"),
     ]
 
     @Test(arguments: denied)
@@ -114,7 +121,8 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
     @Test(arguments: [
         Chord([.command], .c), Chord([.command], .v), Chord([], .space), Chord([], .tab), Chord([], .left),
         Chord([.option], .left), Chord([.command], .digit3), Chord([.control], .a), Chord([], .f5),
-        Chord([.shift], .tab), Chord([.option], .space), Chord([], .q),
+        Chord([.shift], .tab), Chord([.option], .space), Chord([], .q), Chord([], .digit1), Chord([.command], .digit1),
+        Chord([.shift], .digit6), Chord([.control], .digit0),
     ])
     func allowsOtherChords(_ chord: Chord) {
         #expect(standard.evaluate(chord: chord) == .allow)

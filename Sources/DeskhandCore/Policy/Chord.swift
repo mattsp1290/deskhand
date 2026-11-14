@@ -47,7 +47,11 @@ extension DeniedChordEntry {
             row([.shift, .command], .digit3, "Screenshot of the screen"),
             row([.shift, .command], .digit4, "Screenshot of an area"),
             row([.shift, .command], .digit5, "Screenshot and recording options"),
+            row([.shift, .command], .digit6, "Screenshot of the Touch Bar"),
         ]
+        + [Key.digit1, .digit2, .digit3, .digit4, .digit5, .digit6, .digit7, .digit8, .digit9].map {
+            row([.control], $0, "Switch to Space \($0.rawValue)")
+        }
         + zip([Key.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8], focusPurposes).map { row([.control], $0, $1) }
         + [
             row([], .f11, "Show Desktop"),

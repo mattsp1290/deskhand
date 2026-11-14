@@ -1011,7 +1011,8 @@ list. The list is configured per Mac. Its default is:
 | `command+tab` | Switch app. |
 | `option+command+escape` | Force Quit. |
 | `control+up`, `control+down`, `control+left`, `control+right` | Mission Control and switching Spaces. |
-| `shift+command+3`, `shift+command+4`, `shift+command+5` | Screenshots and screen recording. |
+| `control+1` to `control+9` | Switch to Space 1 to 9. |
+| `shift+command+3`, `shift+command+4`, `shift+command+5`, `shift+command+6` | Screenshots and screen recording, and a screenshot of the Touch Bar. |
 | `control+f1` to `control+f8` | Keyboard access and moving keyboard focus: `control+f2` to the menu bar, `control+f3` to the Dock, `control+f8` to the status menus. |
 | `f11` | Show Desktop. |
 | `command+f5`, `option+command+8` | VoiceOver, zoom. |
