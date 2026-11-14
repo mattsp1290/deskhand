@@ -1,0 +1,4 @@
+# For scripts/check-contract.py. referencing ships with jsonschema; it is pinned
+# too because the script imports it directly.
+jsonschema==4.26.0
+referencing==0.37.0
