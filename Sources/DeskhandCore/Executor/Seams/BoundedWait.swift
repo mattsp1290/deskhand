@@ -4,17 +4,23 @@ import Synchronization
 /// (contract 11.3, 12.3). The operation runs in a task of its own, so the cancellation of the
 /// waiting task, which is how a closed connection reaches a request, does not reach it: an append
 /// to the action log is not abandoned because the caller hung up. An operation that outlives the
-/// limit is left to finish unobserved.
-func awaitBounded<T: Sendable>(within limit: Duration, _ operation: @escaping @Sendable () async -> T) async -> T? {
+/// limit runs on, and hands its answer to `late` once it has one.
+func awaitBounded<T: Sendable>(
+    within limit: Duration, _ operation: @escaping @Sendable () async -> T,
+    late: @escaping @Sendable (T) async -> Void = { _ in }
+) async -> T? {
     await withCheckedContinuation { continuation in
         let answer = FirstAnswer(continuation)
         let timeout = Task {
-            try? await Task.sleep(for: limit)
+            // A cancelled sleep returns at once: only a limit that really passed answers `nil`.
+            guard (try? await Task.sleep(for: limit)) != nil else { return }
             answer.resume(returning: nil)
         }
         Task {
-            answer.resume(returning: await operation())
+            let value = await operation()
+            let wasFirst = answer.resume(returning: value)
             timeout.cancel()
+            if !wasFirst { await late(value) }
         }
     }
 }
@@ -25,7 +31,11 @@ private final class FirstAnswer<T: Sendable>: Sendable {
 
     init(_ continuation: CheckedContinuation<T?, Never>) { self.continuation = Mutex(continuation) }
 
-    func resume(returning value: T?) {
-        continuation.withLock { $0.take() }?.resume(returning: value)
+    /// `false` when an earlier answer already resumed it.
+    @discardableResult
+    func resume(returning value: T?) -> Bool {
+        guard let continuation = continuation.withLock({ $0.take() }) else { return false }
+        continuation.resume(returning: value)
+        return true
     }
 }

@@ -77,4 +77,20 @@ struct InterruptionTests {
             try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300], operation: "op-2"))
         #expect(second.result?.eventsPosted == 2)
     }
+
+    @Test("an interruption first in refusal order wins over a later cause found at the same poll")
+    func interruptionOutranksAPolledCause() async throws {
+        let mac = FakeMac()
+        let harness = try Harness(mac: mac)
+        let executor = harness.executor
+        mac.change { world in
+            world.onSleep = {
+                mac.change { $0.idleMs = 0 }
+                await executor.interrupt(.state(.paused))
+            }
+        }
+        let answer = await executor.perform(try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300]))
+        #expect(answer.code == .paused)
+        #expect(mac.released == [.named(.k)])
+    }
 }

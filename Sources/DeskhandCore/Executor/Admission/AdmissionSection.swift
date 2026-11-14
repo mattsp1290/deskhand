@@ -42,6 +42,8 @@ struct Refusal: Sendable {
     var operation: OperationView?
     var frontmostApp: AppRef?
     var frameSHA256: SHA256Hex?
+    /// `log_unavailable`: the intent append, which its refusal entry must follow into the log.
+    var afterIntent: PendingIntent?
 
     init(
         _ reason: ToolErrorReason, message: String? = nil, operation: OperationView? = nil, frontmostApp: AppRef? = nil,

@@ -52,6 +52,11 @@ public final class OperationStore {
     private var countByPrincipal: [Principal: Int] = [:]
     private var entriesSinceSnapshot = 0
     public private(set) var isAvailable = true
+    /// The records that loading found `accepted` or `executing` and ended under the restart rules
+    /// (contract 12.9), with the status each has now: `failed_before_execution` or
+    /// `aborted_by_restart`. A record that had already left the retention window was dropped instead
+    /// and is not here. Empty when the previous run left no operation unfinished.
+    public private(set) var restartedAtLoad: [OperationKey: OperationStatus] = [:]
 
     /// Loads the records and applies the restart rules (contract 12.9): `accepted` becomes
     /// `failed_before_execution` and `executing` becomes `aborted_by_restart` with the last count on
@@ -69,13 +74,17 @@ public final class OperationStore {
             throw .unreadable(error)
         }
         if let bytes { records = try OperationJournal.replay(bytes) }
+        var restarted: [OperationKey: OperationStatus] = [:]
         for (key, record) in records where !record.phase.isFinal {
-            records[key]?.phase = record.phase.applying(.restart)!
+            let phase = record.phase.applying(.restart)!
+            records[key]?.phase = phase
+            restarted[key] = phase.status
         }
         for record in records.values { countByPrincipal[record.key.principal, default: 0] += 1 }
         admissions = records.values.map { Admission(key: $0.key, admittedAt: $0.admittedAt) }
             .sorted { $0.admittedAt < $1.admittedAt }
         prune(now)
+        restartedAtLoad = restarted.filter { records[$0.key] != nil }
         do throws(StorageError) {
             try storage.replace(with: snapshot())
         } catch {
