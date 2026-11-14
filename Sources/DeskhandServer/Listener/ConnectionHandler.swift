@@ -153,6 +153,7 @@ final class ConnectionHandler: ChannelInboundHandler {
         guard let principal = session.principal else { return }
         let request = AuthenticatedRequest(
             principal: principal,
+            nodeAddress: context.channel.remoteAddress.flatMap(NodeAddress.init(socketAddress:)),
             headers: MCPRequestHeaders(admitted.headers),
             body: Array(body.readableBytesView)
         )
@@ -272,5 +273,16 @@ final class ConnectionHandler: ChannelInboundHandler {
     private func cancelBodyTimer() {
         bodyTimer?.cancel()
         bodyTimer = nil
+    }
+}
+
+extension NodeAddress {
+    /// The IP address of a socket address; `nil` for a Unix domain socket.
+    init?(socketAddress: SocketAddress) {
+        switch socketAddress {
+        case .v4(let address): self.init(bytes: withUnsafeBytes(of: address.address.sin_addr) { Array($0) })
+        case .v6(let address): self.init(bytes: withUnsafeBytes(of: address.address.sin6_addr) { Array($0) })
+        case .unixDomainSocket: return nil
+        }
     }
 }

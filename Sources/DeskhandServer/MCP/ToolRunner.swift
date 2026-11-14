@@ -6,6 +6,22 @@ enum ToolOutcome: Hashable, Sendable {
     case success(JSONValue)
     case screenshot(CapturedScreenshot)
     case failure(ToolError)
+    /// A repeated effect call answered from its record: the stored `structuredContent`, an error
+    /// unless the operation completed (contract 12.5).
+    case replayed(JSONValue, isError: Bool)
+
+    /// What an effect call answered with. A call dropped before admission has nobody left to
+    /// answer (contract 9.5); its outcome is never sent.
+    init(_ answer: EffectAnswer) {
+        switch answer {
+        case .completed(let result): self = .success(result.jsonValue)
+        case .error(let error): self = .failure(error)
+        case .replayed(let replay, let content): self = .replayed(content, isError: replay.isError)
+        case .dropped:
+            self = .failure(
+                ToolError(.internalError, message: "The connection closed before the call was admitted.", state: .ok))
+        }
+    }
 
     /// The result of contract 3.3: `content` ends with the text of `structuredContent`, after the
     /// image of a successful `screenshot`; `isError` is set exactly for a tool error.
@@ -13,7 +29,7 @@ enum ToolOutcome: Hashable, Sendable {
         let structured: JSONValue
         var content: [JSONValue] = []
         switch self {
-        case .success(let value): structured = value
+        case .success(let value), .replayed(let value, _): structured = value
         case .failure(let error): structured = error.jsonValue
         case .screenshot(let captured):
             structured = captured.result.jsonValue
@@ -30,8 +46,11 @@ enum ToolOutcome: Hashable, Sendable {
     }
 
     var isError: Bool {
-        if case .failure = self { return true }
-        return false
+        switch self {
+        case .success, .screenshot: false
+        case .failure: true
+        case .replayed(_, let isError): isError
+        }
     }
 }
 
@@ -39,7 +58,7 @@ enum ToolOutcome: Hashable, Sendable {
 /// dispatcher, in the caller's task so that a hang-up cancels the call.
 struct ToolRunner {
     let dispatcher: any ToolDispatcher
-    let principal: Principal
+    let caller: ToolCaller
 
     func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome {
         if let fault = arguments.strictFault {
@@ -52,25 +71,26 @@ struct ToolRunner {
             return .failure(await refusal(.invalidArguments(error), tool, arguments))
         }
         do {
-            return try await perform(call)
+            return try await perform(call, received: arguments.object)
         } catch {
             return .failure(error)
         }
     }
 
     func refusal(_ refusal: ToolRefusal, _ tool: ToolName, _ arguments: ToolArguments) async -> ToolError {
-        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, principal: principal)
+        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller)
     }
 
-    private func perform(_ call: ToolCall) async throws(ToolError) -> ToolOutcome {
+    private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome {
         switch call {
-        case .status(let arguments): .success(try await dispatcher.status(arguments, principal: principal).jsonValue)
-        case .displays: .success(try await dispatcher.displays(principal: principal).jsonValue)
-        case .screenshot(let arguments): .screenshot(try await dispatcher.screenshot(arguments, principal: principal))
-        case .pointer(let arguments): .success(try await dispatcher.pointer(arguments, principal: principal).jsonValue)
+        case .status(let arguments): .success(try await dispatcher.status(arguments, caller: caller).jsonValue)
+        case .displays: .success(try await dispatcher.displays(caller: caller).jsonValue)
+        case .screenshot(let arguments): .screenshot(try await dispatcher.screenshot(arguments, caller: caller))
+        case .pointer(let arguments):
+            ToolOutcome(await dispatcher.effect(.pointer(arguments), received: received, caller: caller))
         case .keyboard(let arguments):
-            .success(try await dispatcher.keyboard(arguments, principal: principal).jsonValue)
-        case .lease(let arguments): .success(try await dispatcher.lease(arguments, principal: principal).jsonValue)
+            ToolOutcome(await dispatcher.effect(.keyboard(arguments), received: received, caller: caller))
+        case .lease(let arguments): .success(try await dispatcher.lease(arguments, caller: caller).jsonValue)
         }
     }
 }
