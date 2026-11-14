@@ -6,6 +6,9 @@ import Foundation
 public enum IdentityUncertainty: Hashable, Sendable {
     /// No app is frontmost.
     case noFrontmostApp
+    /// Accessibility does not name the app AppKit reports frontmost as the focused app, so the frontmost
+    /// reading may be stale: AppKit's value is only as fresh as the main run loop.
+    case frontmostUnconfirmed
     /// Accessibility reports that no app has keyboard focus.
     case noFocusedApp
     /// deskhand is not trusted for Accessibility, so the focus owner cannot be read.
@@ -20,7 +23,8 @@ public enum IdentityUncertainty: Hashable, Sendable {
     case windowUnreadable
     /// The window has no owning process.
     case noOwnerProcess
-    /// The process exited before its code could be read.
+    /// The process exited before its identity was read, or its pid was reused by another process while
+    /// it was being read.
     case processGone
     /// The Security framework could not read the code: this `OSStatus`.
     case signatureUnreadable(Int32)
@@ -28,6 +32,8 @@ public enum IdentityUncertainty: Hashable, Sendable {
     case signatureNotTrusted
     /// A team identifier that is not 10 characters from `A-Z 0-9`.
     case malformedTeamIdentifier
+    /// A team identifier that no Apple-issued certificate vouches for: the signer may have written any team.
+    case teamNotAppleIssued
     /// No bundle identifier, or one outside the contract's alphabet.
     case noBundleID
 }
@@ -80,7 +86,8 @@ public struct MeasuredApp: Hashable, Sendable {
     }
 
     /// Only Apple's own code satisfies `anchor apple`, and the allowlist names such apps as `apple`, so
-    /// the anchor is checked before any team identifier the signature may also carry.
+    /// the anchor is checked before any team identifier the signature may also carry. A team counts only
+    /// when an Apple-issued certificate names it; otherwise it is as untrusted as no signature.
     static func signer(from lookup: CodeSignatureLookup) -> (CodeSigner, IdentityUncertainty?) {
         switch lookup {
         case .processGone: return (.unknown, .processGone)
@@ -90,6 +97,7 @@ public struct MeasuredApp: Hashable, Sendable {
             if facts.satisfiesAppleAnchor { return (.apple, nil) }
             guard let raw = facts.teamIdentifier else { return (.unsigned, .signatureNotTrusted) }
             guard let team = TeamID(raw) else { return (.unknown, .malformedTeamIdentifier) }
+            guard facts.satisfiesTeamAnchor else { return (.unsigned, .teamNotAppleIssued) }
             return (.team(team), nil)
         }
     }

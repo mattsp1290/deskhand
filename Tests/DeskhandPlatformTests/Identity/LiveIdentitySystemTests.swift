@@ -1,10 +1,13 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import DeskhandCore
-import DeskhandPlatform
 import DeskhandTestSupport
 import Foundation
+import Security
 import Testing
+
+@testable import DeskhandPlatform
 
 @Suite struct WindowInfoParsingTests {
     @Test func readsAWindowServerEntry() {
@@ -30,12 +33,64 @@ import Testing
     }
 }
 
-/// Reads real code signatures. No grant or GUI session is needed to inspect a running process's code.
+/// The running code of `pid`, as the Security framework hands it out.
+private func guestCode(of pid: pid_t) -> SecCode? {
+    var code: SecCode?
+    let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess else { return nil }
+    return code
+}
+
+private func sleeper() throws -> Process {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    process.arguments = ["30"]
+    try process.run()
+    return process
+}
+
+/// Reads real code signatures and process start times. No grant or GUI session is needed to inspect a
+/// running process.
 @Suite struct LiveCodeSignatureTests {
-    @Test func launchdIsSignedByApple() {
-        let app = MeasuredApp(pid: 1, signature: LiveIdentitySystem().codeSignature(of: 1), name: nil)
+    @Test func launchdIsSignedByApple() throws {
+        let lookup = LiveIdentitySystem().codeSignature(of: 1)
+        let app = MeasuredApp(pid: 1, signature: lookup, name: nil)
         #expect(app.identity.signer == .apple)
         #expect(app.identity.bundleID?.rawValue == "com.apple.xpc.launchd")
+        guard case .found(let facts) = lookup else {
+            Issue.record("launchd's signature was not read: \(lookup)")
+            return
+        }
+        #expect(facts.satisfiesAppleAnchor)
+        #expect(!facts.satisfiesTeamAnchor)
+    }
+
+    /// Apple's own certificate chain is not enough: the leaf must name the team.
+    @Test func teamAnchorNeedsAnAppleIssuedCertificateForThatTeam() throws {
+        let team = try #require(TeamID("ABCDE12345"))
+        #expect(
+            LiveIdentitySystem.teamAnchor(team)
+                == #"anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345""#)
+        let launchd = try #require(guestCode(of: 1))
+        #expect(LiveIdentitySystem.satisfies(launchd, LiveIdentitySystem.appleAnchor))
+        #expect(LiveIdentitySystem.satisfies(launchd, "anchor apple generic"))
+        #expect(!LiveIdentitySystem.satisfies(launchd, LiveIdentitySystem.teamAnchor(team)))
+        #expect(!LiveIdentitySystem.satisfies(launchd, "not a requirement ("))
+    }
+
+    @Test func startTimeNamesOneProcess() throws {
+        let system = LiveIdentitySystem()
+        let launchd = try #require(system.processStartTime(of: 1))
+        #expect(system.processStartTime(of: 1) == launchd)
+
+        let process = try sleeper()
+        let pid = process.processIdentifier
+        let started = try #require(system.processStartTime(of: pid))
+        #expect(system.processStartTime(of: pid) == started)
+        #expect(started.seconds >= launchd.seconds)
+        process.terminate()
+        process.waitUntilExit()
+        #expect(system.processStartTime(of: pid) == nil)
     }
 
     @Test func exitedProcessIsGone() throws {
@@ -44,17 +99,24 @@ import Testing
         try process.run()
         process.waitUntilExit()
         #expect(LiveIdentitySystem().codeSignature(of: process.processIdentifier) == .processGone)
+        #expect(LiveIdentitySystem().processStartTime(of: process.processIdentifier) == nil)
     }
 }
 
 @Suite(.tags(.requiresMacSession), .macSessionTestsEnabled)
 struct LiveIdentitySessionTests {
-    private let probe = IdentityProbe(system: LiveIdentitySystem())
+    private let system = LiveIdentitySystem()
+    private var probe: IdentityProbe { IdentityProbe(system: system) }
 
+    /// Without Accessibility the frontmost reading cannot be confirmed, so it is uncertain.
     @Test func frontmostAppIsIdentified() {
         let app = probe.frontmostApp()
-        #expect(app.pid != nil)
-        #expect(app.identity.bundleID != nil)
+        if AXIsProcessTrusted() {
+            #expect(app.pid != nil)
+            #expect(app.identity.bundleID != nil)
+        } else {
+            #expect(!app.isCertain)
+        }
     }
 
     /// Needs the menu bar visible: no full-screen app on the main display.
@@ -72,6 +134,46 @@ struct LiveIdentitySessionTests {
             #expect(focus.pid != nil)
         } else {
             #expect(focus.uncertainty == .accessibilityUntrusted)
+        }
+    }
+
+    @Test(arguments: ["com.apple.finder", "com.apple.dock"])
+    func systemAppsAreSignedByApple(bundleID: String) throws {
+        let running = try #require(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first)
+        let pid = running.processIdentifier
+        let app = MeasuredApp(pid: pid, signature: system.codeSignature(of: pid), name: nil)
+        #expect(app.isCertain)
+        #expect(app.identity == AppIdentity(bundleID: BundleID(bundleID), signer: .apple))
+    }
+
+    /// Every third-party app running now that carries a team identifier is vouched for by an Apple-issued
+    /// certificate for that team, and for no other team.
+    @Test func runningTeamSignedAppsMeasureAsTheirTeam() throws {
+        let other = try #require(TeamID("ZZZZZZZZZZ"))
+        var checked = 0
+        for running in NSWorkspace.shared.runningApplications {
+            let pid = running.processIdentifier
+            guard case .found(let facts) = system.codeSignature(of: pid), facts.validity == .valid, !facts.isAdHoc,
+                !facts.satisfiesAppleAnchor, let team = facts.teamIdentifier.flatMap(TeamID.init), team != other,
+                let code = guestCode(of: pid)
+            else { continue }
+            #expect(facts.satisfiesTeamAnchor, "\(running.bundleIdentifier ?? "?") \(team)")
+            #expect(MeasuredApp(pid: pid, signature: .found(facts), name: nil).identity.signer == .team(team))
+            #expect(!LiveIdentitySystem.satisfies(code, LiveIdentitySystem.teamAnchor(other)))
+            checked += 1
+        }
+        #expect(checked > 0, "no team-signed third-party app is running")
+    }
+
+    /// The pointer (and a drag image, during a drag) are the window server's: what the hit test looks
+    /// through on this Mac.
+    @Test func pointerLevelWindowsBelongToTheWindowServer() throws {
+        let windows = try #require(system.onScreenWindows())
+        for window in windows {
+            guard let layer = window.layer, WindowHitTest.passThroughLayers.contains(layer) else { continue }
+            let pid = try #require(window.ownerPID)
+            let owner = MeasuredApp(pid: pid, signature: system.codeSignature(of: pid), name: nil)
+            #expect(owner.identity == IdentityProbe.windowServer, "\(window)")
         }
     }
 }

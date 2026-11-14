@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Darwin
 import DeskhandCore
 import Foundation
 import Security
@@ -10,10 +11,14 @@ import Security
 /// - Windows: `CGWindowListCopyWindowInfo` (on-screen only, desktop elements excluded), front to back.
 /// - Frontmost app: `NSWorkspace.frontmostApplication`. Neither CoreGraphics nor Accessibility reports
 ///   the active app without a grant (the frontmost window's owner is not always the active app), so
-///   this one read uses AppKit.
+///   this one read uses AppKit, and is only as fresh as the main run loop.
 /// - Focus owner: Accessibility's system-wide `kAXFocusedApplicationAttribute`. Needs the grant.
 /// - Signer: `SecCodeCopyGuestWithAttributes` by process, validated with `SecCodeCheckValidity` against
-///   the code's own designated requirement, then checked against `anchor apple`.
+///   the code's own designated requirement, then against `anchor apple`, then against an Apple-issued
+///   certificate for its team. The signer writes both the team identifier and the designated
+///   requirement, so only the last check ties the team to Apple's certificate authority.
+/// - Start time: `sysctl` `KERN_PROC_PID`, which answers for other users' processes where
+///   `proc_pidinfo` is refused.
 public struct LiveIdentitySystem: IdentitySystem {
     /// How long one Accessibility request to an app may block before it is abandoned.
     public var accessibilityTimeout: Float
@@ -76,18 +81,32 @@ public struct LiveIdentitySystem: IdentitySystem {
         let flags = (info[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value ?? 0
         let plist = info[kSecCodeInfoPList as String] as? [String: Any]
         let sealedBundleIdentifier = plist?[kCFBundleIdentifierKey as String] as? String
+        let teamIdentifier = info[kSecCodeInfoTeamIdentifier as String] as? String
+        let team = validity == .valid ? teamIdentifier.flatMap(TeamID.init) : nil
         return .found(
             CodeSignatureFacts(
                 validity: validity,
                 isAdHoc: flags & SecCodeSignatureFlags.adhoc.rawValue != 0,
-                satisfiesAppleAnchor: validity == .valid && Self.satisfiesAppleAnchor(code),
-                teamIdentifier: info[kSecCodeInfoTeamIdentifier as String] as? String,
+                satisfiesAppleAnchor: validity == .valid && Self.satisfies(code, Self.appleAnchor),
+                teamIdentifier: teamIdentifier,
+                satisfiesTeamAnchor: team.map { Self.satisfies(code, Self.teamAnchor($0)) } ?? false,
                 sealedBundleIdentifier: sealedBundleIdentifier,
                 bundleIdentifierAtPath: sealedBundleIdentifier == nil ? Self.bundleIdentifierAtPath(staticCode) : nil))
     }
 
     public func localizedName(of pid: pid_t) -> String? {
         NSRunningApplication(processIdentifier: pid)?.localizedName
+    }
+
+    public func processStartTime(of pid: pid_t) -> ProcessStartTime? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&name, u_int(name.count), &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == pid,
+            info.kp_proc.p_stat != SZOMB
+        else { return nil }
+        let started = info.kp_proc.p_un.__p_starttime
+        return ProcessStartTime(seconds: Int64(started.tv_sec), microseconds: Int32(started.tv_usec))
     }
 
     public func focusedWindowTitle(of pid: pid_t) -> String? {
@@ -120,11 +139,20 @@ public struct LiveIdentitySystem: IdentitySystem {
         return SecCodeCheckValidity(code, [], requirement)
     }
 
+    static let appleAnchor = "anchor apple"
+
+    /// `anchor apple generic` admits only certificates Apple issues to developers (Developer ID, Mac App
+    /// Store, development); the leaf's organizational unit is the team Apple issued it to. A team is
+    /// `A-Z 0-9` only, so it cannot break out of the quoted string.
+    static func teamAnchor(_ team: TeamID) -> String {
+        "anchor apple generic and certificate leaf[subject.OU] = \"\(team.rawValue)\""
+    }
+
     /// Dynamic code refuses the static-only validation flags; a repeat validation is cheap because the
     /// Security framework caches the first one.
-    private static func satisfiesAppleAnchor(_ code: SecCode) -> Bool {
+    static func satisfies(_ code: SecCode, _ requirementText: String) -> Bool {
         var requirement: SecRequirement?
-        guard SecRequirementCreateWithString("anchor apple" as CFString, [], &requirement) == errSecSuccess,
+        guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,
             let requirement
         else { return false }
         return SecCodeCheckValidity(code, [], requirement) == errSecSuccess

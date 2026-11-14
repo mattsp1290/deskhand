@@ -24,20 +24,25 @@ struct SignatureCase: Sendable, CustomTestStringConvertible {
     }
 }
 
+/// `issued`: an Apple-issued certificate names `team` (`satisfiesTeamAnchor`).
 private func facts(
     _ validity: CodeSignatureFacts.Validity, adHoc: Bool = false, apple: Bool = false, team: String? = nil,
-    sealed: String? = nil, atPath: String? = nil
+    issued: Bool = false, sealed: String? = nil, atPath: String? = nil
 ) -> CodeSignatureLookup {
     .found(
         CodeSignatureFacts(
             validity: validity, isAdHoc: adHoc, satisfiesAppleAnchor: apple, teamIdentifier: team,
-            sealedBundleIdentifier: sealed, bundleIdentifierAtPath: atPath))
+            satisfiesTeamAnchor: issued, sealedBundleIdentifier: sealed, bundleIdentifierAtPath: atPath))
 }
 
 private let signatureCases: [SignatureCase] = [
     SignatureCase(
-        "team signed", facts(.valid, team: "ABCDE12345", sealed: "com.example.Editor"), .team(team),
+        "team signed", facts(.valid, team: "ABCDE12345", issued: true, sealed: "com.example.Editor"), .team(team),
         "com.example.Editor", nil),
+    SignatureCase(
+        "team asserted by a certificate Apple did not issue",
+        facts(.valid, team: "ABCDE12345", sealed: "com.example.Editor"), .unsigned, "com.example.Editor",
+        .teamNotAppleIssued),
     SignatureCase(
         "Apple platform app", facts(.valid, apple: true, sealed: "com.apple.TextEdit"), .apple, "com.apple.TextEdit",
         nil),
@@ -52,11 +57,11 @@ private let signatureCases: [SignatureCase] = [
         "unsigned names the bundle on disk", facts(.unsigned, atPath: "com.example.Tool"), .unsigned,
         "com.example.Tool", .signatureNotTrusted),
     SignatureCase(
-        "invalid signature", facts(.invalid, team: "ABCDE12345", sealed: "com.example.Editor"), .unsigned,
-        "com.example.Editor", .signatureNotTrusted),
+        "invalid signature", facts(.invalid, team: "ABCDE12345", issued: true, sealed: "com.example.Editor"),
+        .unsigned, "com.example.Editor", .signatureNotTrusted),
     SignatureCase(
-        "ad hoc", facts(.valid, adHoc: true, sealed: "com.example.Editor"), .unsigned, "com.example.Editor",
-        .signatureNotTrusted),
+        "ad hoc", facts(.valid, adHoc: true, team: "ABCDE12345", issued: true, sealed: "com.example.Editor"),
+        .unsigned, "com.example.Editor", .signatureNotTrusted),
     SignatureCase(
         "valid but neither team nor Apple", facts(.valid, sealed: "com.example.Editor"), .unsigned,
         "com.example.Editor", .signatureNotTrusted),
@@ -65,12 +70,13 @@ private let signatureCases: [SignatureCase] = [
         "com.example.Editor", .malformedTeamIdentifier),
     SignatureCase(
         "trusted signer ignores the unsealed bundle on disk",
-        facts(.valid, team: "ABCDE12345", atPath: "com.example.Editor"), .team(team), nil, .noBundleID),
+        facts(.valid, team: "ABCDE12345", issued: true, atPath: "com.example.Editor"), .team(team), nil, .noBundleID),
     SignatureCase(
-        "trusted signer with no Info.plist", facts(.valid, team: "ABCDE12345"), .team(team), nil, .noBundleID),
+        "trusted signer with no Info.plist", facts(.valid, team: "ABCDE12345", issued: true), .team(team), nil,
+        .noBundleID),
     SignatureCase(
-        "bundle identifier outside the alphabet", facts(.valid, team: "ABCDE12345", sealed: "com.example/Editor"),
-        .team(team), nil, .noBundleID),
+        "bundle identifier outside the alphabet",
+        facts(.valid, team: "ABCDE12345", issued: true, sealed: "com.example/Editor"), .team(team), nil, .noBundleID),
 ]
 
 @Suite struct MeasuredAppTests {
@@ -98,8 +104,8 @@ private let signatureCases: [SignatureCase] = [
     }
 
     @Test(arguments: [
-        IdentityUncertainty.noFrontmostApp, .noFocusedApp, .accessibilityUntrusted, .focusUnreadable(-25_204),
-        .windowListUnavailable, .noWindow, .windowUnreadable, .noOwnerProcess,
+        IdentityUncertainty.noFrontmostApp, .frontmostUnconfirmed, .noFocusedApp, .accessibilityUntrusted,
+        .focusUnreadable(-25_204), .windowListUnavailable, .noWindow, .windowUnreadable, .noOwnerProcess,
     ])
     func unidentifiedAppIsUnknown(_ reason: IdentityUncertainty) {
         let app = MeasuredApp.unidentified(reason)

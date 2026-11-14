@@ -3,11 +3,14 @@ import Foundation
 
 /// The OS queries app identity is measured from. ``LiveIdentitySystem`` asks the window server,
 /// Accessibility and Security frameworks; tests substitute a fake so ``IdentityProbe``'s rules run
-/// under plain `swift test`. Every query is a fresh read: nothing is cached between calls.
+/// under plain `swift test`. Every query is a fresh read: nothing is cached between calls. The one
+/// exception is ``frontmostProcess()``, which is only as fresh as the main run loop.
 public protocol IdentitySystem: Sendable {
     /// The on-screen windows, front to back, or `nil` when the window server gave no list.
     func onScreenWindows() -> [IdentityWindowEntry]?
-    /// The process of the frontmost app, or `nil` when there is none.
+    /// The process of the frontmost app, or `nil` when there is none. AppKit updates this as the main
+    /// run loop turns, so it can be stale while the main thread is busy and never changes in a process
+    /// without one; ``IdentityProbe/frontmostApp()`` therefore confirms it against Accessibility.
     func frontmostProcess() -> pid_t?
     /// The process that owns keyboard focus, as Accessibility reports it.
     func focusedApplication() -> FocusedApplicationLookup
@@ -17,6 +20,21 @@ public protocol IdentitySystem: Sendable {
     func localizedName(of pid: pid_t) -> String?
     /// The title of the process's focused window, uncut, or `nil` when it cannot be read.
     func focusedWindowTitle(of pid: pid_t) -> String?
+    /// When the process now running as `pid` started, or `nil` when no process has that pid. Two reads
+    /// that differ mean the pid now belongs to another process.
+    func processStartTime(of pid: pid_t) -> ProcessStartTime?
+}
+
+/// A process's start time as the kernel records it. With the pid, it names one process: a pid is reused
+/// only by a process that starts later.
+public struct ProcessStartTime: Hashable, Sendable {
+    public var seconds: Int64
+    public var microseconds: Int32
+
+    public init(seconds: Int64, microseconds: Int32) {
+        self.seconds = seconds
+        self.microseconds = microseconds
+    }
 }
 
 /// One window from the window server's on-screen list. A `nil` member could not be read.
@@ -78,8 +96,12 @@ public struct CodeSignatureFacts: Hashable, Sendable {
     public var isAdHoc: Bool
     /// The code satisfies the requirement `anchor apple`, which only Apple's own code does.
     public var satisfiesAppleAnchor: Bool
-    /// `kSecCodeInfoTeamIdentifier`, verbatim.
+    /// `kSecCodeInfoTeamIdentifier`, verbatim. The signer writes it, so on its own it proves nothing.
     public var teamIdentifier: String?
+    /// The code satisfies `anchor apple generic and certificate leaf[subject.OU] = "<teamIdentifier>"`:
+    /// Apple issued the signing certificate (Developer ID, Mac App Store or development) to that team.
+    /// `false` when ``teamIdentifier`` is absent or not a well-formed team identifier.
+    public var satisfiesTeamAnchor: Bool
     /// `CFBundleIdentifier` from the Info.plist bound into the signature.
     public var sealedBundleIdentifier: String?
     /// `CFBundleIdentifier` of the bundle on disk at the code's path; not covered by any signature.
@@ -87,12 +109,13 @@ public struct CodeSignatureFacts: Hashable, Sendable {
 
     public init(
         validity: Validity, isAdHoc: Bool = false, satisfiesAppleAnchor: Bool = false, teamIdentifier: String? = nil,
-        sealedBundleIdentifier: String? = nil, bundleIdentifierAtPath: String? = nil
+        satisfiesTeamAnchor: Bool = false, sealedBundleIdentifier: String? = nil, bundleIdentifierAtPath: String? = nil
     ) {
         self.validity = validity
         self.isAdHoc = isAdHoc
         self.satisfiesAppleAnchor = satisfiesAppleAnchor
         self.teamIdentifier = teamIdentifier
+        self.satisfiesTeamAnchor = satisfiesTeamAnchor
         self.sealedBundleIdentifier = sealedBundleIdentifier
         self.bundleIdentifierAtPath = bundleIdentifierAtPath
     }

@@ -9,12 +9,17 @@ private let editorPID: pid_t = 100
 private let viewerPID: pid_t = 200
 private let windowServerPID: pid_t = 300
 private let dockPID: pid_t = 400
+/// Team-signed, but its bundle claims to be the window server.
+private let impostorPID: pid_t = 500
+private let unreadablePID: pid_t = 600
 
 private let signatures: [pid_t: CodeSignatureLookup] = [
     editorPID: F.teamSigned("com.example.Editor"),
     viewerPID: F.appleSigned("com.apple.Preview"),
     windowServerPID: F.appleSigned("com.apple.WindowServer"),
     dockPID: F.appleSigned("com.apple.dock"),
+    impostorPID: F.teamSigned("com.apple.WindowServer"),
+    unreadablePID: .unreadable(-67_062),
 ]
 
 private let cursorLayer = Int(CGWindowLevelForKey(.cursorWindow))
@@ -57,11 +62,50 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(dock.layer == 20)
     }
 
-    @Test func pointerAndDragImageAreLookedThrough() {
+    @Test func windowServersPointerAndDragImageAreLookedThrough() {
+        #expect(IdentityProbe.windowServer == AppIdentity(bundleID: BundleID("com.apple.WindowServer"), signer: .apple))
         #expect(owner(at: 100, 100, in: desktop).owner.identity.bundleID?.rawValue == "com.example.Editor")
         let dragImage = F.window(pid: windowServerPID, layer: draggingLayer, 0, 0, 3000, 3000)
         #expect(
             owner(at: 100, 100, in: [dragImage] + desktop).owner.identity.bundleID?.rawValue == "com.example.Editor")
+        let unframed = IdentityWindowEntry(ownerPID: windowServerPID, layer: cursorLayer, bounds: nil)
+        #expect(
+            owner(at: -500, 300, in: [unframed] + desktop).owner.identity.bundleID?.rawValue == "com.example.Editor")
+    }
+
+    /// Any app can raise a window to these levels, and it still takes clicks, so only the window server's
+    /// own windows there are looked through.
+    @Test(arguments: [cursorLayer, draggingLayer])
+    func otherOwnersWindowAtPointerOrDragLevelIsHit(layer: Int) {
+        let editorOverlay = F.window(pid: editorPID, layer: layer, -1000, 50, 2000, 800, owner: "Editor")
+        let hit = owner(at: 500, 700, in: [editorOverlay] + desktop)
+        #expect(hit.owner.identity.bundleID?.rawValue == "com.example.Editor")
+        #expect(hit.layer == layer)
+
+        let impostor = F.window(pid: impostorPID, layer: layer, -1000, 50, 2000, 800, owner: "Window Server")
+        let impostorHit = owner(at: 500, 700, in: [impostor] + desktop)
+        #expect(
+            impostorHit.owner.identity
+                == AppIdentity(bundleID: BundleID("com.apple.WindowServer"), signer: .team(F.team)))
+        #expect(impostorHit.owner.identity != IdentityProbe.windowServer)
+
+        let unidentified = F.window(pid: unreadablePID, layer: layer, -1000, 50, 2000, 800, owner: "Window Server")
+        #expect(owner(at: 500, 700, in: [unidentified] + desktop).owner.uncertainty == .signatureUnreadable(-67_062))
+        let orphan = F.window(pid: nil, layer: layer, -1000, 50, 2000, 800, owner: "Window Server")
+        #expect(owner(at: 500, 700, in: [orphan] + desktop).owner.uncertainty == .noOwnerProcess)
+        let gone = F.window(pid: 999, layer: layer, -1000, 50, 2000, 800, owner: "Window Server")
+        #expect(owner(at: 500, 700, in: [gone] + desktop).owner.uncertainty == .processGone)
+        let unframed = IdentityWindowEntry(ownerPID: editorPID, layer: layer, bounds: nil)
+        #expect(owner(at: 500, 700, in: [unframed] + desktop).owner.uncertainty == .windowUnreadable)
+    }
+
+    @Test func passThroughLevelWindowAwayFromThePointIsNotIdentified() {
+        let elsewhere = F.window(pid: impostorPID, layer: cursorLayer, 5000, 5000, 10, 10)
+        let system = FakeIdentitySystem(windows: [elsewhere] + desktop, signatures: signatures)
+        #expect(
+            probe(system).windowOwner(at: GlobalPoint(x: 500, y: 700)).owner.identity.bundleID?.rawValue
+                == "com.apple.Preview")
+        #expect(system.signatureLookups(of: impostorPID) == 0)
     }
 
     @Test func overlayAboveNormalLevelOwnsThePoint() {
@@ -119,6 +163,17 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(hit.owner.name == "Gone")
     }
 
+    /// The start time read with the window list is the one the measurement must still match, so a pid
+    /// taken over after the list was read is caught, not only one taken over during the signature read.
+    @Test func ownerWhosePidIsReusedAfterTheWindowListIsGone() {
+        let system = FakeIdentitySystem(windows: desktop, signatures: signatures, reused: [editorPID])
+        let hits = probe(system).windowOwners(at: [GlobalPoint(x: -500, y: 300), GlobalPoint(x: 500, y: 700)])
+        #expect(hits[0].owner.uncertainty == .processGone)
+        #expect(hits[0].owner.identity == .unknown)
+        #expect(hits[0].owner.name == "Editor")
+        #expect(hits[1].owner.isCertain)
+    }
+
     @Test func missingWindowListMakesEveryPointUncertain() {
         let system = FakeIdentitySystem(windows: nil, signatures: signatures)
         let hits = probe(system).windowOwners(at: [GlobalPoint(x: 0, y: 0), GlobalPoint(x: 1, y: 1)])
@@ -156,11 +211,35 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
 
 @Suite struct FrontmostAndFocusTests {
     @Test func frontmostAppIsIdentified() {
-        let system = FakeIdentitySystem(frontmost: editorPID, signatures: signatures, names: [editorPID: "Editor"])
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, names: [editorPID: "Editor"])
         let app = probe(system).frontmostApp()
         #expect(app.isCertain)
         #expect(app.pid == editorPID)
         #expect(app.appRef == AppRef(bundleID: "com.example.Editor", teamID: "ABCDE12345", name: "Editor"))
+    }
+
+    /// AppKit's frontmost value can be stale, so it stands only when Accessibility's focused application,
+    /// read after the measurement, is the same process.
+    @Test(arguments: [
+        FocusedApplicationLookup.process(viewerPID), .noFocus, .accessibilityUntrusted, .failed(-25_204),
+    ])
+    func frontmostAppNotConfirmedByFocusIsUncertain(focus: FocusedApplicationLookup) {
+        let system = FakeIdentitySystem(frontmost: editorPID, focus: focus, signatures: signatures)
+        let app = probe(system).frontmostApp()
+        #expect(app.uncertainty == .frontmostUnconfirmed)
+        #expect(app.identity == .unknown)
+        #expect(app.appRef == AppRef(bundleID: nil, teamID: nil, name: ""))
+    }
+
+    @Test func frontmostOrFocusPidReusedWhileMeasuredIsGone() {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, reused: [editorPID])
+        #expect(probe(system).frontmostApp().uncertainty == .processGone)
+        let focused = FakeIdentitySystem(focus: .process(editorPID), signatures: signatures, reused: [editorPID])
+        let owner = probe(focused).focusOwner()
+        #expect(owner.uncertainty == .processGone)
+        #expect(owner.identity == .unknown)
     }
 
     @Test func noFrontmostAppIsUncertain() {
@@ -188,19 +267,22 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(owner.identity == .unknown)
     }
 
+    /// A panel of another process can hold focus while the frontmost app stays the same. The focus
+    /// owner is still identified; the frontmost app is then unconfirmed, so the call fails closed.
     @Test func focusOwnerIsIdentifiedSeparatelyFromFrontmost() {
         let system = FakeIdentitySystem(frontmost: editorPID, focus: .process(viewerPID), signatures: signatures)
         #expect(probe(system).focusOwner().identity.bundleID?.rawValue == "com.apple.Preview")
-        #expect(probe(system).frontmostApp().identity.bundleID?.rawValue == "com.example.Editor")
+        #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
     }
 
     @Test func focusedWindowTitleIsReadAndCut() {
         let long = String(repeating: "a", count: 600)
-        let system = FakeIdentitySystem(frontmost: editorPID, signatures: signatures, focusedTitles: [editorPID: long])
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, focusedTitles: [editorPID: long])
         let probe = probe(system)
         #expect(probe.focusedWindowTitle(of: probe.frontmostApp())?.unicodeScalars.count == 512)
         #expect(probe.focusedWindowTitle(of: .unidentified(.noFrontmostApp)) == nil)
-        let untitled = FakeIdentitySystem(frontmost: editorPID, signatures: signatures)
+        let untitled = FakeIdentitySystem(frontmost: editorPID, focus: .process(editorPID), signatures: signatures)
         #expect(IdentityProbe(system: untitled).focusedWindowTitle(of: probe.frontmostApp()) == nil)
     }
 }
