@@ -79,6 +79,42 @@ import Testing
         }
     }
 
+    /// B3: a failed `F_FULLFSYNC` on the `accepted` entry is a failed write. It is not hidden by an
+    /// `fsync` that succeeds, and the store latches unavailable.
+    @Test(arguments: [EIO, ENOSPC])
+    func aFullFlushErrorMakesTheStoreUnavailable(_ code: Int32) throws {
+        try Self.withDirectory { directory in
+            let path = directory + "/operations.jsonl"
+            // The load's rewrite makes two flushes; the admission's append makes the third.
+            let flusher = ScriptedFlush.failing(.full, with: code, at: 2)
+            let store = try OperationStore(
+                storage: FileOperationStorage(path: path, flusher: flusher), now: Sample.start)
+            #expect(throws: OperationStoreError.writeFailed(.io(operation: "F_FULLFSYNC", errno: code))) {
+                try store.admit(Sample.key("op-1"), digest: Sample.digest("a"), now: Sample.start)
+            }
+            #expect(flusher.calls == [.full, .full, .full])
+            #expect(!store.isAvailable)
+        }
+    }
+
+    @Test func runsWhereFullFlushIsUnsupported() throws {
+        try Self.withDirectory { directory in
+            let path = directory + "/operations.jsonl"
+            let flusher = ScriptedFlush.failing(.full, with: ENOTSUP)
+            let store = try OperationStore(
+                storage: FileOperationStorage(path: path, flusher: flusher), now: Sample.start)
+            let ticket = try Sample.admit(store, Sample.key("op-1"))
+            try store.markExecuting(ticket)
+            try store.finish(ticket, Sample.completed(), eventsPosted: 2)
+            #expect(flusher.calls.count { $0 == .plain } == flusher.calls.count { $0 == .full })
+
+            let restarted = try OperationStore(storage: FileOperationStorage(path: path), now: Sample.start)
+            #expect(
+                try restarted.record(for: Sample.key("op-1"), now: Sample.start)?.view
+                    == OperationView(status: .completed, eventsPosted: 2))
+        }
+    }
+
     @Test func recoversRecordsAcrossARestart() throws {
         try Self.withDirectory { directory in
             let path = directory + "/operations.jsonl"

@@ -1,26 +1,42 @@
-/// A key or mouse button that deskhand presses and so might leave down.
+/// A virtual key code as the platform layer posted it (on macOS, a `CGKeyCode`). Core never
+/// interprets it. The layer that turned a key name or a character into a code under the layout
+/// active at the press records that code, and releases by the same code whatever the layout is by
+/// then.
+public struct PostedKeyCode: Hashable, Sendable, CustomStringConvertible {
+    public let rawValue: UInt16
+
+    public init(_ rawValue: UInt16) { self.rawValue = rawValue }
+
+    public var description: String { "0x" + String(rawValue, radix: 16) }
+}
+
+/// Something deskhand pressed and so might have left down, recorded as it was posted, so that its
+/// release needs nothing resolved again.
 public enum HeldInput: Hashable, Sendable, CustomStringConvertible {
-    case key(Key)
-    case modifier(Modifier)
+    /// A key-down posted with this code: a key of `press`, or the key that carried a character of
+    /// `type`.
+    case key(PostedKeyCode)
+    /// A modifier put down with this code (on macOS, a flags-changed event rather than a key-down).
+    case modifier(PostedKeyCode)
     case button(MouseButton)
 
     public var description: String {
         switch self {
-        case .key(let key): "key \(key.rawValue)"
-        case .modifier(let modifier): "modifier \(modifier.rawValue)"
+        case .key(let code): "key \(code)"
+        case .modifier(let code): "modifier \(code)"
         case .button(let button): "button \(button.rawValue)"
         }
     }
 }
 
-/// The ledger file: `{"held":[{"modifier":"shift"},{"key":"a"}],"version":1}` in RFC 8785 form,
-/// entries in press order.
+/// The ledger file: `{"held":[{"modifier":56},{"key":0},{"button":"left"}],"version":1}` in RFC 8785
+/// form, entries in press order.
 enum HeldInputLedgerFormat {
     static let version = 1
 
     static func encode(_ entries: [HeldInput]) -> [UInt8] {
         let document: JSONValue = ["held": .array(entries.map(\.ledgerValue)), "version": JSONValue(version)]
-        // Only strings and a small integer, so canonicalization has nothing non-finite to refuse.
+        // Only strings and small integers, so canonicalization has nothing non-finite to refuse.
         return try! document.canonicalBytes()
     }
 
@@ -45,21 +61,21 @@ enum HeldInputLedgerFormat {
 extension HeldInput {
     fileprivate var ledgerValue: JSONValue {
         switch self {
-        case .key(let key): ["key": .string(key.rawValue)]
-        case .modifier(let modifier): ["modifier": .string(modifier.rawValue)]
+        case .key(let code): ["key": JSONValue(code.rawValue)]
+        case .modifier(let code): ["modifier": JSONValue(code.rawValue)]
         case .button(let button): ["button": .string(button.rawValue)]
         }
     }
 
     fileprivate init?(ledgerValue: JSONValue) {
-        guard case .object(let members) = ledgerValue, members.count == 1, let (kind, value) = members.first,
-            case .string(let name) = value
-        else { return nil }
+        guard case .object(let members) = ledgerValue, members.count == 1, let (kind, value) = members.first else {
+            return nil
+        }
         let input: HeldInput? =
-            switch kind {
-            case "key": Key(rawValue: name).map(HeldInput.key)
-            case "modifier": Modifier(rawValue: name).map(HeldInput.modifier)
-            case "button": MouseButton(rawValue: name).map(HeldInput.button)
+            switch (kind, value) {
+            case ("key", .number(let number)): UInt16(exactly: number).map { .key(PostedKeyCode($0)) }
+            case ("modifier", .number(let number)): UInt16(exactly: number).map { .modifier(PostedKeyCode($0)) }
+            case ("button", .string(let name)): MouseButton(rawValue: name).map(HeldInput.button)
             default: nil
             }
         guard let input else { return nil }

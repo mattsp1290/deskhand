@@ -17,7 +17,7 @@ import Testing
         case afterUpBeforeClear
 
         func index(in trace: [LedgerBoundary]) throws -> Int {
-            let shift = HeldInput.modifier(.shift)
+            let shift = HeldInput.shift
             let index: Int
             switch self {
             case .beforeWrite: index = try #require(trace.firstIndex(of: .beforePost(.down(shift)))) - 2
@@ -38,11 +38,11 @@ import Testing
         /// What the disk holds and what the Mac holds down at the crash.
         var expected: (entries: [HeldInput], held: Set<HeldInput>) {
             switch self {
-            case .beforeWrite: ([.modifier(.control)], [.modifier(.control)])
-            case .betweenWriteAndPost: ([.modifier(.control), .modifier(.shift)], [.modifier(.control)])
+            case .beforeWrite: ([.control], [.control])
+            case .betweenWriteAndPost: ([.control, .shift], [.control])
             case .afterPost:
-                ([.modifier(.control), .modifier(.shift)], [.modifier(.control), .modifier(.shift)])
-            case .afterUpBeforeClear: ([.modifier(.control), .modifier(.shift)], [.modifier(.control)])
+                ([.control, .shift], [.control, .shift])
+            case .afterUpBeforeClear: ([.control, .shift], [.control])
             }
         }
     }
@@ -107,6 +107,27 @@ import Testing
             let held = machine.held
             let entries = try recover(machine)
             #expect(Set(entries).subtracting(held).count <= 1, "crash at \(index): \(trace[index])")
+        }
+    }
+
+    /// A write fails at every write of every scenario, before or after its bytes land (A2). The
+    /// executor is the most forgiving one (``LedgerScenario/runCarryingOn(_:on:comment:sourceLocation:)``):
+    /// even so no down is posted while the disk lacks its entry, the abort leaves nothing down,
+    /// and a restart releases and clears whatever the disk still holds.
+    @Test(arguments: LedgerScenario.allCases, WriteFault.allCases)
+    func aFailedWriteAtEveryWrite(_ scenario: LedgerScenario, _ fault: WriteFault) throws {
+        let writes = scenario.operations.flatMap { $0 }.count * 2
+        for index in 0..<writes {
+            let comment: Comment = "\(fault) at write \(index)"
+            let machine = LedgerMachine()
+            machine.faultAtWrite = (index, fault)
+            var ledger = try HeldInputLedger(store: machine.store)
+            try scenario.runCarryingOn(&ledger, on: machine, comment: comment)
+            #expect(machine.writeAttempts > index, comment)
+            let available = ledger.isAvailable
+            #expect(!available, "a failed write leaves the ledger unavailable; \(comment)")
+            #expect(machine.held.isEmpty, "still down after the run; \(comment)")
+            try recover(machine)
         }
     }
 

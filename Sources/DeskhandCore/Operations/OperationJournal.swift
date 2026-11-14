@@ -3,11 +3,15 @@
 /// every record.
 ///
 /// Every entry is flushed before the call that wrote it returns, so after a crash only the last
-/// line can be incomplete: its write never returned and nothing acted on it, so it is dropped. An
-/// undecodable line anywhere else is corruption, and loading stops.
+/// line can be incomplete: its write never returned and nothing acted on it, so it is dropped. A
+/// cut-short write is never JSON; a line that is JSON but does not decode, or an undecodable line
+/// anywhere else, is corruption, and loading stops.
 enum OperationJournal {
     static let format = "deskhand-operations"
     static let version = 1
+    /// Every instant from the epoch that RFC 3339 can write, through 9999-12-31T23:59:59.999Z. A
+    /// value outside it is damage, and would overflow the retention arithmetic.
+    static let admittedAtRange: ClosedRange<Int64> = 0...253_402_300_799_999
 
     /// The header and one `record` line per record: what ``OperationStorage/replace(with:)``
     /// writes at load and when the journal is compacted.
@@ -35,7 +39,7 @@ enum OperationJournal {
             do throws(EntryError) {
                 entry = try Entry(decoding: line)
             } catch {
-                if offset == lines.count - 1 { break }
+                if error.isTorn, offset == lines.count - 1 { break }
                 throw .corrupt(line: lineNumber, reason: error.reason)
             }
             try entry.apply(to: &records, line: lineNumber)
@@ -98,7 +102,7 @@ enum OperationJournal {
             do throws(JSONParseError) {
                 parsed = try JSONValue(parsing: line)
             } catch {
-                throw EntryError("not JSON: \(error)")
+                throw EntryError("not JSON: \(error)", isTorn: true)
             }
             guard let object = parsed.objectValue else { throw EntryError("not an object") }
             let fields = Fields(object)
@@ -120,11 +124,14 @@ enum OperationJournal {
                     case .completed, .aborted, .failed: .ended(try fields.ending(status), eventsPosted: count)
                     }
                 guard let phase else { throw EntryError("\(status.rawValue) with \(count) events posted") }
+                let admittedAt = try fields.integer("admitted_at_ms")
+                guard OperationJournal.admittedAtRange.contains(admittedAt) else {
+                    throw EntryError("admitted_at_ms \(admittedAt) is out of range")
+                }
                 self = .record(
                     OperationRecord(
                         key: key, digest: RequestDigest(sha256: sha256),
-                        admittedAt: Timestamp(millisecondsSinceEpoch: try fields.integer("admitted_at_ms")),
-                        phase: phase))
+                        admittedAt: Timestamp(millisecondsSinceEpoch: admittedAt), phase: phase))
             case "execute": self = .transition(key, .execute)
             case "progress": self = .transition(key, .progress(eventsPosted: try fields.count()))
             case "finish":
@@ -155,7 +162,13 @@ enum OperationJournal {
 
     struct EntryError: Error {
         let reason: String
-        init(_ reason: String) { self.reason = reason }
+        /// The line is not JSON at all, as a write cut short by a crash leaves it.
+        let isTorn: Bool
+
+        init(_ reason: String, isTorn: Bool = false) {
+            self.reason = reason
+            self.isTorn = isTorn
+        }
     }
 
     private struct Fields {

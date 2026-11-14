@@ -74,7 +74,7 @@ final class FaultyStorage: OperationStorage {
     private let fault: Fault
     private(set) var boundaries: [Boundary] = []
     private(set) var crashed = false
-    var readError: OperationStorageError?
+    var readError: StorageError?
 
     init(_ disk: FakeDisk, fault: Fault = .fail, at index: Int? = nil) {
         self.disk = disk
@@ -82,22 +82,22 @@ final class FaultyStorage: OperationStorage {
         faultAt = index
     }
 
-    func read() throws(OperationStorageError) -> [UInt8]? {
+    func read() throws(StorageError) -> [UInt8]? {
         if let readError { throw readError }
         return disk.visible
     }
 
-    func append(_ bytes: [UInt8]) throws(OperationStorageError) {
+    func append(_ bytes: [UInt8]) throws(StorageError) {
         try cross(.append) { partial in
             disk.visible = (disk.visible ?? []) + (partial ? bytes.prefix(bytes.count / 2) : bytes[...])
         }
     }
 
-    func synchronize() throws(OperationStorageError) {
+    func synchronize() throws(StorageError) {
         try cross(.synchronize) { partial in if !partial { disk.durable = disk.visible } }
     }
 
-    func replace(with bytes: [UInt8]) throws(OperationStorageError) {
+    func replace(with bytes: [UInt8]) throws(StorageError) {
         try cross(.writeTemporary) { partial in disk.temporary = partial ? Array(bytes.prefix(bytes.count / 2)) : bytes
         }
         try cross(.flushTemporary) { _ in }
@@ -105,7 +105,7 @@ final class FaultyStorage: OperationStorage {
         try cross(.flushDirectory) { partial in if !partial { disk.durable = disk.visible } }
     }
 
-    private func cross(_ boundary: Boundary, _ perform: (_ partial: Bool) -> Void) throws(OperationStorageError) {
+    private func cross(_ boundary: Boundary, _ perform: (_ partial: Bool) -> Void) throws(StorageError) {
         guard !crashed else { throw .io(operation: "crashed", errno: 5) }
         let index = boundaries.count
         boundaries.append(boundary)

@@ -63,7 +63,7 @@ public final class OperationStore {
         self.storage = storage
         self.configuration = configuration
         let bytes: [UInt8]?
-        do throws(OperationStorageError) {
+        do throws(StorageError) {
             bytes = try storage.read()
         } catch {
             throw .unreadable(error)
@@ -76,7 +76,7 @@ public final class OperationStore {
         admissions = records.values.map { Admission(key: $0.key, admittedAt: $0.admittedAt) }
             .sorted { $0.admittedAt < $1.admittedAt }
         prune(now)
-        do throws(OperationStorageError) {
+        do throws(StorageError) {
             try storage.replace(with: snapshot())
         } catch {
             throw .notWritable(error)
@@ -192,7 +192,7 @@ public final class OperationStore {
         } catch {
             throw .unencodableResult(key)
         }
-        do throws(OperationStorageError) {
+        do throws(StorageError) {
             try storage.append(line)
             try storage.synchronize()
         } catch {
@@ -203,7 +203,7 @@ public final class OperationStore {
     }
 
     private func compact() throws(OperationStoreError) {
-        do throws(OperationStorageError) {
+        do throws(StorageError) {
             try storage.replace(with: snapshot())
         } catch {
             isAvailable = false

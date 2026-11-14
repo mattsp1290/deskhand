@@ -6,49 +6,30 @@
 public protocol OperationStorage: AnyObject {
     /// The whole journal, or `nil` when there is none yet. Refuses a file that is not a regular
     /// file, is owned by someone else, or grants anything beyond owner read and write.
-    func read() throws(OperationStorageError) -> [UInt8]?
+    func read() throws(StorageError) -> [UInt8]?
 
     /// Appends to the journal. Not durable until ``synchronize()`` returns.
-    func append(_ bytes: [UInt8]) throws(OperationStorageError)
+    func append(_ bytes: [UInt8]) throws(StorageError)
 
     /// Flushes everything appended so far to stable storage.
-    func synchronize() throws(OperationStorageError)
+    func synchronize() throws(StorageError)
 
     /// Replaces the whole journal with `bytes`, atomically and durably: afterwards the file holds
     /// either the old bytes or the new ones, never a mix, and once this returns the new ones
     /// survive power loss. The new file is owner-only.
-    func replace(with bytes: [UInt8]) throws(OperationStorageError)
-}
-
-public enum OperationStorageError: Error, Hashable, Sendable, CustomStringConvertible {
-    /// The file's permission bits include more than `0600`.
-    case permissionsTooWide(mode: UInt32)
-    case wrongOwner(owner: UInt32, expected: UInt32)
-    case notRegularFile
-    /// A system call failed. `operation` names it for the log.
-    case io(operation: String, errno: Int32)
-
-    public var description: String {
-        switch self {
-        case .permissionsTooWide(let mode): "operation record file mode is 0\(String(mode, radix: 8)), not 0600"
-        case .wrongOwner(let owner, let expected):
-            "operation record file is owned by uid \(owner), not \(expected)"
-        case .notRegularFile: "operation record path is not a regular file"
-        case .io(let operation, let errno): "\(operation) failed with errno \(errno)"
-        }
-    }
+    func replace(with bytes: [UInt8]) throws(StorageError)
 }
 
 /// Why ``OperationStore`` could not start. deskhand then refuses every effect call with
 /// `internal_error` (contract 12.3) rather than run without its records.
 public enum OperationStoreLoadError: Error, Hashable, Sendable, CustomStringConvertible {
     /// The file could not be read, or is not owner-only.
-    case unreadable(OperationStorageError)
+    case unreadable(StorageError)
     /// A line other than a torn last one does not decode, or describes a transition the
     /// lifecycle does not allow. `line` counts from 1.
     case corrupt(line: Int, reason: String)
     /// The restart rules could not be written back durably (contract 12.9).
-    case notWritable(OperationStorageError)
+    case notWritable(StorageError)
 
     public var description: String {
         switch self {
@@ -66,7 +47,7 @@ public enum OperationStoreError: Error, Hashable, Sendable {
     /// `internal_error` (contract 12.3).
     case unavailable
     /// This write failed. The store is ``unavailable`` from now on.
-    case writeFailed(OperationStorageError)
+    case writeFailed(StorageError)
     /// The ticket's record does not exist: it was never admitted here, or a reload replaced it.
     case unknownOperation(OperationKey)
     /// The lifecycle does not allow this change from `from` (contract 12.2).

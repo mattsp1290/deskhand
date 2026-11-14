@@ -456,6 +456,39 @@ import Testing
         #expect(line == disk.lines.count - 1)
     }
 
+    /// A13: a damaged admission time is corruption, wherever the line is, and never a crash.
+    @Test(arguments: ["-9223372036854775808", "-1", "253402300800000"], [false, true])
+    func refusesAnAdmissionTimeOutOfRange(_ value: String, onTheLastLine: Bool) throws {
+        let disk = FakeDisk()
+        let store = try Sample.store(disk)
+        _ = try Sample.admit(store, Sample.key("op-1"))
+        if !onTheLastLine { _ = try Sample.admit(store, Sample.key("op-2")) }
+        var lines = disk.lines
+        let original = #""admitted_at_ms":\#(Sample.start.millisecondsSinceEpoch)"#
+        #expect(lines[1].contains(original))
+        lines[1] = lines[1].replacing(original, with: #""admitted_at_ms":\#(value)"#)
+        disk.visible = Array((lines.joined(separator: "\n") + "\n").utf8)
+
+        let error = #expect(throws: OperationStoreLoadError.self) { try Sample.store(disk) }
+        guard case .corrupt(let line, let reason) = error else {
+            throw TestFailure("not corrupt: \(String(describing: error))")
+        }
+        #expect(line == 2)
+        #expect(reason.contains("admitted_at_ms"))
+    }
+
+    @Test func acceptsTheEndsOfTheAdmissionRange() throws {
+        for milliseconds: Int64 in [0, 253_402_300_799_999] {
+            let disk = FakeDisk()
+            let store = try Sample.store(disk)
+            _ = try Sample.admit(store, Sample.key("op-1"), at: Timestamp(millisecondsSinceEpoch: milliseconds))
+            let restarted = try Sample.store(disk, at: Timestamp(millisecondsSinceEpoch: milliseconds))
+            #expect(
+                try restarted.record(for: Sample.key("op-1"), now: Timestamp(millisecondsSinceEpoch: milliseconds))?
+                    .admittedAt.millisecondsSinceEpoch == milliseconds)
+        }
+    }
+
     @Test func refusesAFileWithoutTheHeader() {
         let disk = FakeDisk("{\"journal\":\"something-else\",\"version\":1}\n")
         #expect(
