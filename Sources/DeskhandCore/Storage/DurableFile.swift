@@ -9,20 +9,24 @@
 /// One owner-only file that survives a crash and power loss (contract 12.1, 12.7): the operation
 /// records and the held-input ledger both sit on it.
 ///
-/// - Every open is `O_NOFOLLOW`, and the opened file is refused unless it is a regular file owned
-///   by `owner` with no permission beyond `0600`.
-/// - ``replace(with:)`` writes `<path>.tmp`, created `0600`, flushes it, renames it over the file
+/// - The directory that holds the file must exist. Every call opens it with
+///   `O_NOFOLLOW | O_DIRECTORY` and refuses it unless it is owned by `owner` and neither group nor
+///   others can write it: whoever can write it can remove the file, and a missing file reads as
+///   empty, which would make the ledger forget what is down and the records forget every
+///   operation. The file is then opened, created and renamed relative to that descriptor, so the
+///   file used is the one in the directory checked.
+/// - Every open of the file is `O_NOFOLLOW`, and the opened file is refused unless it is a regular
+///   file owned by `owner` with no permission beyond `0600`.
+/// - ``replace(with:)`` writes `<name>.tmp`, created `0600`, flushes it, renames it over the file
 ///   and flushes the directory, so a crash leaves the old bytes or the new ones.
 /// - ``openForAppending()`` gives a journal its ``Appender``.
 ///
 /// A flush is ``StorageFlush/fullFlush(_:)`` (`F_FULLFSYNC` on Darwin), falling back to `fsync`
 /// only when that fails with `ENOTSUP` or `EINVAL`, which mean the file system does not support it.
 /// Any other flush error is thrown, because the bytes may not be on stable storage.
-///
-/// The directory must already exist.
 public struct DurableFile: Sendable {
     public let path: String
-    /// The uid that must own the file.
+    /// The uid that must own the file and the directory that holds it.
     public let owner: UInt32
     public let flusher: any StorageFlush
 
@@ -39,9 +43,11 @@ public struct DurableFile: Sendable {
         self.flusher = flusher
     }
 
-    /// The whole file, or `nil` when there is none.
+    /// The whole file, or `nil` when the directory holds none.
     public func read() throws(StorageError) -> [UInt8]? {
-        let descriptor = path.withCString { open($0, O_RDONLY | Self.checkedOpen) }
+        let directory = try openDirectory()
+        defer { _ = close(directory) }
+        let descriptor = name.withCString { openat(directory, $0, O_RDONLY | Self.checkedOpen) }
         if descriptor < 0 {
             if errno == ENOENT { return nil }
             throw .io(operation: "open", errno: errno)
@@ -65,12 +71,16 @@ public struct DurableFile: Sendable {
     /// power loss, and a crash before then leaves the previous contents whole. When this throws
     /// after the rename, the new contents are in place but may not be durable.
     public func replace(with bytes: [UInt8]) throws(StorageError) {
-        let temporary = path + ".tmp"
+        let directory = try openDirectory()
+        defer { _ = close(directory) }
+        let temporary = name + ".tmp"
         // A leftover from a crash may have any owner or mode; O_EXCL then guarantees a new file.
-        if temporary.withCString({ unlink($0) }) != 0, errno != ENOENT {
+        if temporary.withCString({ unlinkat(directory, $0, 0) }) != 0, errno != ENOENT {
             throw .io(operation: "unlink", errno: errno)
         }
-        let descriptor = temporary.withCString { open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
+        let descriptor = temporary.withCString {
+            openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        }
         guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
         do throws(StorageError) {
             // A strict umask can take away owner write, which every later append needs.
@@ -82,13 +92,18 @@ public struct DurableFile: Sendable {
             throw error
         }
         _ = close(descriptor)
-        guard rename(temporary, path) == 0 else { throw .io(operation: "rename", errno: errno) }
-        try flushDirectory()
+        guard renameat(directory, temporary, directory, name) == 0 else {
+            throw .io(operation: "rename", errno: errno)
+        }
+        // Makes the rename itself durable.
+        try flush(directory)
     }
 
     /// Opens the existing file for appending, checked as ``read()`` checks it.
     public func openForAppending() throws(StorageError) -> Appender {
-        let descriptor = path.withCString { open($0, O_WRONLY | O_APPEND | Self.checkedOpen) }
+        let directory = try openDirectory()
+        defer { _ = close(directory) }
+        let descriptor = name.withCString { openat(directory, $0, O_WRONLY | O_APPEND | Self.checkedOpen) }
         guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
         do throws(StorageError) {
             try verify(descriptor)
@@ -138,17 +153,36 @@ public struct DurableFile: Sendable {
         }
     }
 
-    /// Makes the rename itself durable.
-    private func flushDirectory() throws(StorageError) {
-        let descriptor = directory.withCString { open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
+    /// The checked directory that holds the file. Read access lets it be flushed.
+    private func openDirectory() throws(StorageError) -> Int32 {
+        let descriptor = directoryPath.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard descriptor >= 0 else { throw .io(operation: "open directory", errno: errno) }
-        defer { _ = close(descriptor) }
-        try flush(descriptor)
+        var status = stat()
+        let problem: StorageError? =
+            if fstat(descriptor, &status) != 0 {
+                .io(operation: "fstat directory", errno: errno)
+            } else if UInt32(status.st_uid) != owner {
+                .directoryWrongOwner(owner: UInt32(status.st_uid), expected: owner)
+            } else if UInt32(status.st_mode) & 0o022 != 0 {
+                .directoryWritableByOthers(mode: UInt32(status.st_mode) & 0o7777)
+            } else {
+                nil
+            }
+        if let problem {
+            _ = close(descriptor)
+            throw problem
+        }
+        return descriptor
     }
 
-    private var directory: String {
+    private var directoryPath: String {
         guard let slash = path.lastIndex(of: "/") else { return "." }
         return slash == path.startIndex ? "/" : String(path[..<slash])
+    }
+
+    private var name: String {
+        guard let slash = path.lastIndex(of: "/") else { return path }
+        return String(path[path.index(after: slash)...])
     }
 
     private func verify(_ descriptor: Int32) throws(StorageError) {

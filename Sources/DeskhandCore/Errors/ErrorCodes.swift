@@ -29,8 +29,7 @@ public enum ToolErrorCode: String, CaseIterable, Sendable {
     case internalError = "internal_error"
 }
 
-/// The numeric codes of JSON-RPC errors (contract 9.4): the request never reached a tool. The HTTP
-/// status is not a property of the code (`-32602` is 400 or 200 by cause), so the server picks it.
+/// The numeric codes of JSON-RPC errors (contract 9.4): the request never reached a tool.
 public enum JSONRPCErrorCode: Int, CaseIterable, Sendable {
     case parseError = -32_700
     case invalidRequest = -32_600
@@ -39,6 +38,9 @@ public enum JSONRPCErrorCode: Int, CaseIterable, Sendable {
     case internalError = -32_603
     case headerMismatch = -32_020
     case unsupportedProtocolVersion = -32_022
+
+    // No HTTP status here: contract 9.4 gives `-32602` either `400` or `200` depending on the check
+    // that failed, so the listener's check table owns it.
 
     public var defaultMessage: String {
         switch self {

@@ -283,6 +283,43 @@ enum Situation: String, CaseIterable, Sendable {
         #expect(dropped.endCause(of: underDrop, now: at(200))?.abortReason == .blocked(.gated))
     }
 
+    /// Re-review A, finding 2: leases that begin and end after the admitted one do not relabel how
+    /// it ended.
+    @Test func laterLeasesDoNotRelabelHowTheAdmittedLeaseEnded() throws {
+        var manager = acquired(by: crew, mine, at: now, ttlMs: 5000)
+        let admitted = try manager.check(principal: crew, holderID: mine, now: now)
+        _ = manager.run(.acquire, theirs, at: at(6000))
+        _ = manager.run(.release, theirs, at: at(6100))
+        #expect(manager.lastEnd?.cause == .released)
+        #expect(manager.endCause(of: admitted, now: at(6200)) == .expired)
+
+        // The admitted lease's end and one release are kept; fill the rest of the retained ends.
+        for index in 2..<LeaseManager.retainedEnds {
+            _ = manager.run(.acquire, theirs, at: at(7000 + Int64(index)))
+            _ = manager.run(.release, theirs, at: at(7000 + Int64(index)))
+        }
+        #expect(manager.endCause(of: admitted, now: at(8000)) == .expired)
+        _ = manager.run(.acquire, theirs, at: at(8000))
+        _ = manager.run(.release, theirs, at: at(8000))
+        #expect(manager.endCause(of: admitted, now: at(8001)) == .released, "beyond the retained ends")
+    }
+
+    /// Re-review B, finding 2: the deadline of the admitted lease moves with a renewal, and is gone
+    /// once that lease no longer holds.
+    @Test func theAdmittedLeasesDeadlineFollowsRenewals() throws {
+        var manager = acquired(by: crew, mine, at: now, ttlMs: 10_000)
+        let admitted = try manager.check(principal: crew, holderID: mine, now: now)
+        #expect(manager.deadline(of: admitted) == at(10_000).monotonic)
+        _ = manager.run(.renew, at: at(4000))
+        #expect(manager.deadline(of: admitted) == at(34_000).monotonic)
+        #expect(admitted.deadline == at(10_000).monotonic, "the admission snapshot does not move")
+
+        _ = manager.run(.release, at: at(5000))
+        #expect(manager.deadline(of: admitted) == nil)
+        _ = manager.run(.acquire, at: at(5000))
+        #expect(manager.deadline(of: admitted) == nil, "a new acquisition is another lease")
+    }
+
     @Test func leaseSurvivesTokenReplacementBecauseThePrincipalIsTheCertificateSubject() throws {
         let manager = acquired(by: crew, mine, at: now)
         let sameCertificateNewToken = Principal(certificateSubject: crew.certificateSubject)

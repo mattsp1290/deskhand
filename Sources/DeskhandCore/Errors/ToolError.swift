@@ -119,6 +119,9 @@ public struct ToolError: Error, Hashable, Sendable, JSONRepresentable {
     public let message: String
     /// The highest-precedence state when the error was produced. On a replay, the state stored with
     /// the result; the state now is the `currentState` of ``OperationContext/replayed(_:currentState:)``.
+    /// For a state's own code it is always that state, as `defs.json` requires, whatever `state:`
+    /// the initializer was given: an abort for a lease that `disarmed` dropped is `disarmed` even
+    /// once `gated` holds as well.
     public let state: DeskhandState
     public let operationID: OperationID?
     public let operation: OperationContext?
@@ -132,7 +135,7 @@ public struct ToolError: Error, Hashable, Sendable, JSONRepresentable {
     ) {
         self.reason = reason
         self.message = message
-        self.state = state
+        if case .blocked(let blocked) = reason { self.state = blocked.state } else { self.state = state }
         self.operationID = operationID
         self.operation = operation
         self.measured = reason.measured ?? measured

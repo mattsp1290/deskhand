@@ -110,6 +110,32 @@ import Testing
         }
     }
 
+    /// Re-review B, finding 5: a directory deskhand's user can search but not list, as a root-owned
+    /// `0711` one is, still serves the file inside it.
+    @Test func readsThroughADirectoryItMaySearchButNotList() throws {
+        try Self.withDirectory { directory in
+            let contents = AllowanceSample.json()
+            try Self.write(contents, to: directory + "/allowance.json")
+            try FileManager.default.setAttributes([.posixPermissions: 0o311], ofItemAtPath: directory)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory) }
+            let result = probe.probe(
+                directory: directory, name: "allowance.json", maxBytes: AllowanceReader.maxFileBytes)
+            guard case .opened(let directoryStatus, _, let read) = result else {
+                Issue.record("expected the file to open, got \(result)")
+                return
+            }
+            #expect(directoryStatus.permissions == 0o311)
+            #expect(read == Array(contents.utf8))
+        }
+    }
+
+    /// A directory that cannot be opened for lack of permission says which permission is missing.
+    @Test func aDeniedDirectoryNamesThePermissionItNeeds() {
+        let reason = AllowanceInvalidReason.directoryUnreadable(errno: EACCES)
+        #expect(reason.description.hasSuffix("deskhand's user needs search permission on it"))
+        #expect(!AllowanceInvalidReason.directoryUnreadable(errno: ENOTDIR).description.contains("needs"))
+    }
+
     @Test func aRegularFileAsTheDirectoryFails() throws {
         try Self.withDirectory { directory in
             try Self.write("{}", to: directory + "/plain")

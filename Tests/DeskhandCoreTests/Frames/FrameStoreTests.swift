@@ -32,6 +32,9 @@ import Testing
         #expect(frame.displayConfigGeneration == F.generation && frame.capturedAt == F.t0)
         #expect(frame.geometry == capture.geometry && frame.frontmostApp == F.textEdit && frame.maxAgeMs == 60_000)
         #expect(frame.outputPixelSize == PixelSize(width: 4, height: 4))
+        // Re-review A, finding 7: the log's frame digest travels with the frame.
+        #expect(frame.sha256 == capture.sha256)
+        #expect(store.lookup(frame.id, in: F.alpha)?.sha256 == capture.sha256)
         #expect(frame.id.rawValue.hasPrefix("frm_"))
         let live = try #require(store.latest(in: F.alpha, displayID: F.mainDisplay))
         #expect(live.frame == frame && live.pixels == capture.pixels)

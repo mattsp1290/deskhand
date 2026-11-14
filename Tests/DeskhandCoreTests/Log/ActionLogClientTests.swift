@@ -29,6 +29,8 @@ import Testing
         #expect(outcome.intentTime == intent.time)
         #expect(outcome.time == LogSamples.time.adding(milliseconds: 9))
         #expect(outcome.frontmostApp == LogSamples.textEdit && outcome.targetApp == LogSamples.preview)
+        #expect(outcome.frameID == intent.frameID && outcome.frameSHA256 == intent.frameSHA256)
+        #expect(outcome.action == intent.action && outcome.tool == intent.tool)
     }
 
     @Test(arguments: [ActionLogFailure.connectionRefused, .connectionLost, .notCommitted])

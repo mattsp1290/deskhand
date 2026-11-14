@@ -20,7 +20,7 @@ private enum Examples {
     static func at(_ milliseconds: Int64) -> Timestamp { Timestamp(millisecondsSinceEpoch: milliseconds) }
     static func op(_ raw: String) -> OperationID { OperationID(raw)! }
 
-    static func measured(target: AppRef, title: String?, point: GlobalPoint = pointerPoint) -> Measured {
+    static func measured(target: AppRef, title: WindowTitle?, point: GlobalPoint = pointerPoint) -> Measured {
         Measured(
             frontmostApp: textEdit, targetApp: target, windowTitle: title, globalPoint: point,
             measuredAt: at(1_794_668_539_730))
@@ -326,6 +326,18 @@ private enum Examples {
         #expect(existing.jsonValue["replayed"] == nil && existing.jsonValue["current_state"] == nil)
     }
 
+    /// `defs.json`: a state's own code carries that state. Re-review A, finding 6: an abort for a
+    /// lease that `disarmed` dropped is built while `gated` may already be the state.
+    @Test(arguments: BlockingState.allCases)
+    func aStateCodeCarriesItsOwnState(_ blocked: BlockingState) {
+        for given in DeskhandState.allCases {
+            let error = ToolError(.blocked(blocked), message: "", state: given)
+            #expect(error.state == blocked.state)
+            #expect(error.jsonValue["state"] == .string(blocked.rawValue))
+        }
+        #expect(ToolError(.leaseNotHeld, message: "", state: .gated).state == .gated)
+    }
+
     static let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
 
     static func measured(
@@ -381,14 +393,16 @@ private enum Examples {
         #expect(error.jsonValue["replayed"] == nil && error.jsonValue["operation"] == nil)
     }
 
-    @Test func windowTitleIsCutTo512UnicodeScalars() {
+    @Test func windowTitleIsCutTo512UnicodeScalars() throws {
+        let policy = AppPolicy(deskhandBundleID: BundleID("com.example.deskhand")!)
+        let long = try #require(policy.windowTitle(String(repeating: "é", count: 600), of: Examples.textEdit))
         let measured = Measured(
-            frontmostApp: Examples.textEdit, targetApp: nil, windowTitle: String(repeating: "é", count: 600),
-            globalPoint: nil,
+            frontmostApp: Examples.textEdit, targetApp: nil, windowTitle: long, globalPoint: nil,
             measuredAt: Examples.at(0))
         #expect(measured.windowTitle?.unicodeScalars.count == 512)
         // 300 graphemes of two scalars each: a cut by characters would keep 600 scalars.
-        let combining = String(repeating: "e\u{301}", count: 300)
+        let combining = try #require(
+            policy.windowTitle(String(repeating: "e\u{301}", count: 300), of: Examples.textEdit))
         let end = DragEnd(targetApp: Examples.textEdit, windowTitle: combining, globalPoint: Examples.pointerPoint)
         #expect(end.windowTitle?.unicodeScalars.count == 512)
     }
