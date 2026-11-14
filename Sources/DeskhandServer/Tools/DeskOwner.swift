@@ -68,7 +68,9 @@ public final class DeskOwner: StateSource, FrameSource {
         public let leaseEnds: [LeaseEnd]
         public let reading: ClockReading
 
-        /// What stops the executing effect: pass each to ``InputExecutor/interrupt(_:)``.
+        /// What stops the executing effect. The state owner does not forward these: the watchdog
+        /// derives the same interruptions from the new snapshot (``Watchdog/interruptions(at:)``)
+        /// and passes them to ``InputExecutor/interrupt(_:)`` itself, so there is one path.
         public var interruptions: [Interruption] {
             var found: [Interruption] = []
             for case .cancelInFlight(let state) in effects { found.append(.state(state)) }
@@ -82,8 +84,9 @@ public final class DeskOwner: StateSource, FrameSource {
     /// Reduces `signals` (and a person's arming `command`) from the current report at the current
     /// reading, settles a lease that has run out, drops the lease and invalidates every frame as
     /// the effects require, all under one lock. The app's state owner calls it from
-    /// ``WatchdogStateOwner/reduceNow(allowanceChanged:)``, then forwards ``Reduction/interruptions``
-    /// to the executor and calls ``Watchdog/refreshState()``.
+    /// ``WatchdogStateOwner/reduceNow(allowanceChanged:)``, or on a signal change followed by
+    /// ``Watchdog/refreshState()``. It does not forward ``Reduction/interruptions``: the watchdog
+    /// passes interruptions to the executor itself, which is their only path.
     ///
     /// `signals` is read under the lock, so reductions apply in the order their readings were
     /// taken: a reduction that read the signals before a newer one cannot apply after it and

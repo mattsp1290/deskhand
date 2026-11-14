@@ -166,8 +166,8 @@ struct ExecutorStopTests {
     )
     func stopDoesNotWaitForTheOutcomeEntry() async throws {
         let mac = FakeMac()
-        // Long enough that only the gate decides when the outcome append returns.
-        let harness = try Harness(mac: mac, waitLimit: .seconds(30))
+        // The wait limits never pass on their own: only the gate decides when the outcome append returns.
+        let harness = try Harness(mac: mac, waitTimer: ManualWaitLimits())
         let starter = StopStarter(harness.executor)
         let gate = Gate()
         mac.change { $0.onSleep = { await starter.start() } }
@@ -197,11 +197,15 @@ struct ExecutorStopTests {
         "a stop returns while a refusal entry is held back for a late intent; the entries wait for it, written once, after it"
     )
     func entriesWaitForHeldRefusal() async throws {
-        // The intent's append gives up after it, and the held refusal entry's append has as long.
-        let harness = try Harness(waitLimit: .seconds(1))
+        // The intent's append gives up only when the test lets the limits pass; the held refusal
+        // entry's append then waits for the intent with the limits held again.
+        let limits = ManualWaitLimits()
+        let harness = try Harness(waitTimer: limits)
         let gate = Gate()
         await harness.onLog(.intent) { await gate.pass() }
-        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
+        let answer = try #require(
+            await ActionLogTests.answer(
+                of: try harness.pointer(["type": "move", "x": 1, "y": 1]), on: harness, after: gate, limits: limits))
         #expect(answer.code == .logUnavailable)
         #expect(await harness.logEntries.isEmpty)
 
@@ -213,8 +217,9 @@ struct ExecutorStopTests {
             settled.withLock { $0 = true }
             return logged
         }
-        // Only the gate lets the intent's append return, so this can only fail when the wait is wrong.
-        try await Task.sleep(for: .milliseconds(200))
+        // Neither the gate nor a limit lets anything through until the test says so: however long
+        // this runs, a correct executor cannot settle the entries here.
+        for _ in 0..<1_000 { await Task.yield() }
         #expect(!settled.withLock { $0 }, "the entries settled while the refusal entry was still held back")
 
         await gate.open()

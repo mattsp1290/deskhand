@@ -209,8 +209,9 @@ extension DeskhandStack {
 }
 
 /// The state owner the app runs (deskhand-qbi7's role): it reads the platform's signals, reduces
-/// them through the ``DeskOwner``, and carries the result out against the executor, then lets the
-/// watchdog re-evaluate.
+/// them through the ``DeskOwner``, and posts the releases the result allows, then lets the
+/// watchdog re-evaluate. It forwards no interruption: the watchdog reads them from the new
+/// snapshot and passes them to the executor itself, so there is one path.
 final class StackStateOwner: WatchdogStateOwner {
     let owner: DeskOwner
     let executor: InputExecutor
@@ -239,7 +240,6 @@ final class StackStateOwner: WatchdogStateOwner {
     }
 
     private func carryOut(_ reduction: DeskOwner.Reduction) async {
-        for interruption in reduction.interruptions { await executor.interrupt(interruption) }
         if reduction.releasesHeldInput { _ = await executor.retryCleanup(now: reduction.reading) }
     }
 }
