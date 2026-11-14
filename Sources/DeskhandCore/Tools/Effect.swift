@@ -72,21 +72,16 @@ public struct AppRef: Hashable, Sendable, JSONRepresentable {
     }
 }
 
-/// A window title as it may go on the wire: at most 512 Unicode scalar values, which is what the
-/// schema's `maxLength` counts. A cut by grapheme clusters could exceed it.
-private func wireTitle(_ title: String?) -> String? {
-    title.map { String(String.UnicodeScalarView($0.unicodeScalars.prefix(Measured.maxWindowTitleLength))) }
-}
-
 /// `measured.drag_end`: the facts of a drag's last point, taken at the same check as the first.
 public struct DragEnd: Hashable, Sendable, JSONRepresentable {
     public let targetApp: AppRef
+    /// Only ever a ``WindowTitle``: one the app policy shows.
     public let windowTitle: String?
     public let globalPoint: GlobalPoint
 
-    public init(targetApp: AppRef, windowTitle: String?, globalPoint: GlobalPoint) {
+    public init(targetApp: AppRef, windowTitle: WindowTitle?, globalPoint: GlobalPoint) {
         self.targetApp = targetApp
-        self.windowTitle = wireTitle(windowTitle)
+        self.windowTitle = windowTitle?.text
         self.globalPoint = globalPoint
     }
 
@@ -109,7 +104,7 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
     /// `pointer`: the app owning the topmost window under the first target. `keyboard`: the app that
     /// owns keyboard focus. `nil` only on an error whose check failed before it was measured.
     public let targetApp: AppRef?
-    /// At most 512 Unicode scalar values; longer titles are cut.
+    /// Only ever a ``WindowTitle``: one the app policy shows, at most 512 Unicode scalar values.
     public let windowTitle: String?
     /// `pointer`: where the first target mapped. `keyboard`: `nil`.
     public let globalPoint: GlobalPoint?
@@ -118,12 +113,12 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
     public let measuredAt: Timestamp
 
     public init(
-        frontmostApp: AppRef, targetApp: AppRef?, windowTitle: String?, globalPoint: GlobalPoint?,
+        frontmostApp: AppRef, targetApp: AppRef?, windowTitle: WindowTitle?, globalPoint: GlobalPoint?,
         dragEnd: DragEnd? = nil, measuredAt: Timestamp
     ) {
         self.frontmostApp = frontmostApp
         self.targetApp = targetApp
-        self.windowTitle = wireTitle(windowTitle)
+        self.windowTitle = windowTitle?.text
         self.globalPoint = globalPoint
         self.dragEnd = dragEnd
         self.measuredAt = measuredAt

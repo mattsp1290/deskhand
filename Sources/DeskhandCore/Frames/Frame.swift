@@ -24,13 +24,15 @@ public struct FrameCapture: Sendable {
     /// `FRAME_MAX_AGE_MS` in force at capture, 5,000 to 600,000.
     public var maxAgeMs: Int
     public var frontmostApp: AppRef
+    /// The `sha256` the `screenshot` result reports: of the encoded image bytes, before base64.
+    public var sha256: SHA256Hex
     /// Of size `geometry.outputPixelSize`.
     public var pixels: FramePixels
 
     public init(
         displayID: DisplayID, displayConfigGeneration: DisplayConfigGeneration, geometry: FrameGeometry,
         sourcePixelSize: PixelSize, pointPixelScale: Double, downscale: Double, capturedAt: Timestamp,
-        maxAgeMs: Int, frontmostApp: AppRef, pixels: FramePixels
+        maxAgeMs: Int, frontmostApp: AppRef, sha256: SHA256Hex, pixels: FramePixels
     ) {
         self.displayID = displayID
         self.displayConfigGeneration = displayConfigGeneration
@@ -41,6 +43,7 @@ public struct FrameCapture: Sendable {
         self.capturedAt = capturedAt
         self.maxAgeMs = maxAgeMs
         self.frontmostApp = frontmostApp
+        self.sha256 = sha256
         self.pixels = pixels
     }
 
@@ -65,6 +68,9 @@ public struct Frame: Hashable, Sendable {
     public let capturedAt: Timestamp
     public let maxAgeMs: Int
     public let frontmostApp: AppRef
+    /// The digest of the image the frame was returned as: the frame digest of every action log
+    /// entry that names this frame (contract 12.10).
+    public let sha256: SHA256Hex
 
     init(id: FrameID, scope: FrameScope, capture: FrameCapture) {
         self.id = id
@@ -78,6 +84,7 @@ public struct Frame: Hashable, Sendable {
         capturedAt = capture.capturedAt
         maxAgeMs = capture.maxAgeMs
         frontmostApp = capture.frontmostApp
+        sha256 = capture.sha256
     }
 
     public var captureRect: GlobalRect { geometry.captureRect }

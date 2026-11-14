@@ -156,8 +156,8 @@ struct RotationPKI: Sendable {
 /// One test's credential directory: the four files a ``CredentialReloader`` watches, all 0600,
 /// rewritten the way a rotation does it (a new file renamed into place).
 struct CredentialDirectory {
-    static let firstToken = "first-test-token"
-    static let secondToken = "second-test-token"
+    static let firstToken = "first-test-token-not-a-secret-01"
+    static let secondToken = "second-test-token-not-a-secret-2"
 
     let directory: URL
     let pki: RotationPKI
@@ -204,6 +204,12 @@ struct CredentialDirectory {
 
     func removeToken() throws {
         try FileManager.default.removeItem(atPath: tokenPath)
+    }
+
+    /// Puts a FIFO that nothing ever writes in place of the file at `path`.
+    func replaceWithFIFO(_ path: String) throws {
+        try FileManager.default.removeItem(atPath: path)
+        guard mkfifo(path, 0o600) == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 
     private func replace(_ path: String, with contents: Data) throws {

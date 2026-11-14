@@ -82,4 +82,22 @@ import Testing
             #expect(dispatcher.calls.count == 1)
         }
     }
+
+    /// The same for a caller that is killed or crashes: its connection ends with a reset or a FIN
+    /// and no TLS close_notify, and the dispatcher must still see the cancellation.
+    @Test(arguments: HangUp.allCases)
+    func hangingUpWithoutCloseNotifyCancelsTheCall(_ hangUp: HangUp) async throws {
+        let dispatcher = FakeDispatcher(.waitForCancellation)
+        try await ListenerHarness.withListener(handler: MCPHandler(dispatcher: dispatcher)) { address, pki, _ in
+            let client = try await HangingUpClient.connect(to: address, pki: pki)
+            try await client.send(Self.mcpRequest(.tool("pointer", ToolCallTests.pointerArguments)))
+            var started = dispatcher.started.makeAsyncIterator()
+            _ = await started.next()
+
+            try await client.hangUp(hangUp)
+            #expect(await dispatcher.waitForCancellation(limit: HangUpTests.bound))
+            #expect(dispatcher.calls.count == 1)
+            try? await client.channel.close()
+        }
+    }
 }

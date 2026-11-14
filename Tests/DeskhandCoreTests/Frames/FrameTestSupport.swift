@@ -51,7 +51,7 @@ enum FrameFixtures {
         return FrameCapture(
             displayID: display, displayConfigGeneration: generation, geometry: geometry(rect, size),
             sourcePixelSize: size, pointPixelScale: 2, downscale: 1, capturedAt: time, maxAgeMs: maxAgeMs,
-            frontmostApp: frontmost, pixels: pixels(size))
+            frontmostApp: frontmost, sha256: SHA256Hex(hashing: Array("image at \(time)".utf8)), pixels: pixels(size))
     }
 
     static func pointer(_ action: JSONValue) throws -> PointerAction {

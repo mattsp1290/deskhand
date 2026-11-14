@@ -28,19 +28,20 @@ private final class GatedHandler: RequestHandler {
     func release() { gate.withLock { $0.take() }?.resume() }
 }
 
-/// `CONNECTION_MAX_AGE` (contract 2.1) on the connection's own event loop, whose clock the test
-/// advances, so the outcome does not depend on how fast the machine runs.
-@Suite(.timeLimit(.minutes(1))) struct ConnectionMaxAgeTests {
-    private let maxAge = ListenerHarness.configuration().connectionMaxAge
-
-    private func connection(handler: any RequestHandler) async throws -> NIOAsyncTestingChannel {
+/// A ``ConnectionHandler`` on a testing channel whose event-loop clock the test advances, behind an
+/// already authenticated handshake.
+enum EmbeddedConnection {
+    static func make(
+        handler: any RequestHandler,
+        configuration: ListenerConfiguration = ListenerHarness.configuration()
+    ) async throws -> NIOAsyncTestingChannel {
         let channel = NIOAsyncTestingChannel()
         try await channel.testingEventLoop.executeInContext {
             let session = ConnectionSession()
             session.principal = Principal(certificateSubject: TestPKI.expectedSubject)
             try channel.pipeline.syncOperations.addHandler(
                 ConnectionHandler(
-                    configuration: ListenerHarness.configuration(),
+                    configuration: configuration,
                     session: session,
                     tokens: FixedTokenProvider(tokens: ListenerHarness.acceptedTokens),
                     handler: handler,
@@ -51,21 +52,89 @@ private final class GatedHandler: RequestHandler {
         return channel
     }
 
-    private func send(_ request: TestRequest, to channel: NIOAsyncTestingChannel) async throws {
+    static func sendHead(_ request: TestRequest, to channel: NIOAsyncTestingChannel) async throws {
         let head = HTTPRequestHead(
             version: .http1_1, method: request.method, uri: request.uri, headers: HTTPHeaders(request.headers))
         try await channel.writeInbound(HTTPServerRequestPart.head(head))
+    }
+
+    static func send(_ request: TestRequest, to channel: NIOAsyncTestingChannel) async throws {
+        try await sendHead(request, to: channel)
         try await channel.writeInbound(HTTPServerRequestPart.body(ByteBuffer(bytes: request.body)))
         try await channel.writeInbound(HTTPServerRequestPart.end(nil))
     }
 
     /// The response head, after which the body and end are consumed.
-    private func response(from channel: NIOAsyncTestingChannel) async throws -> HTTPResponseHead {
+    static func response(from channel: NIOAsyncTestingChannel) async throws -> HTTPResponseHead {
         guard case .head(let head) = try await channel.waitForOutboundWrite(as: HTTPServerResponsePart.self) else {
             throw ChannelError.inappropriateOperationForState
         }
         while case .body = try await channel.waitForOutboundWrite(as: HTTPServerResponsePart.self) {}
         return head
+    }
+}
+
+/// `CONNECTION_MAX_AGE` (contract 2.1) and the request body deadline on the connection's own event
+/// loop, whose clock the test advances, so the outcome does not depend on how fast the machine runs.
+@Suite(.timeLimit(.minutes(1))) struct ConnectionMaxAgeTests {
+    private let maxAge = ListenerHarness.configuration().connectionMaxAge
+    private let bodyTimeout = ListenerHarness.configuration().requestBodyTimeout
+
+    private func connection(
+        handler: any RequestHandler,
+        configuration: ListenerConfiguration = ListenerHarness.configuration()
+    ) async throws -> NIOAsyncTestingChannel {
+        try await EmbeddedConnection.make(handler: handler, configuration: configuration)
+    }
+
+    private func send(_ request: TestRequest, to channel: NIOAsyncTestingChannel) async throws {
+        try await EmbeddedConnection.send(request, to: channel)
+    }
+
+    private func response(from channel: NIOAsyncTestingChannel) async throws -> HTTPResponseHead {
+        try await EmbeddedConnection.response(from: channel)
+    }
+
+    /// A head whose `Content-Length` promises more body than ever arrives.
+    private func sendStalledRequest(to channel: NIOAsyncTestingChannel) async throws {
+        try await EmbeddedConnection.sendHead(.valid(), to: channel)
+        try await channel.writeInbound(HTTPServerRequestPart.body(ByteBuffer(bytes: [0x7B])))
+    }
+
+    @Test func stalledBodyIsClosedAtTheBodyDeadline() async throws {
+        let handler = RecordingHandler()
+        let channel = try await connection(handler: handler)
+        try await sendStalledRequest(to: channel)
+
+        await channel.testingEventLoop.advanceTime(by: bodyTimeout - .nanoseconds(1))
+        #expect(channel.isActive)
+        await channel.testingEventLoop.advanceTime(by: .nanoseconds(1))
+        #expect(!channel.isActive)
+        #expect(handler.requests.isEmpty)
+    }
+
+    /// Reviewer repro: with no body deadline before it, the max age alone closes a stalled body,
+    /// where before it only marked the connection to close after a response that never came.
+    @Test func stalledBodyIsClosedAtTheMaxAge() async throws {
+        let handler = RecordingHandler()
+        let configuration = ListenerHarness.configuration { $0.requestBodyTimeout = .hours(24) }
+        let channel = try await connection(handler: handler, configuration: configuration)
+        try await sendStalledRequest(to: channel)
+
+        await channel.testingEventLoop.advanceTime(by: maxAge - .nanoseconds(1))
+        #expect(channel.isActive)
+        await channel.testingEventLoop.advanceTime(by: .nanoseconds(1))
+        #expect(!channel.isActive)
+        #expect(handler.requests.isEmpty)
+    }
+
+    @Test func theBodyDeadlineEndsWithTheBody() async throws {
+        let channel = try await connection(handler: RecordingHandler())
+        try await send(.valid(), to: channel)
+        #expect(try await response(from: channel).headers["Connection"] == ["keep-alive"])
+
+        await channel.testingEventLoop.advanceTime(by: bodyTimeout)
+        #expect(channel.isActive)
     }
 
     @Test func idleConnectionIsClosedAtTheMaxAge() async throws {

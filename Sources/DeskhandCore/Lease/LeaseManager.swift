@@ -12,17 +12,25 @@ public struct LeaseApplication: Hashable, Sendable {
 /// A value with no clock of its own: the server's state owner keeps the single instance, serializes
 /// every call to it and passes the ``ClockReading``. Every way a live lease ends, by running out, by
 /// `release` or by a state that drops it, is returned as a ``LeaseEnd`` from the call that settled
-/// it, and the latest one is kept in ``lastEnd``. A restart starts from a new instance, which is how
-/// a restart ends the lease and forgets `lease_expired`.
+/// it, and the most recent ends are kept for ``endCause(of:now:)``. A restart starts from a new
+/// instance, which is how a restart ends the lease and forgets `lease_expired`.
 public struct LeaseManager: Hashable, Sendable {
+    /// How many of the most recent ends ``endCause(of:now:)`` can name. An effect checks its lease
+    /// before every event and at every activity poll, and the owner aborts it as soon as a call
+    /// returns its lease's end, so this many further leases cannot end in between.
+    public static let retainedEnds = 16
+
     /// As last written. A held lease whose deadline has passed is still `held` here until a mutating
     /// call or ``expire(now:)`` settles it; ``state(at:)`` gives the state as of a given reading.
     public private(set) var lease: LeaseState = .none
-    /// The most recent end of a live lease.
-    public private(set) var lastEnd: LeaseEnd?
+    /// The most recent ends of a live lease, oldest first, at most ``retainedEnds``.
+    private var recentEnds: [LeaseEnd] = []
     private var lastSerial: UInt64 = 0
 
     public init() {}
+
+    /// The most recent end of a live lease.
+    public var lastEnd: LeaseEnd? { recentEnds.last }
 
     /// The state as of `now`: a held lease whose deadline has passed has run out.
     public func state(at now: ClockReading) -> LeaseState {
@@ -35,6 +43,13 @@ public struct LeaseManager: Hashable, Sendable {
     /// expiry first, that call's ``LeaseApplication/ended`` reports it instead.
     public var deadline: ContinuousClock.Instant? {
         guard case .held(let held) = lease else { return nil }
+        return held.deadline
+    }
+
+    /// The deadline of `admitted` as it stands now, moved by every renewal since admission, or
+    /// `nil` once `admitted` is no longer the held lease. Already past once it has run out.
+    public func deadline(of admitted: Lease) -> ContinuousClock.Instant? {
+        guard case .held(let held) = lease, held.serial == admitted.serial else { return nil }
         return held.deadline
     }
 
@@ -71,8 +86,9 @@ public struct LeaseManager: Hashable, Sendable {
     }
 
     /// The lease check of an effect call (contract 9.5 step 6). Returns the live lease the holder
-    /// holds; the executor keeps it and runs ``endCause(of:now:)`` at the last look and before every
-    /// later event.
+    /// holds; the executor keeps it to name the lease it was admitted under, and runs
+    /// ``endCause(of:now:)`` at the last look and before every later event. Its `deadline` is the
+    /// one at admission: the current one is ``deadline(of:)``, which a renewal moves.
     public func check(principal: Principal, holderID: HolderID, now: ClockReading) throws(LeaseDenial) -> Lease {
         let caller = LeaseHolder(principal: principal, holderID: holderID)
         switch state(at: now) {
@@ -87,13 +103,14 @@ public struct LeaseManager: Hashable, Sendable {
     /// before the first event, and of every later event (contract 12.3 steps 5 and 6, 12.4, 13.1).
     /// `nil` while `admitted` is still the live lease, otherwise why it ended, which is the code the
     /// effect is aborted with (``LeaseEndCause/abortReason``); at the last look that abort has 0
-    /// events. A lease that ended before ``lastEnd`` no longer holds either way and counts as
-    /// released (`lease_not_held`).
+    /// events. Leases acquired and ended after `admitted` do not change the answer. A lease that
+    /// ended more than ``retainedEnds`` ends ago no longer holds either way and counts as released
+    /// (`lease_not_held`).
     public func endCause(of admitted: Lease, now: ClockReading) -> LeaseEndCause? {
         if case .held(let held) = lease, held.serial == admitted.serial {
             return held.isLive(at: now) ? nil : .expired
         }
-        if let lastEnd, lastEnd.lease.serial == admitted.serial { return lastEnd.cause }
+        if let end = recentEnds.last(where: { $0.lease.serial == admitted.serial }) { return end.cause }
         return .released
     }
 
@@ -116,7 +133,8 @@ public struct LeaseManager: Hashable, Sendable {
 
     private mutating func ended(_ lease: Lease, _ cause: LeaseEndCause) -> LeaseEnd {
         let end = LeaseEnd(lease: lease, cause: cause)
-        lastEnd = end
+        recentEnds.append(end)
+        if recentEnds.count > Self.retainedEnds { recentEnds.removeFirst() }
         return end
     }
 

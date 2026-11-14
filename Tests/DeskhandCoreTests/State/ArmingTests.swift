@@ -219,7 +219,7 @@ import Testing
             Issue.record("no lease")
             return
         }
-        #expect(report.effectDeadline(lease: lease, at: F.t0) == F.at(10_000).monotonic)
+        #expect(report.effectDeadline(of: lease, leases: manager, at: F.t0) == F.at(10_000).monotonic)
     }
 
     /// Arming is measured on the monotonic clock: setting the wall clock back does not lengthen it.

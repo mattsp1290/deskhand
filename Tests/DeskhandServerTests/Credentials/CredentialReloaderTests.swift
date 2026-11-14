@@ -71,59 +71,71 @@ private let day: Int64 = 86_400_000
 }
 
 @Suite struct TokenRotationTests {
+    private static let old = "old-test-token-not-a-secret-0001"
+    private static let new = "new-test-token-not-a-secret-0002"
+    /// Exactly ``LoadedToken/minimumLength`` characters.
+    private static let token = "token-0123456789abcdefghijklmnop"
+
     private static func loaded(_ secret: String) -> LoadedToken { LoadedToken.parse(Array(secret.utf8))! }
 
-    @Test(arguments: [
-        ("token", true), ("token\n", true), ("token\r\n", true), ("a.b-c_d~e+f/g=", true),
-        ("", false), ("\n", false), ("token\n\n", false), (" token", false), ("tok en", false),
-        ("token\t", false), ("tökén", false), ("token\u{7F}", false),
-    ])
+    private static let formats: [(String, Bool)] = {
+        let short = String(token.dropLast())
+        let valid: [String] = [token, token + "\n", token + "\r\n", "a.b-c_d~e+f/g=" + token]
+        let invalid: [String] = [
+            "", "\n", token + "\n\n", " " + token, "tok en" + token, token + "\t", "tökén" + token,
+            token + "\u{7F}", short, short + "\n",
+        ]
+        return valid.map { ($0, true) } + invalid.map { ($0, false) }
+    }()
+
+    @Test(arguments: formats)
     func tokenFileFormat(_ contents: String, _ valid: Bool) {
+        #expect(Self.token.utf8.count == LoadedToken.minimumLength)
         #expect((LoadedToken.parse(Array(contents.utf8)) != nil) == valid)
     }
 
     @Test func zeroOverlapRevokesTheReplacedTokenAtOnce() {
         let start = ContinuousClock.now
         var rotation = TokenRotation(overlap: .zero)
-        let changed1 = rotation.apply(Self.loaded("old"), at: start)
+        let changed1 = rotation.apply(Self.loaded(Self.old), at: start)
         #expect(changed1)
-        let changed2 = rotation.apply(Self.loaded("new"), at: start + .seconds(1))
+        let changed2 = rotation.apply(Self.loaded(Self.new), at: start + .seconds(1))
         #expect(changed2)
-        #expect(!rotation.accepted.accepts("old".utf8, at: start + .seconds(1)))
-        #expect(rotation.accepted.accepts("new".utf8, at: start + .seconds(1)))
+        #expect(!rotation.accepted.accepts(Self.old.utf8, at: start + .seconds(1)))
+        #expect(rotation.accepted.accepts(Self.new.utf8, at: start + .seconds(1)))
     }
 
     @Test func overlapKeepsTheReplacedTokenForItsWindowOnly() {
         let start = ContinuousClock.now
         var rotation = TokenRotation(overlap: .seconds(30))
-        _ = rotation.apply(Self.loaded("old"), at: start)
-        _ = rotation.apply(Self.loaded("new"), at: start + .seconds(5))
-        #expect(rotation.accepted.accepts("old".utf8, at: start + .seconds(34)))
-        #expect(!rotation.accepted.accepts("old".utf8, at: start + .seconds(35)))
-        #expect(rotation.accepted.accepts("new".utf8, at: start + .seconds(35)))
+        _ = rotation.apply(Self.loaded(Self.old), at: start)
+        _ = rotation.apply(Self.loaded(Self.new), at: start + .seconds(5))
+        #expect(rotation.accepted.accepts(Self.old.utf8, at: start + .seconds(34)))
+        #expect(!rotation.accepted.accepts(Self.old.utf8, at: start + .seconds(35)))
+        #expect(rotation.accepted.accepts(Self.new.utf8, at: start + .seconds(35)))
     }
 
     @Test func rereadingTheSameTokenIsNotARotation() {
         let start = ContinuousClock.now
         var rotation = TokenRotation(overlap: .seconds(30))
-        _ = rotation.apply(Self.loaded("old"), at: start)
-        _ = rotation.apply(Self.loaded("new"), at: start)
-        let changed3 = rotation.apply(Self.loaded("new\n"), at: start + .seconds(20))
+        _ = rotation.apply(Self.loaded(Self.old), at: start)
+        _ = rotation.apply(Self.loaded(Self.new), at: start)
+        let changed3 = rotation.apply(Self.loaded(Self.new + "\n"), at: start + .seconds(20))
         #expect(!changed3)
-        #expect(!rotation.accepted.accepts("old".utf8, at: start + .seconds(30)))
-        #expect(rotation.accepted.accepts("new".utf8, at: start))
+        #expect(!rotation.accepted.accepts(Self.old.utf8, at: start + .seconds(30)))
+        #expect(rotation.accepted.accepts(Self.new.utf8, at: start))
     }
 
     @Test func noTokenAcceptsNothingAndDropsTheOldOne() {
         let start = ContinuousClock.now
         var rotation = TokenRotation(overlap: .seconds(30))
-        _ = rotation.apply(Self.loaded("old"), at: start)
-        _ = rotation.apply(Self.loaded("new"), at: start)
+        _ = rotation.apply(Self.loaded(Self.old), at: start)
+        _ = rotation.apply(Self.loaded(Self.new), at: start)
         let changed4 = rotation.apply(nil, at: start + .seconds(1))
         #expect(changed4)
-        #expect(!rotation.accepted.accepts("new".utf8, at: start + .seconds(1)))
-        #expect(!rotation.accepted.accepts("old".utf8, at: start + .seconds(1)))
-        let changed5 = rotation.apply(Self.loaded("new"), at: start + .seconds(2))
+        #expect(!rotation.accepted.accepts(Self.new.utf8, at: start + .seconds(1)))
+        #expect(!rotation.accepted.accepts(Self.old.utf8, at: start + .seconds(1)))
+        let changed5 = rotation.apply(Self.loaded(Self.new), at: start + .seconds(2))
         #expect(changed5)
         #expect(rotation.accepted.previous == nil)
     }
@@ -135,6 +147,28 @@ private let day: Int64 = 86_400_000
         await #expect(throws: CertificateRejection.notIssuedByCA) {
             _ = try await CredentialReloader(configuration: directory.configuration())
         }
+    }
+
+    /// Reviewer repro: opening a FIFO with no writer blocked forever, at startup and in every reload
+    /// after it, since reloads run one at a time.
+    @Test(.timeLimit(.minutes(1))) func aFIFOAtACredentialPathIsRefusedWithoutBlocking() async throws {
+        let directory = try CredentialDirectory()
+        try directory.replaceWithFIFO(directory.caPath)
+        await #expect(throws: CertificateRejection.unreadable(path: directory.caPath, .notRegularFile)) {
+            _ = try await CredentialReloader(configuration: directory.configuration())
+        }
+
+        let healthy = try CredentialDirectory()
+        let reloader = try await CredentialReloader(configuration: healthy.configuration())
+        try healthy.replaceWithFIFO(healthy.keyPath)
+        try healthy.replaceWithFIFO(healthy.tokenPath)
+        let status = await reloader.reload()
+        #expect(status.certificateRejection == .unreadable(path: healthy.keyPath, .notRegularFile))
+        #expect(status.tokenRejection == .unreadable(path: healthy.tokenPath, .notRegularFile))
+
+        try healthy.install(.first)
+        try healthy.writeToken(CredentialDirectory.firstToken)
+        #expect(!(await reloader.reload()).credentialsWarning)
     }
 
     @Test func startupWithABadTokenFileServesWithNoTokenAndTheWarning() async throws {
@@ -360,6 +394,14 @@ private let day: Int64 = 86_400_000
             #expect(await reloader.reload().tokenRejection == .malformed(path: directory.tokenPath))
             #expect(
                 try await TestClient.roundTrip(Self.request(token: ""), to: address, pki: pki).status
+                    == .unauthorized)
+
+            // A file caught half written holds a prefix of the token, which must not become one.
+            let prefix = String(token.prefix(LoadedToken.minimumLength - 1))
+            try directory.writeToken(prefix)
+            #expect(await reloader.reload().tokenRejection == .malformed(path: directory.tokenPath))
+            #expect(
+                try await TestClient.roundTrip(Self.request(token: prefix), to: address, pki: pki).status
                     == .unauthorized)
 
             try directory.writeToken(token)

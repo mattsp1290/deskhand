@@ -53,8 +53,10 @@ public struct ActionLogIntent: Hashable, Sendable {
 }
 
 /// The outcome entry, written after the final record is durable (contract 12.3, step 8). It repeats
-/// the intent's caller and handles and its time, so each outcome joins exactly one intent. It is
-/// built only from an ``IntentReceipt``: an outcome without a committed intent cannot be written.
+/// the intent's caller, handles, frame, action and time, so each outcome joins exactly one intent
+/// and still says what was done when read alone (contract 12.10: every entry has the frame and the
+/// action). It is built only from an ``IntentReceipt``: an outcome without a committed intent cannot
+/// be written.
 public struct ActionLogOutcome: Hashable, Sendable {
     public let time: Timestamp
     public let intentTime: Timestamp
@@ -62,7 +64,11 @@ public struct ActionLogOutcome: Hashable, Sendable {
     public let principal: Principal
     public let holderID: HolderID
     public let operationID: OperationID
-    public let tool: ToolName
+    public let frameID: FrameID
+    /// The intent's frame digest.
+    public let frameSHA256: SHA256Hex
+    /// The intent's action, typed text as its length only.
+    public let action: LoggedAction
     /// The frontmost app of the result's `measured` (contract 12.10). `nil` when the operation
     /// ended with nothing measured for it, as a clean stop can.
     public let frontmostApp: AppRef?
@@ -72,17 +78,21 @@ public struct ActionLogOutcome: Hashable, Sendable {
     public let targetApp: AppRef?
     public let outcome: ActionOutcome
 
+    public var tool: ToolName { action.tool }
+
     init(receipt: IntentReceipt, outcome: ActionOutcome, measured: Measured?, time: Timestamp) {
         let intent = receipt.intent
         self.init(
             time: time, intentTime: intent.time, nodeAddress: intent.nodeAddress, principal: intent.principal,
-            holderID: intent.holderID, operationID: intent.operationID, tool: intent.tool,
-            frontmostApp: measured?.frontmostApp, targetApp: measured?.targetApp, outcome: outcome)
+            holderID: intent.holderID, operationID: intent.operationID, frameID: intent.frameID,
+            frameSHA256: intent.frameSHA256, action: intent.action, frontmostApp: measured?.frontmostApp,
+            targetApp: measured?.targetApp, outcome: outcome)
     }
 
     private init(
         time: Timestamp, intentTime: Timestamp, nodeAddress: NodeAddress, principal: Principal, holderID: HolderID,
-        operationID: OperationID, tool: ToolName, frontmostApp: AppRef?, targetApp: AppRef?, outcome: ActionOutcome
+        operationID: OperationID, frameID: FrameID, frameSHA256: SHA256Hex, action: LoggedAction,
+        frontmostApp: AppRef?, targetApp: AppRef?, outcome: ActionOutcome
     ) {
         self.time = time
         self.intentTime = intentTime
@@ -90,7 +100,9 @@ public struct ActionLogOutcome: Hashable, Sendable {
         self.principal = principal
         self.holderID = holderID
         self.operationID = operationID
-        self.tool = tool
+        self.frameID = frameID
+        self.frameSHA256 = frameSHA256
+        self.action = action
         self.frontmostApp = frontmostApp
         self.targetApp = targetApp
         self.outcome = outcome
@@ -109,9 +121,11 @@ public struct ActionLogOutcome: Hashable, Sendable {
             nodeAddress: try reader.required("node_address", Decode.nodeAddress),
             principal: try reader.required("principal", Decode.principal),
             holderID: try reader.required("holder_id", Decode.identifier(HolderID.self)),
-            operationID: try reader.required("operation_id", Decode.identifier(OperationID.self)), tool: tool,
-            frontmostApp: frontmostApp, targetApp: targetApp,
-            outcome: try reader.required("outcome", ActionOutcome.decode))
+            operationID: try reader.required("operation_id", Decode.identifier(OperationID.self)),
+            frameID: try reader.required("frame_id", Decode.identifier(FrameID.self)),
+            frameSHA256: try reader.required("frame_sha256", Decode.sha256),
+            action: try reader.required("action", LoggedAction.decode(tool: tool)), frontmostApp: frontmostApp,
+            targetApp: targetApp, outcome: try reader.required("outcome", ActionOutcome.decode))
     }
 }
 
@@ -348,6 +362,9 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
             object["time"] = outcome.time.jsonValue
             object["intent_time"] = outcome.intentTime.jsonValue
             object["tool"] = .string(outcome.tool.rawValue)
+            object["frame_id"] = .string(outcome.frameID.rawValue)
+            object["frame_sha256"] = .string(outcome.frameSHA256.description)
+            object["action"] = outcome.action.jsonValue
             object["frontmost_app"] = outcome.frontmostApp?.jsonValue ?? .null
             object["target_app"] = outcome.targetApp?.jsonValue ?? .null
             object["outcome"] = outcome.outcome.jsonValue
@@ -377,7 +394,10 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
             switch kind {
             case .intent: ["holder_id", "operation_id", "tool", "frame_id", "frame_sha256", "frontmost_app", "action"]
             case .outcome:
-                ["holder_id", "operation_id", "intent_time", "tool", "frontmost_app", "target_app", "outcome"]
+                [
+                    "holder_id", "operation_id", "intent_time", "tool", "frame_id", "frame_sha256", "action",
+                    "frontmost_app", "target_app", "outcome",
+                ]
             case .refusal: ActionLogRefusal.memberNames
             }
         let reader = try ObjectReader(value, at: .root, allowing: common.union(specific))

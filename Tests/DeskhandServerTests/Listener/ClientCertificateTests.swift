@@ -188,6 +188,49 @@ private let organizationalUnit = "2.5.4.11"
         }
     }
 
+    /// Contract 2.2: in date, both ends of the validity period included, to the second.
+    @Test(
+        arguments: [
+            (-1, .notYetValid), (0, nil), (999, nil), (1000, nil), (1999, nil), (2000, .expired),
+        ] as [(Int64, ClientCertificateRefusal?)])
+    func datesAreCheckedToTheSecond(_ offsetMilliseconds: Int64, _ refusal: ClientCertificateRefusal?) {
+        let now = Timestamp(millisecondsSinceEpoch: 1_000_000_000 + offsetMilliseconds)
+        let check = { () throws(ClientCertificateRefusal) in
+            try ClientCertificatePolicy.checkDates(notBefore: 1_000_000, notAfter: 1_000_001, now: now)
+        }
+        if let refusal {
+            #expect(throws: refusal) { try check() }
+        } else {
+            #expect(throws: Never.self) { try check() }
+        }
+    }
+
+    @Test func leafIsCheckedAgainstTheGivenTime() throws {
+        let leaf = try TestPKI.get().identity(.valid).certificate
+        let notBefore = Int64(leaf.notValidBefore) * 1000
+        let notAfter = Int64(leaf.notValidAfter) * 1000
+        #expect(
+            try policy.authenticate(leaf, now: Timestamp(millisecondsSinceEpoch: notAfter))
+                == Principal(certificateSubject: TestPKI.expectedSubject))
+        #expect(throws: ClientCertificateRefusal.expired) {
+            try policy.authenticate(leaf, now: Timestamp(millisecondsSinceEpoch: notAfter + 1000))
+        }
+        #expect(throws: ClientCertificateRefusal.notYetValid) {
+            try policy.authenticate(leaf, now: Timestamp(millisecondsSinceEpoch: notBefore - 1000))
+        }
+    }
+
+    @Test func aLeafInDateStillNeedsClientAuthAndTheSubject() throws {
+        let pki = try TestPKI.get()
+        let now = ClockReading.now().wall
+        #expect(throws: ClientCertificateRefusal.missingClientAuthUsage) {
+            try policy.authenticate(pki.identity(.noExtendedKeyUsage).certificate, now: now)
+        }
+        #expect(throws: ClientCertificateRefusal.unexpectedSubject("CN=someone-else,O=forge")) {
+            try policy.authenticate(pki.identity(.wrongSubject).certificate, now: now)
+        }
+    }
+
     @Test func garbageIsMalformed() {
         let error = #expect(throws: ClientCertificateRefusal.self) {
             try policy.authenticate(leafDER: [0x30, 0x03, 0x02, 0x01])

@@ -56,6 +56,17 @@ public struct ListenerConfiguration: Sendable {
     public var connectionMaxAge = TimeAmount.seconds(Int64(ContractConstants.connectionMaxAgeSeconds))
     /// A peer that has not finished the TLS handshake by then is disconnected.
     public var handshakeTimeout = TimeAmount.seconds(10)
+    /// Once a request head is admitted, its body must be complete within this time, or the
+    /// connection closes with no response; no call has started. A body is at most
+    /// `MAX_REQUEST_BODY_BYTES` (64 KiB), which takes far less than this on the LAN.
+    public var requestBodyTimeout = TimeAmount.seconds(30)
+    /// TCP keep-alive on every connection, so a caller that vanishes without a FIN or a reset (a
+    /// pod torn down with its network) is noticed while its call runs, and the call is cancelled.
+    /// Probing starts after ``keepAliveIdle`` of silence and gives up after ``keepAliveProbes``
+    /// unanswered probes ``keepAliveInterval`` apart.
+    public var keepAliveIdle = TimeAmount.seconds(60)
+    public var keepAliveInterval = TimeAmount.seconds(10)
+    public var keepAliveProbes = 3
     /// After deskhand closes its output, how long it waits for the caller to close its side before
     /// closing outright. Request bytes that reach a fully closed socket are answered with a reset,
     /// which can destroy a response the caller has not read yet.

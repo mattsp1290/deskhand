@@ -56,14 +56,86 @@ import Testing
         }
     }
 
-    @Test func refusesAFileOwnedBySomeoneElse() throws {
+    /// The directory is checked before the file, so a file owned by another uid shows only where
+    /// that uid does not own the directory as well: as root, which can hand the file away.
+    @Test(.enabled(if: geteuid() == 0, "only root can give a file away"))
+    func refusesAFileOwnedBySomeoneElse() throws {
+        try withTemporaryDirectory { directory in
+            let file = DurableFile(path: directory + "/state.json")
+            try file.replace(with: bytes("x"))
+            #expect(chown(file.path, 65_534, 0) == 0)
+            let refusal = StorageError.wrongOwner(owner: 65_534, expected: 0)
+            #expect(throws: refusal) { try file.read() }
+            #expect(throws: refusal) { try file.openForAppending() }
+        }
+    }
+
+    /// Re-reviews A3 and B4: whoever can write the directory can remove the file, and a missing
+    /// file reads as empty. Each call checks the directory before it touches the file.
+    @Test func refusesADirectoryOwnedBySomeoneElse() throws {
         try withTemporaryDirectory { directory in
             try DurableFile(path: directory + "/state.json").replace(with: bytes("x"))
             let stranger = DurableFile.currentUser &+ 1
             let file = DurableFile(path: directory + "/state.json", owner: stranger)
-            let refusal = StorageError.wrongOwner(owner: DurableFile.currentUser, expected: stranger)
+            let refusal = StorageError.directoryWrongOwner(owner: DurableFile.currentUser, expected: stranger)
             #expect(throws: refusal) { try file.read() }
             #expect(throws: refusal) { try file.openForAppending() }
+            #expect(throws: refusal) { try file.replace(with: bytes("y")) }
+            #expect(try DurableFile(path: file.path).read() == bytes("x"))
+        }
+    }
+
+    @Test(arguments: [0o777, 0o775, 0o757, 0o1777, 0o730])
+    func refusesADirectoryOthersCanWrite(_ mode: Int) throws {
+        try withTemporaryDirectory { directory in
+            let file = DurableFile(path: directory + "/state.json")
+            try file.replace(with: bytes("x"))
+            try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: directory)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory) }
+            let refusal = StorageError.directoryWritableByOthers(mode: UInt32(mode))
+            #expect(throws: refusal) { try file.read() }
+            #expect(throws: refusal) { try file.openForAppending() }
+            #expect(throws: refusal) { try file.replace(with: bytes("y")) }
+        }
+    }
+
+    @Test func refusesADirectoryReachedThroughASymbolicLink() throws {
+        try withTemporaryDirectory { directory in
+            try FileManager.default.createDirectory(atPath: directory + "/real", withIntermediateDirectories: false)
+            try DurableFile(path: directory + "/real/state.json").replace(with: bytes("x"))
+            try FileManager.default.createSymbolicLink(atPath: directory + "/link", withDestinationPath: "real")
+            let file = DurableFile(path: directory + "/link/state.json")
+            for call in [{ _ = try file.read() }, { _ = try file.openForAppending() }, { try file.replace(with: []) }] {
+                do {
+                    try call()
+                    Issue.record("followed the link")
+                } catch {
+                    let error = error as? StorageError
+                    #expect(
+                        error == .io(operation: "open directory", errno: ELOOP)
+                            || error == .io(operation: "open directory", errno: ENOTDIR))
+                }
+            }
+        }
+    }
+
+    /// A missing directory is not an empty file.
+    @Test func aMissingDirectoryIsAnError() throws {
+        try withTemporaryDirectory { directory in
+            let file = DurableFile(path: directory + "/absent/state.json")
+            #expect(throws: StorageError.io(operation: "open directory", errno: ENOENT)) { try file.read() }
+            #expect(throws: StorageError.io(operation: "open directory", errno: ENOENT)) {
+                try file.replace(with: [])
+            }
+        }
+    }
+
+    @Test func acceptsANarrowerDirectory() throws {
+        try withTemporaryDirectory { directory in
+            let file = DurableFile(path: directory + "/state.json")
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
+            try file.replace(with: bytes("x"))
+            #expect(try file.read() == bytes("x"))
         }
     }
 
@@ -83,7 +155,8 @@ import Testing
             let fifo = directory + "/fifo"
             #expect(mkfifo(fifo, 0o600) == 0)
             #expect(throws: StorageError.notRegularFile) { try DurableFile(path: fifo).read() }
-            #expect(throws: StorageError.notRegularFile) { try DurableFile(path: directory).read() }
+            try FileManager.default.createDirectory(atPath: directory + "/sub", withIntermediateDirectories: false)
+            #expect(throws: StorageError.notRegularFile) { try DurableFile(path: directory + "/sub").read() }
         }
     }
 

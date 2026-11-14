@@ -34,8 +34,11 @@ public enum CredentialFileError: Error, Hashable, Sendable, CustomStringConverti
 public enum CredentialFile {
     public static let maxByteCount = 1 << 20
 
+    /// The file is opened without blocking: opening a FIFO with no writer would otherwise wait
+    /// forever, stalling startup or every later reload, before the regular-file check could refuse
+    /// it. A regular file reads the same either way.
     public static func read(path: String) throws(CredentialFileError) -> [UInt8] {
-        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         guard descriptor >= 0 else {
             switch errno {
             case ENOENT: throw .missing
