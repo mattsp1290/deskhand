@@ -25,9 +25,9 @@ import Testing
                         digits /= readings.count
                     }
                     let input = StateSignals(
-                        allowanceValid: allowanceValid, readings: values, credentialsWarning: false,
-                        cleanupPending: false, logUnavailable: false)
-                    let report = StateReducer.reduce(previous: previous, signals: input, now: F.t0).report
+                        allowance: allowanceValid ? F.allowance : .missing, readings: values,
+                        credentialsWarning: false, cleanupPending: false, logUnavailable: false, ownInput: .idle)
+                    let report = F.reduce(previous, input).report
 
                     var expected: Set<BlockingState> = allowanceValid ? [] : [.gated]
                     if arming == .paused { expected.insert(.paused) }
@@ -36,8 +36,10 @@ import Testing
                     let expectedConditions: Set<Condition> = values[.loginWindow] == .absent ? [] : [.loginWindow]
 
                     let matches =
-                        report.activeStates.states == expected && report.state == expectedState(expected)
-                        && report.activeStates.inPrecedenceOrder == contractPrecedence.filter(expected.contains)
+                        report.activeStates(at: F.t0).states == expected
+                        && report.state(at: F.t0) == expectedState(expected)
+                        && report.activeStates(at: F.t0).inPrecedenceOrder
+                            == contractPrecedence.filter(expected.contains)
                         && report.conditions == expectedConditions && report.arming == arming
                     if !matches {
                         mismatches += 1
@@ -59,8 +61,8 @@ import Testing
         input.readings[signal] = nil
         #expect(input[signal] == .uncertain)
         let previous = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
-        let report = StateReducer.reduce(previous: previous, signals: input, now: F.t0).report
-        #expect(report.activeStates.states == [stateFedBy[signal]!])
+        let report = F.reduce(previous, input).report
+        #expect(report.activeStates(at: F.t0).states == [stateFedBy[signal]!])
     }
 
     /// Contract 11.4: the login window is `not_console` even when the console-ownership signal
@@ -70,9 +72,9 @@ import Testing
         input.readings[.notConsole] = .absent
         input.readings[.loginWindow] = .present
         let previous = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
-        let report = StateReducer.reduce(previous: previous, signals: input, now: F.t0).report
-        #expect(report.state == .notConsole)
-        #expect(report.activeStates.inPrecedenceOrder == [.notConsole])
+        let report = F.reduce(previous, input).report
+        #expect(report.state(at: F.t0) == .notConsole)
+        #expect(report.activeStates(at: F.t0).inPrecedenceOrder == [.notConsole])
         #expect(report.conditions == [.loginWindow])
     }
 
@@ -88,7 +90,7 @@ import Testing
                 input.logUnavailable = mask & 4 != 0
                 input.readings[.loginWindow] = loginWindow
                 let previous = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
-                let report = StateReducer.reduce(previous: previous, signals: input, now: F.t0).report
+                let report = F.reduce(previous, input).report
 
                 var expected: Set<Condition> = []
                 if input.credentialsWarning { expected.insert(.credentialsWarning) }
@@ -97,7 +99,7 @@ import Testing
                 if loginWindow != .absent { expected.insert(.loginWindow) }
                 #expect(report.conditions == expected)
                 #expect(!report.conditions.contains(.userActive))
-                #expect(report.state == (loginWindow == .absent ? .ok : .notConsole))
+                #expect(report.state(at: F.t0) == (loginWindow == .absent ? .ok : .notConsole))
                 checked += 1
             }
         }
@@ -108,9 +110,9 @@ import Testing
     @Test func startupHoldsEverythingUnreadAndIsDisarmed() {
         let startup = StateReport.startup
         #expect(startup.arming == .disarmed)
-        #expect(startup.armedUntil == nil)
-        #expect(startup.state == .gated)
-        #expect(startup.activeStates.inPrecedenceOrder == contractPrecedence.filter { $0 != .paused })
+        #expect(startup.armedUntil(at: F.t0) == nil)
+        #expect(startup.state(at: F.t0) == .gated)
+        #expect(startup.activeStates(at: F.t0).inPrecedenceOrder == contractPrecedence.filter { $0 != .paused })
         #expect(startup.conditions == [.loginWindow])
     }
 }

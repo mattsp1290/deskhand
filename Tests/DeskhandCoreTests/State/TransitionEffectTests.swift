@@ -32,19 +32,19 @@ import Testing
         Row("permission revoked", [], [.permissionMissing], leavingOK(.permissionMissing)),
         Row("capture goes blank", [], [.permissionStale], leavingOK(.permissionStale)),
         Row("secure input on", [], [.secureInput], leavingOK(.secureInput)),
-        Row("allowance withdrawn", [], [.gated], leavingOK(.gated) + [.dropLease]),
-        Row("arming runs out", [], [.disarmed], leavingOK(.disarmed) + [.dropLease]),
-        Row("kill switch", [], [.paused, .disarmed], leavingOK(.paused) + [.dropLease]),
+        Row("allowance withdrawn", [], [.gated], leavingOK(.gated) + [.dropLease(.gated)]),
+        Row("arming runs out", [], [.disarmed], leavingOK(.disarmed) + [.dropLease(.disarmed)]),
+        Row("kill switch", [], [.paused, .disarmed], leavingOK(.paused) + [.dropLease(.paused)]),
         Row("two states at once name the higher", [], [.secureInput, .locked], leavingOK(.locked)),
-        Row("gate and lock at once", [], [.locked, .gated], leavingOK(.gated) + [.dropLease]),
+        Row("gate and lock at once", [], [.locked, .gated], leavingOK(.gated) + [.dropLease(.gated)]),
         Row("unlock restores nothing", [.locked], [], []),
         Row("allowance returns restores nothing", [.gated], [], []),
         Row("re-armed after kill switch", [.paused, .disarmed], [], []),
-        Row("locked then gated", [.locked], [.locked, .gated], [.dropLease]),
-        Row("lock gives way to gate", [.locked], [.gated], [.dropLease]),
-        Row("arming runs out while gated", [.gated], [.gated, .disarmed], [.dropLease]),
-        Row("kill switch while disarmed", [.disarmed], [.paused, .disarmed], [.dropLease]),
-        Row("gate withdrawn while paused", [.paused, .disarmed], [.gated, .paused, .disarmed], [.dropLease]),
+        Row("locked then gated", [.locked], [.locked, .gated], [.dropLease(.gated)]),
+        Row("lock gives way to gate", [.locked], [.gated], [.dropLease(.gated)]),
+        Row("arming runs out while gated", [.gated], [.gated, .disarmed], [.dropLease(.disarmed)]),
+        Row("kill switch while disarmed", [.disarmed], [.paused, .disarmed], [.dropLease(.paused)]),
+        Row("gate withdrawn while paused", [.paused, .disarmed], [.gated, .paused, .disarmed], [.dropLease(.gated)]),
         Row("gate returns while disarmed", [.gated, .disarmed], [.disarmed], []),
         Row("lock while disarmed", [.disarmed], [.disarmed, .locked], []),
         Row("lock gives way to display sleep", [.locked], [.displayAsleep], []),
@@ -59,9 +59,8 @@ import Testing
             Issue.record("no single reduction reaches \(row.to) from \(row.from)")
             return
         }
-        let (report, effects) = StateReducer.reduce(
-            previous: previous, signals: F.signals(holding: row.to), command: command, now: F.t0)
-        #expect(report.activeStates.states == row.to)
+        let (report, effects) = F.reduce(previous, F.signals(holding: row.to), command)
+        #expect(report.activeStates(at: F.t0).states == row.to)
         #expect(effects == row.effects)
     }
 
@@ -80,17 +79,18 @@ import Testing
         for (fromIndex, from) in reachable.enumerated() {
             for to in reachable {
                 guard case .reachable(let command) = F.step(from: from.arming, to: to.arming) else { continue }
-                let (report, effects) = StateReducer.reduce(
-                    previous: reports[fromIndex], signals: to.signals, command: command, now: F.t0)
+                let (report, effects) = F.reduce(reports[fromIndex], to.signals, command)
 
                 var expected: [TransitionEffect] = []
                 if from.states.isEmpty, let highest = contractPrecedence.first(where: to.states.contains) {
                     expected = [.cancelInFlight(highest), .releaseHeldInput, .invalidateFrames]
                 }
-                if !to.states.subtracting(from.states).isDisjoint(with: leaseDroppingStates) {
-                    expected.append(.dropLease)
+                if let dropping = contractPrecedence.first(where: {
+                    leaseDroppingStates.contains($0) && to.states.contains($0) && !from.states.contains($0)
+                }) {
+                    expected.append(.dropLease(dropping.leaseDropping!))
                 }
-                if report.activeStates.states != to.states || effects != expected {
+                if report.activeStates(at: F.t0).states != to.states || effects != expected {
                     mismatches += 1
                     if samples.count < 3 { samples.append("\(from.states) -> \(to.states): \(effects)") }
                 }
@@ -99,7 +99,7 @@ import Testing
         }
 
         #expect(reachable.count == 384)
-        #expect(reports.map(\.activeStates.states) == reachable.map(\.states))
+        #expect(reports.map { $0.activeStates(at: F.t0).states } == reachable.map(\.states))
         #expect(checked == 384 * 384 - 128 * 128)
         #expect(mismatches == 0, "first mismatches: \(samples)")
     }
@@ -112,10 +112,9 @@ import Testing
         let after = all.subtracting(before)
         for states in [[], [.locked], [.gated, .disarmed]] as [Set<BlockingState>] {
             let previous = try #require(F.report(holding: states, conditions: before))
-            let (report, effects) = StateReducer.reduce(
-                previous: previous, signals: F.signals(holding: states, conditions: after), now: F.t0)
+            let (report, effects) = F.reduce(previous, F.signals(holding: states, conditions: after))
             #expect(report.conditions == after)
-            #expect(report.activeStates == previous.activeStates)
+            #expect(report.activeStates(at: F.t0) == previous.activeStates(at: F.t0))
             #expect(effects.isEmpty)
         }
     }

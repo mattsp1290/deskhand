@@ -37,31 +37,63 @@ public enum PlatformSignal: CaseIterable, Hashable, Sendable {
     }
 }
 
+/// What deskhand itself was doing with input when a reduction ran, for the rule that only a person
+/// arms (contract 10.4).
+public struct OwnInputActivity: Hashable, Sendable {
+    /// The arming command of this reduction came from an input event that deskhand posted itself.
+    public var commandFromPostedEvent: Bool
+    public var operationExecuting: Bool
+    /// When deskhand last posted an event, on the monotonic clock.
+    public var lastPostedEvent: ContinuousClock.Instant?
+
+    public init(commandFromPostedEvent: Bool, operationExecuting: Bool, lastPostedEvent: ContinuousClock.Instant?) {
+        self.commandFromPostedEvent = commandFromPostedEvent
+        self.operationExecuting = operationExecuting
+        self.lastPostedEvent = lastPostedEvent
+    }
+
+    /// Nothing posted, nothing executing.
+    public static let idle = OwnInputActivity(
+        commandFromPostedEvent: false, operationExecuting: false, lastPostedEvent: nil)
+}
+
 /// Everything the reducer reads at one instant, apart from arming and the clock.
 public struct StateSignals: Hashable, Sendable {
-    /// The LAN-gate allowance is present and valid now (contract 14.3). `false` means `gated`.
-    public var allowanceValid: Bool
+    /// The LAN-gate allowance (contract 14.3). Anything but ``AllowanceVerdict/valid(expiresAt:)``
+    /// means `gated`, and so does a valid one once its `expires_at` has passed: the report keeps the
+    /// expiry and compares it with the clock on every read.
+    public var allowance: AllowanceVerdict
     /// A signal with no entry reads as `uncertain`.
     public var readings: [PlatformSignal: SignalReading]
     public var credentialsWarning: Bool
     public var cleanupPending: Bool
     public var logUnavailable: Bool
+    public var ownInput: OwnInputActivity
 
     public init(
-        allowanceValid: Bool, readings: [PlatformSignal: SignalReading], credentialsWarning: Bool,
-        cleanupPending: Bool, logUnavailable: Bool
+        allowance: AllowanceVerdict, readings: [PlatformSignal: SignalReading], credentialsWarning: Bool,
+        cleanupPending: Bool, logUnavailable: Bool, ownInput: OwnInputActivity
     ) {
-        self.allowanceValid = allowanceValid
+        self.allowance = allowance
         self.readings = readings
         self.credentialsWarning = credentialsWarning
         self.cleanupPending = cleanupPending
         self.logUnavailable = logUnavailable
+        self.ownInput = ownInput
     }
 
     public subscript(signal: PlatformSignal) -> SignalReading { readings[signal] ?? .uncertain }
 
-    /// Nothing read yet: no valid allowance, and every platform signal uncertain.
+    /// Nothing read yet: no allowance, and every platform signal uncertain.
     static let unread = StateSignals(
-        allowanceValid: false, readings: [:], credentialsWarning: false, cleanupPending: false,
-        logUnavailable: false)
+        allowance: .missing, readings: [:], credentialsWarning: false, cleanupPending: false, logUnavailable: false,
+        ownInput: .idle)
+}
+
+extension AllowanceVerdict {
+    /// Valid at `now`: a valid verdict stops being valid at its `expires_at`.
+    func isValid(at now: Timestamp) -> Bool {
+        if case .valid(let expiresAt) = self { return now < expiresAt }
+        return false
+    }
 }
