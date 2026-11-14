@@ -384,26 +384,8 @@ extension Timestamp {
     /// Parses the exact text ``description`` writes: `YYYY-MM-DDTHH:MM:SS` plus `.fff` when the
     /// milliseconds are not zero, then `Z`.
     fileprivate init?(logText text: String) {
-        let utf8 = Array(text.utf8)
-        guard utf8.count == 20 || utf8.count == 24 else { return nil }
-        func number(_ range: Range<Int>) -> Int64? {
-            guard utf8[range].allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }) else { return nil }
-            return Int64(String(decoding: utf8[range], as: UTF8.self))
-        }
-        guard let year = number(0..<4), let month = number(5..<7), let day = number(8..<10),
-            let hour = number(11..<13), let minute = number(14..<16), let second = number(17..<19),
-            (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, second < 60
-        else { return nil }
-        let milliseconds = utf8.count == 24 ? number(20..<23) : 0
-        guard let milliseconds else { return nil }
-        let shiftedYear = month <= 2 ? year - 1 : year
-        let era = (shiftedYear >= 0 ? shiftedYear : shiftedYear - 399) / 400
-        let yearOfEra = shiftedYear - era * 400
-        let dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1
-        let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
-        let days = era * 146_097 + dayOfEra - 719_468
-        let seconds = days * 86_400 + hour * 3600 + minute * 60 + second
-        self.init(millisecondsSinceEpoch: seconds * 1000 + milliseconds)
+        guard let instant = UTCInstant(rfc3339: text), instant.isWholeMillisecond else { return nil }
+        self = instant.timestampRoundedUp
         guard description == text else { return nil }
     }
 }
