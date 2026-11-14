@@ -183,8 +183,7 @@ extension InputExecutor {
             ceiling.recordRefusal(denial, at: snapshot.reading.wall)
             return refused(denial)
         }
-        guard let checkMeasured = check.measured else { return refused(.internalError) }
-        let measured = snapshot.policy.redactingTitles(checkMeasured)
+        guard let measured = check.measured else { return refused(.internalError) }
 
         let intent = ActionLogIntent(
             time: snapshot.reading.wall, nodeAddress: call.nodeAddress, principal: call.principal,

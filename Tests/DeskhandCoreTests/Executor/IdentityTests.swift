@@ -293,6 +293,31 @@ struct IdentityTests {
         #expect(mac.posted.isEmpty)
     }
 
+    @Test("an abort reports no title of a capture-excluded app, in the answer or the record")
+    func abortedMeasuredHidesTitle() async throws {
+        var policy = ExecutorFixture.policy
+        policy.captureExclusions.insert(BundleIDFamily(BundleID("com.apple.Notes")!))
+        let mac = FakeMac {
+            $0.policy = policy
+            $0.focus = ObservedWindow(owner: ExecutorFixture.notes, title: "secret")
+            $0.afterPost[1] = { world, _ in world.idleMs = 0 }
+        }
+        let harness = try Harness(mac: mac)
+        let call = try harness.keyboard(["type": "type", "text": "hi"])
+        let answer = await harness.executor.perform(call)
+
+        #expect(answer.code == .userActive)
+        #expect(measured(answer)?["target_app"]?["bundle_id"] == "com.apple.Notes")
+        #expect(measured(answer)?["window_title"] == .null)
+        mac.change { $0.idleMs = 60_000 }
+        let replay = await harness.executor.perform(call)
+        guard case .replayed(_, let stored) = replay else {
+            Issue.record("expected a replay, got \(replay)")
+            return
+        }
+        #expect(stored["measured"]?["window_title"] == .null)
+    }
+
     @Test("success reports the last look's facts, titles of capture-excluded apps removed")
     func successMeasured() async throws {
         var policy = ExecutorFixture.policy

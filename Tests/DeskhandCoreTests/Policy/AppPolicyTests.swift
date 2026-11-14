@@ -239,28 +239,18 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
         }
     }
 
-    /// Contract 6.7: a title of an app on the capture exclusion list, or of deskhand, is never sent.
+    /// Contract 6.7: a title of an app on the capture exclusion list, of deskhand, or of an app that
+    /// is not identified never becomes a title `measured` can carry.
     @Test func titlesOfHiddenAppsAreRemoved() {
         let mail = AppRef(bundleID: "com.apple.mail", teamID: nil, name: "Mail")
         let edit = AppRef(textEdit, name: "TextEdit")
-        let point = GlobalPoint(x: 1, y: 2)
-        let measured = Measured(
-            frontmostApp: edit, targetApp: mail, windowTitle: "Inbox", globalPoint: point,
-            dragEnd: DragEnd(targetApp: edit, windowTitle: "notes.txt", globalPoint: point),
-            measuredAt: Timestamp(millisecondsSinceEpoch: 0))
-        let redacted = policy.redactingTitles(measured)
-        #expect(redacted.windowTitle == nil)
-        #expect(redacted.dragEnd?.windowTitle == "notes.txt")
-        let ownWindow = Measured(
-            frontmostApp: edit, targetApp: AppRef(bundleID: "com.example.deskhand", teamID: nil, name: "deskhand"),
-            windowTitle: "Arm", globalPoint: point, measuredAt: Timestamp(millisecondsSinceEpoch: 0))
-        #expect(policy.redactingTitles(ownWindow).windowTitle == nil)
-        #expect(
-            policy.redactingTitles(
-                Measured(
-                    frontmostApp: edit, targetApp: edit, windowTitle: "notes.txt", globalPoint: point,
-                    measuredAt: Timestamp(millisecondsSinceEpoch: 0))
-            ).windowTitle == "notes.txt")
+        let deskhand = AppRef(bundleID: "com.example.deskhand", teamID: nil, name: "deskhand")
+        #expect(policy.windowTitle("Inbox", of: mail) == nil)
+        #expect(policy.windowTitle("Arm", of: deskhand) == nil)
+        #expect(policy.windowTitle("Untitled", of: .undetermined) == nil)
+        #expect(policy.windowTitle("Untitled", of: nil) == nil)
+        #expect(policy.windowTitle(nil, of: edit) == nil)
+        #expect(policy.windowTitle("notes.txt", of: edit) == "notes.txt")
     }
 
     /// Contract 6.9, "Drag": every point of the path is checked, consecutive samples are at most

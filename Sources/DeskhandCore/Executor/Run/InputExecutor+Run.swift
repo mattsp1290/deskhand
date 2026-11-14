@@ -133,7 +133,7 @@ extension InputExecutor {
         let check = AppCheck.run(
             .lastLook, action: execution.action, permittedApps: execution.call.arguments.permittedApps, binding: nil,
             snapshot: snapshot, identity: seams.identity)
-        execution.lastLookMeasured = snapshot.policy.redactingTitles(check.measured ?? execution.admissionMeasured)
+        execution.lastLookMeasured = check.measured ?? execution.admissionMeasured
         var stop = standingCause(of: execution, snapshot)
         if stop == nil, let checkedAt = execution.patchCheckedAt,
             checkedAt.duration(to: snapshot.reading.monotonic) > .milliseconds(ContractConstants.patchCheckMaxAgeMs)

@@ -28,8 +28,8 @@ public struct ObservedApp: Hashable, Sendable {
 public struct ObservedWindow: Hashable, Sendable {
     /// ``ObservedApp/undetermined`` when no window was found or its owner could not be read.
     public let owner: ObservedApp
-    /// Uncut; `nil` when the window has none or it cannot be read. The executor removes it wherever
-    /// the contract says a title is not sent (contract 6.7).
+    /// Uncut; `nil` when the window has none or it cannot be read. It reaches `measured` only through
+    /// ``AppPolicy/windowTitle(_:of:)`` (contract 6.7).
     public let title: String?
 
     public init(owner: ObservedApp, title: String?) {

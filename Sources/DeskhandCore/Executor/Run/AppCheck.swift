@@ -73,7 +73,8 @@ struct AppCheck: Sendable {
     /// `pointer` only: the owner of the window under the first point checked, which for a check
     /// before an event is that event's own point.
     let pointOwner: ObservedApp?
-    /// The facts of contract 6.7, titles as measured. `nil` for a check before a later event.
+    /// The facts of contract 6.7, with the titles the app policy shows. `nil` for a check before a
+    /// later event.
     let measured: Measured?
     /// `denied_app`, whose `measured` describes the check that failed.
     let denial: ToolErrorReason?
@@ -90,6 +91,10 @@ struct AppCheck: Sendable {
         snapshot: DeskSnapshot, identity: any IdentityMeasurer
     ) -> AppCheck {
         let now = snapshot.reading.wall
+        let policy = snapshot.policy
+        func title(of window: ObservedWindow) -> WindowTitle? {
+            policy.windowTitle(window.title, of: window.owner.appRef)
+        }
         let frontmost = identity.frontmostApp()
         var subjects = [Subject(app: frontmost, point: nil)]
         let effectTarget: EffectTarget
@@ -105,7 +110,7 @@ struct AppCheck: Sendable {
             effectTarget = .keyboard(focusOwner: window.owner.policyIdentity)
             if scope == .admission || scope == .lastLook {
                 measured = Measured(
-                    frontmostApp: frontmost.appRef, targetApp: window.owner.appRef, windowTitle: window.title,
+                    frontmostApp: frontmost.appRef, targetApp: window.owner.appRef, windowTitle: title(of: window),
                     globalPoint: nil, measuredAt: now)
             }
         case .pointer(let targets, let isDrag):
@@ -130,11 +135,12 @@ struct AppCheck: Sendable {
             if scope == .admission || scope == .lastLook, let firstWindow = windows.first, let lastWindow = windows.last
             {
                 measured = Measured(
-                    frontmostApp: frontmost.appRef, targetApp: firstWindow.owner.appRef, windowTitle: firstWindow.title,
+                    frontmostApp: frontmost.appRef, targetApp: firstWindow.owner.appRef,
+                    windowTitle: title(of: firstWindow),
                     globalPoint: targets.first.globalPoint,
                     dragEnd: isDrag
                         ? DragEnd(
-                            targetApp: lastWindow.owner.appRef, windowTitle: lastWindow.title,
+                            targetApp: lastWindow.owner.appRef, windowTitle: title(of: lastWindow),
                             globalPoint: targets.last.globalPoint) : nil,
                     measuredAt: now)
             }
@@ -149,7 +155,6 @@ struct AppCheck: Sendable {
                 denial: .deniedApp(deniedBy, measured: facts, pointIndex: pointIndex))
         }
 
-        let policy = snapshot.policy
         if case .deny(let denial) = policy.evaluate(
             frontmost: frontmost.policyIdentity, target: effectTarget, permittedApps: permitted)
         {

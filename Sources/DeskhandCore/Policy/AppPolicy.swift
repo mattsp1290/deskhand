@@ -181,26 +181,6 @@ public struct AppPolicy: Hashable, Sendable {
     public func excludesFromCapture(_ bundleID: BundleID) -> Bool {
         deskhand.contains(bundleID) || captureExclusions.contains { $0.contains(bundleID) }
     }
-
-    /// `measured` as it may go on the wire: a window title of an app on the capture exclusion list,
-    /// or of one that is not identified, is removed, so no title the frames hide is sent (contract
-    /// 6.7).
-    public func redactingTitles(_ measured: Measured) -> Measured {
-        Measured(
-            frontmostApp: measured.frontmostApp, targetApp: measured.targetApp,
-            windowTitle: hidesTitle(of: measured.targetApp) ? nil : measured.windowTitle,
-            globalPoint: measured.globalPoint,
-            dragEnd: measured.dragEnd.map {
-                DragEnd(
-                    targetApp: $0.targetApp, windowTitle: hidesTitle(of: $0.targetApp) ? nil : $0.windowTitle,
-                    globalPoint: $0.globalPoint)
-            }, measuredAt: measured.measuredAt)
-    }
-
-    private func hidesTitle(of app: AppRef?) -> Bool {
-        guard let bundleID = app?.bundleID.flatMap(BundleID.init) else { return true }
-        return excludesFromCapture(bundleID)
-    }
 }
 
 extension PointerAction {
