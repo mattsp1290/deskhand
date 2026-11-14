@@ -80,7 +80,7 @@ struct DeskhandStack: Sendable {
             let owner = DeskOwner(
                 policy: ToolFixture.policy, displays: platform.displays, frames: world.frames, report: world.report,
                 clock: { clock.reading })
-            owner.reduce(signals: platform.signals)
+            owner.reduce(signals: platform.signals(ownInput: observer.ownInput))
             built = owner
             return InputExecutor.Seams(
                 state: owner, frames: owner, patches: platform.desk, identity: platform.desk, activity: activity,
@@ -91,7 +91,7 @@ struct DeskhandStack: Sendable {
         let owner = built!
         let executor = recovered.executor
 
-        let stateOwner = StackStateOwner(owner: owner, executor: executor, platform: platform)
+        let stateOwner = StackStateOwner(owner: owner, executor: executor, platform: platform, observer: observer)
         let watchdog = Watchdog(
             owner: stateOwner, executor: executor, activity: activity, scheduler: FakeClockScheduler(clock: clock))
         stateOwner.watchdog.withLock { $0 = watchdog }
@@ -177,24 +177,26 @@ final class StackStateOwner: WatchdogStateOwner {
     let owner: DeskOwner
     let executor: InputExecutor
     let platform: StackPlatform
+    let observer: StackObserver
     /// Set once the watchdog exists; it needs this owner first.
     let watchdog = Mutex<Watchdog?>(nil)
 
-    init(owner: DeskOwner, executor: InputExecutor, platform: StackPlatform) {
+    init(owner: DeskOwner, executor: InputExecutor, platform: StackPlatform, observer: StackObserver) {
         self.owner = owner
         self.executor = executor
         self.platform = platform
+        self.observer = observer
     }
 
     func snapshot() -> DeskSnapshot { owner.snapshot() }
 
     func reduceNow(allowanceChanged: Bool) async {
-        await carryOut(owner.reduce(signals: platform.signals))
+        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
     }
 
     /// A signal changed, or a person used the menu bar.
     func change(command: ArmingCommand?) async {
-        await carryOut(owner.reduce(signals: platform.signals, command: command))
+        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
         await watchdog.withLock { $0 }?.refreshState()
     }
 
@@ -214,6 +216,7 @@ final class StackObserver: ExecutorObserver {
     /// Drained by one task into ``Watchdog/executionDidChange(executing:)``.
     let executionChanges: AsyncStream<Bool>
     private let execution: AsyncStream<Bool>.Continuation
+    private let executing = Mutex(false)
 
     init(conditions: LiveConditions, posts: PostTimestampRecorder) {
         self.conditions = conditions
@@ -221,7 +224,18 @@ final class StackObserver: ExecutorObserver {
         (executionChanges, execution) = AsyncStream.makeStream()
     }
 
-    func executionDidChange(executing: Bool) { execution.yield(executing) }
+    func executionDidChange(executing: Bool) {
+        self.executing.withLock { $0 = executing }
+        execution.yield(executing)
+    }
+
+    /// What deskhand is doing with input, for the rule that only a person arms (contract 10.4). In
+    /// this stack every arming command comes from the test, never from a posted event.
+    var ownInput: OwnInputActivity {
+        OwnInputActivity(
+            commandFromPostedEvent: false, operationExecuting: executing.withLock { $0 },
+            lastPostedEvent: posts.lastPostedEvent)
+    }
 
     func didPostEvent(at instant: ContinuousClock.Instant) { posts.didPostEvent(at: instant) }
     func actionLogDidAppend(succeeded: Bool) { conditions.actionLogDidAppend(succeeded: succeeded) }
@@ -243,10 +257,13 @@ final class StackPlatform: Sendable {
         reported = Mutex((states, []))
     }
 
-    /// The signals and the allowance verdict as the platform reads them now.
-    var signals: StateSignals {
+    /// The signals and the allowance verdict as the platform reads them now, with what deskhand
+    /// itself is doing with input.
+    func signals(ownInput: OwnInputActivity) -> StateSignals {
         let (states, conditions) = reported.withLock { ($0.states, $0.conditions) }
-        return ToolFixture.signals(holding: states, conditions: conditions)
+        var signals = ToolFixture.signals(holding: states, conditions: conditions)
+        signals.ownInput = ownInput
+        return signals
     }
 
     func report(_ states: Set<BlockingState>, conditions: Set<Condition>) {
