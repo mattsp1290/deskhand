@@ -24,8 +24,12 @@ public struct DeskSnapshot: Sendable {
 
 /// The owner of the state, the lease and the configuration, as the executor sees it. The executor
 /// reads it between the ledger write and the post of every event, so ``snapshot()`` must not wait:
-/// the owner keeps a current snapshot where this can read it at once.
+/// the owner keeps its current report, lease and policy where this can read them at once.
 public protocol StateSource: Sendable {
+    /// The state, the lease and the policy as they stand, judged at ``DeskSnapshot/reading``, which
+    /// MUST be ``ClockReading/now()`` read inside this call, never a reading kept from the last
+    /// reduction: the executor takes it as now for the deadline, the lease's expiry, the patch
+    /// check's age, the length of a hold and the times it records (contract 8.4, 13).
     func snapshot() -> DeskSnapshot
 }
 

@@ -39,8 +39,10 @@ public struct ObservedWindow: Hashable, Sendable {
 }
 
 /// Reads the apps an effect touches, afresh on every call (contract 6.7, 6.9). The executor calls it
-/// before admission, at the last look and before every event, with nothing between the last
-/// measurement and the post, so it must answer without waiting on anything but the OS.
+/// before admission, at the last look and before every event, and reads the state, the lease, the
+/// person at the Mac and the connection again after it, just before the post, so a read that waits
+/// on a busy app delays the event and never lets a change of state through. It must answer without
+/// waiting on anything but the OS.
 public protocol IdentityMeasurer: Sendable {
     func frontmostApp() -> ObservedApp
 

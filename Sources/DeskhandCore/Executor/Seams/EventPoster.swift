@@ -42,7 +42,9 @@ public enum InputEvent: Hashable, Sendable {
 /// Posts input on the Mac. The executor calls it only after the held-input ledger and the checks of
 /// contract 12.3 step 6, and the release handler only when cleanup is authorized (contract 12.8).
 public protocol EventPoster: Sendable {
-    /// Posts one event. A throw means it may or may not have reached the Mac.
+    /// Posts one event. Throws only when the event was not handed to the OS, such as an event that
+    /// could not be built, so a throw is never counted in `events_posted`, where zero means that no
+    /// input reached the Mac (contract 12.2). Once the event is handed over, this returns.
     func post(_ event: InputEvent) throws
 
     /// Posts the up event that releases `input` where the pointer is now: a release never moves the

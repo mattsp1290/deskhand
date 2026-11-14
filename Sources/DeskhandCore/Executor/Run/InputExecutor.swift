@@ -9,11 +9,26 @@
 /// write, the checks and the post of an event nothing else runs: those seams answer synchronously.
 public actor InputExecutor {
     public struct Configuration: Hashable, Sendable {
+        /// The contract bounds none of these waits, so this is deskhand's own choice: long enough
+        /// that a writer committing with a slow flush is not taken for a dead one, short enough that
+        /// a hung writer or capture holds the section, and refuses every other effect with `busy`,
+        /// for seconds rather than for ever.
+        public static let defaultWaitLimit: Duration = .seconds(5)
+
         /// `ACTIONS_PER_MINUTE`.
         public var actionsPerMinute: Int
+        /// How long the executor waits for an append to the action log, the frame check of step 9
+        /// and the patch recapture of step 13 (contract 9.5, 12.3). An intent the writer has not
+        /// acknowledged by then is `log_unavailable`, a recapture that has not answered is
+        /// `stale_frame` `pixels_changed`, and an outcome or refusal entry is given up as not
+        /// written (contract 11.3).
+        public var waitLimit: Duration
 
-        public init(actionsPerMinute: Int = ContractConstants.defaultActionsPerMinute) {
+        public init(
+            actionsPerMinute: Int = ContractConstants.defaultActionsPerMinute, waitLimit: Duration = defaultWaitLimit
+        ) {
             self.actionsPerMinute = actionsPerMinute
+            self.waitLimit = waitLimit
         }
 
         public init(limits: Limits) { self.init(actionsPerMinute: limits.actionsPerMinute) }
@@ -38,7 +53,7 @@ public actor InputExecutor {
             state: any StateSource, frames: any FrameSource, patches: any TargetPatchVerifier,
             identity: any IdentityMeasurer, activity: any UserActivitySource, poster: any EventPoster,
             keyCodes: any KeyCodeMapper, log: any ActionLogClient, timer: any ExecutionTimer = TaskSleepTimer(),
-            releases: any ReleaseHandler = LedgerReleaseHandler(), observer: any ExecutorObserver,
+            releases: any ReleaseHandler = HeldInputReleaser(), observer: any ExecutorObserver,
             operationStore: any OperationStoreLoader
         ) {
             self.state = state
@@ -57,13 +72,16 @@ public actor InputExecutor {
     }
 
     let seams: Seams
+    let waitLimit: Duration
     var ceiling: ActionCeiling
-    /// `nil` when it could not be loaded; every effect is then `internal_error` (contract 12.3).
+    /// `nil` when it could not be loaded, or after it refused a final write without marking itself
+    /// unavailable; every effect is then `internal_error` until it is loaded again (contract 12.3).
     var store: OperationStore?
     var ledger: HeldInputLedger
+    /// When to try the owed releases again, and which already went out (contract 11.2).
+    var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
-    /// What the watchdog asked to stop the call in the section with, until that call leaves.
-    var interruption: Interruption?
+    var interruptions = PendingInterruptions()
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release.
@@ -73,6 +91,7 @@ public actor InputExecutor {
     ) {
         let owesReleases = !ledger.pending().isEmpty
         self.seams = seams
+        waitLimit = configuration.waitLimit
         ceiling = ActionCeiling(actionsPerMinute: configuration.actionsPerMinute)
         store = try? seams.operationStore.load(now: now)
         self.ledger = ledger
@@ -91,12 +110,12 @@ public actor InputExecutor {
 
     /// Stops the call in the admission section with `interruption` at its next check: before its
     /// next event, or within one activity poll while it waits (contract 13). A call that has not
-    /// reached its last look stops there. When several arrive, the one first in the order of
-    /// contract 9.5 wins. Ignored while the section is empty.
+    /// reached its last look stops there. When several apply, the one first in the order of
+    /// contract 9.5 wins; the end of a lease the call does not run under is kept but never applies.
+    /// Ignored while the section is empty.
     public func interrupt(_ interruption: Interruption) {
         guard !section.isIdle else { return }
-        if let current = self.interruption, current.reason.abortRank <= interruption.reason.abortRank { return }
-        self.interruption = interruption
+        interruptions.add(interruption)
     }
 
     /// `status.operation` (contract 6.1): the record for `key`, or a call with that key still being
@@ -108,21 +127,6 @@ public actor InputExecutor {
             return .found(record.view)
         }
         return .notFound
-    }
-
-    /// Posts the releases the ledger still owes, if cleanup is authorized (contract 11.2, 12.8):
-    /// after an abort whose releases had to wait, a failed release, or a start with entries left.
-    /// Only while no call is in the admission section, so it never releases a running operation's
-    /// input.
-    public func releaseOwedInput() -> OwedRelease {
-        guard section.isIdle else { return .operationInSection }
-        let owed = ledger.pending()
-        guard !owed.isEmpty else { return .nothingOwed }
-        let state = seams.state
-        let outcome = seams.releases.release(
-            owed, from: &ledger, poster: seams.poster, authorization: { state.snapshot().cleanupAuthorization })
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
-        return .attempted(outcome)
     }
 
     /// Loads the record file again after a failed write, and reads the ledger again, while no call
@@ -163,20 +167,32 @@ public actor InputExecutor {
         let wasExecuting: Bool
         if case .executing = section { wasExecuting = true } else { wasExecuting = false }
         section = .idle
-        interruption = nil
+        interruptions = PendingInterruptions()
         if wasExecuting { seams.observer.executionDidChange(executing: false) }
         seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
     }
 
-    /// Commits a refusal entry, best effort (contract 12.10).
+    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``.
     func logRefusal(_ entry: ActionLogRefusal?) async {
         guard let entry else { return }
-        do {
-            try await seams.log.commitRefusal(entry)
-            seams.observer.actionLogDidAppend(succeeded: true)
-        } catch {
-            seams.observer.actionLogDidAppend(succeeded: false)
+        let log = seams.log
+        await logAppend {
+            do throws(ActionLogFailure) {
+                try await log.commitRefusal(entry)
+                return true
+            } catch {
+                return false
+            }
         }
+    }
+
+    /// Runs one append to the action log within ``waitLimit`` and reports how it went, for the
+    /// `log_unavailable` condition (contract 11.3). `false` when it failed or did not answer in time.
+    @discardableResult
+    func logAppend(_ append: @escaping @Sendable () async -> Bool) async -> Bool {
+        let succeeded = await awaitBounded(within: waitLimit, append) ?? false
+        seams.observer.actionLogDidAppend(succeeded: succeeded)
+        return succeeded
     }
 
     /// `user_active` before admission, at the last look, before every event and at every poll

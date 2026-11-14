@@ -10,24 +10,3 @@ public protocol ReleaseHandler: Sendable {
         authorization: () -> CleanupAuthorization
     ) -> CleanupOutcome
 }
-
-/// Releases through the ledger and nothing more, so the executor is safe on its own: what an
-/// abort leaves unreleased stays in the ledger, and `cleanup_pending` refuses effects until
-/// ``InputExecutor/releaseOwedInput()`` gets it out.
-public struct LedgerReleaseHandler: ReleaseHandler {
-    public init() {}
-
-    public func release(
-        _ inputs: [HeldInput], from ledger: inout HeldInputLedger, poster: any EventPoster,
-        authorization: () -> CleanupAuthorization
-    ) -> CleanupOutcome {
-        var clearFailure: HeldInputLedgerError?
-        for input in inputs.reversed() {
-            if case .deferred(let blockers) = authorization() { return .deferred(blockers) }
-            do { try poster.postRelease(input) } catch { return .postFailed(input, error) }
-            do { try ledger.didRelease(input) } catch { clearFailure = clearFailure ?? error }
-        }
-        if let clearFailure { return .clearFailed(clearFailure) }
-        return ledger.isAvailable ? .complete : .clearFailed(.unavailable)
-    }
-}

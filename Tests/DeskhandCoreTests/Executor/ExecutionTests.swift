@@ -113,13 +113,14 @@ struct ExecutionTests {
         #expect(outcome.outcome == .aborted(.state(.paused), eventsPosted: 4))
     }
 
-    @Test("the person at the Mac during a hold aborts with user_active and releases")
+    @Test("the person at the Mac during a hold aborts with user_active at the next poll and releases")
     func userActiveDuringHold() async throws {
         let mac = FakeMac { $0.afterPost[4] = { world, _ in world.idleMs = 40 } }
         let harness = try Harness(mac: mac)
         let answer = await harness.executor.perform(try harness.keyboard(Self.chord))
         #expect(answer.code == .userActive)
         #expect(answer.details == ["idle_ms": 40])
+        #expect(mac.read(\.sleeps).count == 1, "the hold slept on past the person's input")
         #expect(mac.released == Self.chordReleases)
     }
 
@@ -240,12 +241,12 @@ struct ExecutionTests {
             $0.onSleep = {
                 await executor.interrupt(.userActive(idleMs: 12))
                 await executor.interrupt(.state(.disarmed))
-                await executor.interrupt(.cancelled)
             }
         }
         let answer = await executor.perform(try harness.keyboard(Self.chord))
         #expect(answer.code == .disarmed)
         #expect(answer.toolError?.state == .disarmed)
+        #expect(mac.read(\.sleeps).count == 1, "the hold slept on past the interruption")
         #expect(mac.released == Self.chordReleases)
     }
 

@@ -318,6 +318,24 @@ struct IdentityTests {
         #expect(stored["measured"]?["window_title"] == .null)
     }
 
+    @Test("an abort for another cause reports no title of a window the policy refuses")
+    func abortHidesDeniedWindowTitle() async throws {
+        let mac = FakeMac()
+        let harness = try Harness(mac: mac)
+        // Between step 14 and the last look a denied app's window comes under the target and the
+        // person touches the mouse; user_active outranks denied_app.
+        await harness.onLog(.intent) {
+            mac.change {
+                $0.windows = { _ in ObservedWindow(owner: ExecutorFixture.unlisted, title: "Inbox - someone") }
+                $0.idleMs = 5
+            }
+        }
+        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 20, "y": 20]))
+        #expect(answer.code == .userActive)
+        #expect(measured(answer)?["target_app"]?["bundle_id"] == "com.example.Unlisted")
+        #expect(measured(answer)?["window_title"] == .null)
+    }
+
     @Test("success reports the last look's facts, titles of capture-excluded apps removed")
     func successMeasured() async throws {
         var policy = ExecutorFixture.policy
