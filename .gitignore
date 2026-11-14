@@ -1,0 +1,22 @@
+# SwiftPM build outputs and local state
+.build/
+.swiftpm/
+/Packages/
+
+# Xcode
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
+
+# Generated test binaries and results
+*.xctest
+*.xcresult
+*-test-runner
+*.profraw
+*.profdata
+
+# macOS
+.DS_Store
