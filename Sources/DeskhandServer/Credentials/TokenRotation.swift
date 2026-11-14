@@ -5,13 +5,15 @@ import Synchronization
 /// gets `401` until the file is fixed (Appendix A item 31).
 public enum TokenRejection: Error, Hashable, Sendable, CustomStringConvertible {
     case unreadable(path: String, CredentialFileError)
-    /// Empty, or a byte that cannot appear in a `Bearer` credential.
+    /// Shorter than ``LoadedToken/minimumLength``, or a byte that cannot appear in a `Bearer`
+    /// credential.
     case malformed(path: String)
 
     public var description: String {
         switch self {
         case .unreadable(let path, let error): "\(path): \(error)"
-        case .malformed(let path): "\(path): not a token (one line of visible ASCII with no spaces)"
+        case .malformed(let path):
+            "\(path): not a token (one line of at least \(LoadedToken.minimumLength) visible ASCII characters)"
         }
     }
 }
@@ -19,19 +21,25 @@ public enum TokenRejection: Error, Hashable, Sendable, CustomStringConvertible {
 /// A token read from the token file. The digest identifies it across reloads, so an unchanged
 /// file is not a rotation; the secret itself is not kept.
 struct LoadedToken {
+    /// A file caught half written, or by a `SIGHUP` that skips the watcher's settling interval,
+    /// holds a prefix of the token. Below this length that prefix is refused rather than
+    /// installed as the credential; 32 characters is 128 bits of hex, the weakest token worth
+    /// accepting.
+    static let minimumLength = 32
+
     let token: BearerToken
     let digest: SHA256Hex
 
     /// The file holds the token on one line: one trailing LF or CRLF is dropped, and what remains
-    /// must be non-empty visible ASCII (`%x21-7E`), which is everything the listener can match in
-    /// `Authorization: Bearer <token>`.
+    /// must be at least ``minimumLength`` characters of visible ASCII (`%x21-7E`), which is
+    /// everything the listener can match in `Authorization: Bearer <token>`.
     static func parse(_ contents: [UInt8]) -> LoadedToken? {
         var secret = contents[...]
         if secret.last == UInt8(ascii: "\n") { secret = secret.dropLast() }
         if secret.last == UInt8(ascii: "\r") { secret = secret.dropLast() }
-        guard secret.allSatisfy({ (0x21...0x7E).contains($0) }), let token = BearerToken(secret: secret) else {
-            return nil
-        }
+        guard secret.count >= minimumLength, secret.allSatisfy({ (0x21...0x7E).contains($0) }),
+            let token = BearerToken(secret: secret)
+        else { return nil }
         return LoadedToken(token: token, digest: SHA256Hex(hashing: secret))
     }
 
