@@ -18,6 +18,14 @@ public enum HeldInputLedgerError: Error, CustomStringConvertible {
     }
 }
 
+/// What ``HeldInputLedger/willPress(_:)`` did for one down event, kept until the event is posted
+/// or the checks before it fail.
+public struct PressEntry: Hashable, Sendable {
+    public let input: HeldInput
+    /// `true` when this press wrote the entry; `false` when the input already had one.
+    public let isNew: Bool
+}
+
 /// How ``HeldInputLedger/releasePending(authorization:postRelease:)`` ended.
 public enum CleanupOutcome: Sendable {
     /// Every entry was released and cleared. The ledger and its file are empty.
@@ -60,13 +68,27 @@ public struct HeldInputLedger: ~Copyable {
     /// Entries in press order. Non-empty with no operation executing means `cleanup_pending`.
     public func pending() -> [HeldInput] { entries }
 
-    /// Records `input` as possibly held and makes that durable. Post its down event only after this
-    /// returns; if it throws, post nothing. An input already recorded keeps its place.
-    public mutating func willPress(_ input: HeldInput) throws(HeldInputLedgerError) {
+    /// Records `input` as possibly held and makes that durable: the first of the three fixed steps
+    /// of every down event (contract 12.3 step 6). Then run the checks, then post the down event,
+    /// with nothing in between. If this throws, post nothing. If the checks fail, post nothing and
+    /// ``withdraw(_:)`` what this returns. An input already recorded keeps its place.
+    @discardableResult
+    public mutating func willPress(_ input: HeldInput) throws(HeldInputLedgerError) -> PressEntry {
         guard isAvailable else { throw .unavailable }
-        guard !entries.contains(input) else { return }
+        guard !entries.contains(input) else { return PressEntry(input: input, isNew: false) }
         try persist(entries + [input])
         entries.append(input)
+        return PressEntry(input: input, isNew: true)
+    }
+
+    /// Clears the entry that ``willPress(_:)`` wrote for a down event that was then not posted,
+    /// because a check between the write and the post failed (contract 12.3 step 6, 12.7). Nothing
+    /// is down, so no release is posted. An entry the press found already there is left alone,
+    /// since that input may still be down; the abort's releases take care of it. If this throws,
+    /// the entry stays and a later cleanup posts a release that does no harm.
+    public mutating func withdraw(_ press: PressEntry) throws(HeldInputLedgerError) {
+        guard press.isNew else { return }
+        try didRelease(press.input)
     }
 
     /// Clears `input` after its up event was posted, durably. If this throws, the entry stays, the

@@ -241,6 +241,52 @@ import Testing
         #expect(pending == [control, keyA])
     }
 
+    /// Contract 12.3 step 6 and 12.7: the entry is written, the checks run, then the down is posted.
+    /// When the checks fail nothing is down, so the entry is cleared with no release.
+    @Test func aPressWhoseChecksFailIsWithdrawnWithoutARelease() throws {
+        let machine = LedgerMachine()
+        var ledger = try HeldInputLedger(store: machine.store)
+        try press([control], &ledger, on: machine)
+        let entry = try ledger.willPress(keyA)
+        #expect(entry.input == keyA && entry.isNew)
+        #expect(try reopened(machine) == [control, keyA], "written and flushed before the checks")
+        try ledger.withdraw(entry)
+        let pending = ledger.pending()
+        #expect(pending == [control])
+        #expect(try reopened(machine) == [control])
+        #expect(machine.posted == [.down(control)], "no release for a down that was never posted")
+    }
+
+    /// An entry the press did not write may be down from before (a `type` carrier key), so a
+    /// failed check leaves it for the abort's releases.
+    @Test func withdrawingAPressThatFoundItsEntryKeepsTheEntry() throws {
+        let machine = LedgerMachine()
+        var ledger = try HeldInputLedger(store: machine.store)
+        try press([keyA], &ledger, on: machine)
+        let writes = machine.writes
+        let again = try ledger.willPress(keyA)
+        #expect(!again.isNew)
+        try ledger.withdraw(again)
+        #expect(machine.writes == writes)
+        let pending = ledger.pending()
+        #expect(pending == [keyA])
+        #expect(try reopened(machine) == [keyA])
+    }
+
+    @Test func aFailedWithdrawalKeepsTheEntryForCleanup() throws {
+        let machine = LedgerMachine()
+        var ledger = try HeldInputLedger(store: machine.store)
+        let entry = try ledger.willPress(left)
+        machine.writeFault = .lost
+        #expect(throws: HeldInputLedgerError.self) { try ledger.withdraw(entry) }
+        machine.writeFault = nil
+        let available = ledger.isAvailable
+        #expect(!available)
+        let pending = ledger.pending()
+        #expect(pending == [left])
+        #expect(try reopened(machine) == [left])
+    }
+
     @Test func cleanupReleasesNewestFirstAndOnlyEntries() throws {
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)
