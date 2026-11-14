@@ -150,30 +150,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
         return application.result
     }
 
-    // MARK: pointer and keyboard
-
-    /// Runs the call through the executor, in this task: a connection closed before admission
-    /// drops the call, and one closed later aborts it (contract 9.5, 12.4).
-    public func effect(_ arguments: EffectCallArguments, received: JSONObject, caller: ToolCaller) async
-        -> EffectAnswer
-    {
-        guard let nodeAddress = caller.nodeAddress else {
-            return .error(await missingNodeAddress(EffectHandles(arguments: received), caller: caller))
-        }
-        let digest: RequestDigest
-        do {
-            digest = try RequestDigest(tool: arguments.tool, arguments: received, key: digestKey)
-        } catch {
-            return .error(
-                internalError("The request digest could not be computed.", operationID: arguments.operationID))
-        }
-        if await !executor.storesAvailable { await executor.reloadUnavailableStores() }
-        let call = EffectCall(
-            principal: caller.principal, nodeAddress: nodeAddress, arguments: arguments, digest: digest,
-            connection: TaskCancellationLiveness())
-        return await executor.perform(call)
-    }
-
     // MARK: refusals
 
     /// Contract 9.5: `status` and `lease` refuse only with `invalid_argument`; every other tool
@@ -210,27 +186,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
         }
     }
 
-    /// `operation` for an error of an effect tool, when a record exists for its handles.
-    private func existingRecord(_ handles: EffectHandles, caller: ToolCaller) async -> OperationContext? {
-        guard let holderID = handles.holderID, let operationID = handles.operationID else { return nil }
-        let key = OperationKey(principal: caller.principal, holderID: holderID, operationID: operationID)
-        guard case .found(let view)? = try? await executor.operationStatus(for: key) else { return nil }
-        return .existing(view)
-    }
-
-    /// An effect call whose source address is unknown cannot write its intent entry, so it is
-    /// refused before anything else; the state's name still comes first, with `operation` for an
-    /// existing record (contract 9.5).
-    private func missingNodeAddress(_ handles: EffectHandles, caller: ToolCaller) async -> ToolError {
-        let state = owner.snapshot().state
-        let reason: ToolErrorReason = state.blocking.map { .blocked($0) } ?? .internalError
-        let message =
-            state.blocking == nil ? "The connection's source address could not be read." : Self.message(for: state)
-        return ToolError(
-            reason, message: message, state: state, operationID: handles.operationID,
-            operation: await existingRecord(handles, caller: caller))
-    }
-
     // MARK: shared
 
     func refuseUnlessOK() throws(ToolError) {
@@ -245,14 +200,5 @@ public struct DeskhandDispatcher: ToolDispatcher {
 
     func internalError(_ detail: String, operationID: OperationID? = nil) -> ToolError {
         ToolError(.internalError, message: detail, state: owner.snapshot().state, operationID: operationID)
-    }
-}
-
-extension EffectCallArguments {
-    fileprivate var operationID: OperationID {
-        switch self {
-        case .pointer(let arguments): arguments.operationID
-        case .keyboard(let arguments): arguments.operationID
-        }
     }
 }

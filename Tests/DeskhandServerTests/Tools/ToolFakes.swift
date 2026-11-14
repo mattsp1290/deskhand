@@ -151,6 +151,12 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
         var nextFrontmost: [ObservedApp] = []
         var idleMs: Int? = 60_000
         var posted: [InputEvent] = []
+        /// What ``postRelease(_:)`` let up, in order.
+        var released: [HeldInput] = []
+        /// Every release fails to reach the OS while set.
+        var releaseFails = false
+        /// What the recapture of every target patch finds.
+        var patch: PatchVerdict = .unchanged
         var logAppends: [Bool] = []
         /// Runs once, inside the next wait of an executing operation.
         var onSleep: (@Sendable () async -> Void)?
@@ -165,6 +171,7 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
     func read<T: Sendable>(_ body: (World) -> T) -> T { world.withLock { body($0) } }
 
     var posted: [InputEvent] { read(\.posted) }
+    var released: [HeldInput] { read(\.released) }
 
     func frontmostApp() -> ObservedApp {
         world.withLock { world in
@@ -182,7 +189,14 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
     func idleMilliseconds() -> Int? { read(\.idleMs) }
 
     func post(_ event: InputEvent) throws { change { $0.posted.append(event) } }
-    func postRelease(_ input: HeldInput) throws {}
+
+    func postRelease(_ input: HeldInput) throws {
+        let failed = world.withLock { world in
+            if !world.releaseFails { world.released.append(input) }
+            return world.releaseFails
+        }
+        if failed { throw PlatformFault("The release could not be posted.") }
+    }
 
     func code(for key: Key) -> PostedKeyCode? { PostedKeyCode(UInt16(0x100 + Key.allCases.firstIndex(of: key)!)) }
     func code(for modifier: Modifier) -> PostedKeyCode {
@@ -205,7 +219,10 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
     func actionLogDidAppend(succeeded: Bool) { change { $0.logAppends.append(succeeded) } }
     func cleanupPendingDidChange(_ pending: Bool) {}
 
-    func verify(_ frame: LiveFrame, patches: [TargetPatch]) async -> [PatchVerdict] { patches.map { _ in .unchanged } }
+    func verify(_ frame: LiveFrame, patches: [TargetPatch]) async -> [PatchVerdict] {
+        let verdict = read(\.patch)
+        return patches.map { _ in verdict }
+    }
 }
 
 final class Counter: Sendable {
