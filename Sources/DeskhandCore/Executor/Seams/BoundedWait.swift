@@ -12,13 +12,15 @@ func awaitBounded<T: Sendable>(
     await withCheckedContinuation { continuation in
         let answer = FirstAnswer(continuation)
         let timeout = Task {
-            try? await Task.sleep(for: limit)
+            // A cancelled sleep returns at once: only a limit that really passed answers `nil`.
+            guard (try? await Task.sleep(for: limit)) != nil else { return }
             answer.resume(returning: nil)
         }
         Task {
             let value = await operation()
+            let wasFirst = answer.resume(returning: value)
             timeout.cancel()
-            if !answer.resume(returning: value) { await late(value) }
+            if !wasFirst { await late(value) }
         }
     }
 }
