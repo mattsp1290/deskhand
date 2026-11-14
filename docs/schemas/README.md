@@ -23,20 +23,59 @@ update.
 
 | Path | Rule |
 | --- | --- |
-| `**/*.json` outside `examples/` | A schema. It declares Draft 2020-12, has an `$id` ending in its path under `docs/schemas/`, and every `$ref` resolves locally. Its stem is the file name without `.json` and must be unique. |
-| `defs.json` | Shared definitions. The only schema that needs no example. |
+| `**/*.json` outside `examples/` | A schema. It declares Draft 2020-12, has an `$id` ending in its path under `docs/schemas/`, and every `$ref` resolves locally. Its stem is the file name without `.json` and must be unique. Every `format` it uses must be asserted; `date-time` needs `rfc3339-validator`, which the requirements file pins. |
+| `defs.json` | Shared definitions. The only schema that needs no example and no invalid example. |
 | `tools/<tool>.input.json`, `tools/<tool>.output.json` | Tool schemas, always in pairs. They must survive the `tools/list` bundling rule (contract 3.2); input schemas are closed objects with no top-level combinators. |
-| `examples/<stem>.<name>.json` | Must validate against the schema with the longest matching stem. Every schema except `defs.json` needs at least one. |
-| `examples/invalid/<stem>.<name>.json` | Must be rejected by that schema. |
-| `examples/wire/*.json` | A whole JSON-RPC 2.0 message with an `id`. In `tools-call.<tool>.<name>.<request\|response>.json`, the arguments or `structuredContent` must validate against `tools/<tool>.*.json`. |
+| `wire/*.json` | JSON-RPC messages (`jsonrpc-request`, `jsonrpc-notification`, `jsonrpc-response`, `jsonrpc-error`) and method results (`server-discover-result`, `tools-list-result`, `tools-call-result`). |
+| `examples/<stem>.<name>.json` | Must validate against the schema with the longest matching stem. Every schema outside `wire/` except `defs.json` needs at least one. |
+| `examples/invalid/<stem>.<name>.json` | Must be rejected by that schema. Every schema except `defs.json` needs at least one. |
+| `examples/wire/*.json` | A whole JSON-RPC 2.0 message, named by one of the conventions below. |
 
 `<name>` uses `a-z`, `0-9` and `-`. For example, `tools/pointer.input.json` has
 stem `pointer.input`, so `examples/pointer.input.click.json` is checked against
 it; a new `allowance.json` has stem `allowance` and its examples are
 `examples/allowance.<name>.json`. Any other JSON file or directory under
-`examples/` fails the check.
+`examples/` fails the check, and so does an empty or missing `invalid/` or
+`wire/`. A schema's own `examples` keyword must validate too.
 
-The checker also compares `docs/contract.md` with `defs.json`: the error codes
-in 9.3, the states in 10, the stale-frame reasons in 8.3, the conditions in 11
-and the `tool_error` members and `details` keys in 9.2 must match, and every
-`#anchor` link in the contract must resolve to a heading.
+## Wire examples
+
+| File name | Checked against |
+| --- | --- |
+| `server-discover.request.json`, `tools-list.request.json` | `jsonrpc-request`, with that method. |
+| `server-discover.response.json`, `tools-list.response.json` | `jsonrpc-response`, and the result against that method's result schema. `supportedVersions` is the contract's MCP revision only. |
+| `tools-call.<tool>.<name>.request.json` | `jsonrpc-request` with method `tools/call` and `params.name` `<tool>`; `arguments` (default `{}`) against `tools/<tool>.input.json`. |
+| `tools-call.<tool>.<name>.response.json` | `jsonrpc-response`; the result against `tools-call-result` and `structuredContent` against `tools/<tool>.output.json`. The text block holds the `structuredContent` JSON. A successful `screenshot` has exactly one image block, first, whose `mimeType` equals `structuredContent.mime_type`; no other result has one. |
+| `error.<name>.response.json` | `jsonrpc-error`. |
+| `<name>.notification.json` | `jsonrpc-notification`. |
+
+Any other name fails. A request and a response that share a name before
+`.request`/`.response` must share an `id`, and every request's
+`params._meta["io.modelcontextprotocol/protocolVersion"]` is the contract's MCP
+revision. A `wire/` schema needs one valid instance: a wire example, a JSON
+block in the contract, its own `examples`, or, for `tools-list-result`, the
+result the checker builds from the tool schemas and the table in contract 3.2.
+
+## Contract prose
+
+The checker also compares `docs/contract.md` with the schemas:
+
+- Name lists, both ways: the error codes in 9.3, the states in 10, the
+  stale-frame reasons in 8.3, the conditions in 11, the JSON-RPC codes in 9.4,
+  and each tool's codes from the "Tools" column of 9.3.
+- The 9.2 tables and rules (which codes carry `details` and which members,
+  which carry `operation`, `retry_after_ms` or `measured`, and that a state's
+  code carries that state) against the `if`/`then` rules of `tool_error`.
+- Every constant in section 16 against each schema keyword that carries it
+  (`CONSTANT_SITES` in the script), against `limits` in the examples, and
+  against the prose that restates it (`PROSE_SITES`). A new constant must be
+  added to `CONSTANT_SITES` or `UNSCHEMATIZED_CONSTANTS`.
+- The header's document version against `contract_version` in every schema and
+  example, and its MCP revision against `mcp_protocol_version`.
+- Every `json` code block validates against the matching schema, and every
+  `#anchor` link resolves to a heading.
+
+`scripts/check-mac-session-gate.sh`, run in the `swift-format lint` job of
+`.github/workflows/swift.yml`, is the Swift-side counterpart: it fails when a
+test names `.requiresMacSession` without `.macSessionTestsEnabled` or the
+reverse.

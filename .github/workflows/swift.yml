@@ -18,7 +18,7 @@ jobs:
   build-test:
     name: Build and test (Linux)
     runs-on: ubuntu-24.04
-    container: swift:6.2-noble
+    container: swift:6.2-noble@sha256:3459518b2e723a7c363d0f8cfa44fc796c77ecd8c18e92fd10e6f92dd78c0b12 # 6.2-noble (6.2.4), multi-arch index
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,9 +28,10 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build
-          key: swift-6.2-noble-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+          # The digest prefix stops a .build made by another image from being restored after a re-pin.
+          key: swift-6.2-noble-3459518b-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            swift-6.2-noble-${{ runner.arch }}-
+            swift-6.2-noble-3459518b-${{ runner.arch }}-
 
       - name: Build
         run: swift build --build-tests
@@ -41,7 +42,7 @@ jobs:
   format:
     name: swift-format lint
     runs-on: ubuntu-24.04
-    container: swift:6.2-noble
+    container: swift:6.2-noble@sha256:3459518b2e723a7c363d0f8cfa44fc796c77ecd8c18e92fd10e6f92dd78c0b12 # 6.2-noble (6.2.4), multi-arch index
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,3 +51,7 @@ jobs:
 
       - name: Lint
         run: swift format lint --strict --recursive Sources Tests Package.swift
+
+      # The requiresMacSession tag skips nothing on its own; see scripts/check-mac-session-gate.sh.
+      - name: Mac-session gate
+        run: scripts/check-mac-session-gate.sh
