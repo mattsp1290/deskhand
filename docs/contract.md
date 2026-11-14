@@ -2,8 +2,8 @@
 
 | Item | Value |
 | --- | --- |
-| Document version | `0.1-draft (wire surface)` |
-| `contract_version` reported by `status` | `0.1-draft` |
+| Document version | `0.9-draft` |
+| `contract_version` reported by `status` | `0.9-draft` |
 | MCP protocol revision | `2026-07-28` |
 | Schemas | `docs/schemas/` (JSON Schema Draft 2020-12) |
 | Source requests | deskhand-r-nkjj, crew-r-yqso, birbhomes-r-5elb, birbhomes-r-ttg5 |
@@ -13,12 +13,14 @@ against. The "Shared contract" block of the source requests is authoritative.
 Where this document departs from it, the departure is a numbered amendment in
 [section 17](#17-changes-from-the-shared-contract).
 
-This draft defines the wire surface. Sections marked *Defined in
-deskhand-r2q2* are the behavior half and are filled in by that task. Statements
-about the MCP specification come from the project plan's research notes; the
-ones that could not be checked against the specification text are collected in
+Sections 2 to 9 define the wire surface. Sections 10 to 15 define behavior:
+states, conditions, the operation outcome model, timing bounds, the allowance
+file and clean stop. Statements about the MCP specification come from the
+project plan's research notes; the ones that could not be checked against the
+specification text are collected in
 [section 18](#18-open-questions-to-verify-against-the-spec-before-v10) and are
-marked **(Qn)** where they are used.
+marked **(Qn)** where they are used. Platform signals that the spike
+(deskhand-r-waw0) has still to choose are marked "chosen by the spike".
 
 The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
@@ -74,9 +76,11 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 - Closing the connection before the response arrives cancels the call. For an
   effect call this aborts the input sequence; see
   [section 4.3](#43-operation_id).
-- A Mac that is away, asleep with the lid closed, logged out or stopped by its
-  LAN gate answers nothing. A caller treats a refused or timed-out connection
-  as "unavailable", not as an error from deskhand.
+- A Mac that is away, asleep with the lid closed or logged out answers
+  nothing. A caller treats a refused or timed-out connection as
+  "unavailable", not as an error from deskhand. A Mac whose LAN gate has
+  closed is normally away as well. If it can still be reached, it answers
+  with the state `gated` ([section 15.1](#151-gate-stop)).
 
 ### 2.2 Authentication
 
@@ -377,8 +381,8 @@ record inside the window is never evicted; at the cap a new `operation_id` is
 refused with `operation_capacity`. A caller MUST NOT repeat an `operation_id`
 after the window.
 
-Persistence, write ordering and restart recovery are *defined in
-deskhand-r2q2* ([section 12](#12-operation-outcome-model)).
+Persistence, write ordering, aborts and restart recovery are in
+[section 12](#12-operation-outcome-model).
 
 ## 5. Lease
 
@@ -469,7 +473,7 @@ only tool error is `invalid_argument` (and `internal_error`).
 
 | Member | Meaning |
 | --- | --- |
-| `contract_version` | `0.1-draft` for this document. |
+| `contract_version` | `0.9-draft` for this document. |
 | `mcp_protocol_version` | `2026-07-28`. |
 | `server_version` | The deskhand build. |
 | `mac` | This Mac's configured name. |
@@ -986,20 +990,23 @@ A call counts toward the action ceiling only if it was admitted.
 
 ## 10. States
 
-The state names and their precedence, highest first:
+Each blocking state is a fact about the Mac that either holds or does not.
+Several can hold at once. deskhand's state is the one that holds with the
+highest precedence, or `ok` when none holds. The names and their precedence,
+highest first:
 
-| Precedence | State | Drops the lease |
-| --- | --- | --- |
-| 1 | `gated` | yes |
-| 2 | `paused` | yes |
-| 3 | `disarmed` | yes |
-| 4 | `not_console` | no |
-| 5 | `locked` | no |
-| 6 | `display_asleep` | no |
-| 7 | `permission_missing` | no |
-| 8 | `permission_stale` | no |
-| 9 | `secure_input` | no |
-| 10 | `ok` | |
+| Precedence | State | Holds while | Detected by | Drops the lease |
+| --- | --- | --- | --- | --- |
+| 1 | `gated` | The LAN-gate allowance is missing, invalid, not yet valid or expired. | The allowance file ([section 14](#14-allowance-file-format)). | yes |
+| 2 | `paused` | The kill switch was used and nobody has armed deskhand since. | deskhand's own kill switch: the menu bar item or the global hot key. | yes |
+| 3 | `disarmed` | deskhand is not armed. It starts this way, and returns to it when arming runs out, when a person disarms it and when the kill switch is used. | deskhand's own arming timer. | yes |
+| 4 | `not_console` | deskhand's login session does not own the console: another account is in front, or the console shows the login window. | Platform console-ownership signal. For the login window: platform login-window signal, chosen by the spike. | no |
+| 5 | `locked` | The screen of deskhand's session is locked. | Platform lock signal, chosen by the spike. | no |
+| 6 | `display_asleep` | Any active display is asleep. | Platform display-sleep signal. | no |
+| 7 | `permission_missing` | A macOS permission that deskhand needs to capture the screen or to post input is not granted. | Platform permission checks. The spike records which input permissions the installed macOS has. | no |
+| 8 | `permission_stale` | A permission is granted on record but does not work: macOS wants screen-capture consent confirmed again, or capture returns blank frames. | Platform capture-health signal, chosen by the spike. | no |
+| 9 | `secure_input` | Secure input is on. Normally a password field has focus. | Platform secure-input signal. | no |
+| 10 | `ok` | None of the above holds. | | |
 
 `status.state` is the active state with the highest precedence, and
 `status.active_states` lists all of them. Every tool except `status` fails
@@ -1008,43 +1015,735 @@ with the name of `status.state` unless it is `ok`.
 `gated` is amendment 2 and is pending approval
 ([section 17](#17-changes-from-the-shared-contract)).
 
-How each state is detected, and what entering and leaving it does: *Defined in
-deskhand-r2q2.*
+### 10.1 Detection
+
+- This contract fixes what each state means. The macOS signal behind a state
+  is an implementation matter. Where the table says "chosen by the spike",
+  the spike (deskhand-r-waw0) picks the signal and records it in
+  `docs/spike-results.md`. The other platform signals are the ones the
+  project plan names, and the spike confirms them. Changing a signal does not
+  change this contract.
+- **Fail closed.** When a signal cannot be read, or its answer is uncertain,
+  the state it feeds holds. An uncertain lock signal means `locked`. An
+  uncertain capture check means `permission_stale`.
+- `gated`, `paused` and `disarmed` need no platform signal. They come from
+  the allowance file, the kill switch and the arming timer. `disarmed`
+  begins at `status.armed_until` by deskhand's clock.
+- deskhand starts `disarmed`. Neither arming nor `paused` is kept across a
+  restart.
+- The login window has no state of its own. It is reported as `not_console`
+  together with the `login_window` condition
+  ([section 11.4](#114-login_window)).
+- No call can end a blocking state. A person at the Mac ends `paused` and
+  `disarmed`, the LAN gate ends `gated`, and the Mac ends the rest. deskhand
+  never unlocks a session.
+
+### 10.2 What a blocking state refuses
+
+| Request | While the state is not `ok` |
+| --- | --- |
+| `server/discover`, `tools/list` | Answered as usual. |
+| `status` without `lease` | Answered. It reports the state. |
+| `status` with `lease` | Answered. `acquire` and `renew` are refused in `lease_result` while the state is `gated`, `paused` or `disarmed` ([section 5.2](#52-allowed-states)). `release` is always allowed. |
+| `displays`, `screenshot` | Refused with the state's name. |
+| `pointer`, `keyboard` | Refused with the state's name, before any other check ([section 9.5](#95-order-of-refusals)). Nothing is posted. |
+
+### 10.3 Leaving `ok`
+
+When the state changes from `ok` to any other state, deskhand does all of
+this, whatever the new state is:
+
+1. **It stops the calls in flight.** An executing effect is aborted with the
+   new state's name ([section 12.4](#124-aborts)). A `displays` or
+   `screenshot` call that has not answered yet is refused with the new
+   state's name. A screenshot that was captured but not returned is
+   discarded and mints no frame.
+2. **It releases held input.** Every key and button the aborted effect
+   pressed is released, if cleanup is authorized
+   ([section 12.8](#128-cleanup-authorization)). If it is not, the releases
+   wait and the `cleanup_pending` condition is reported.
+3. **It invalidates every frame**, of every holder. An effect call that
+   names one later gets `stale_frame` with reason `unknown`.
+
+Operation records are kept. Input that was already posted stays posted.
+How quickly this happens is in [section 13](#13-timing-bounds).
+
+### 10.4 `gated`, `paused` and `disarmed`
+
+These three also drop the lease, at the moment they begin and whatever state
+deskhand was in before. No lease exists while any of them holds, and
+`acquire` and `renew` are refused. What the former holder sees afterwards is
+in [section 5.3](#53-how-a-lease-ends).
+
+The other blocking states leave the lease alone. Its holder can keep
+renewing it through a locked screen or a sleeping display, and it runs out
+as usual if the holder does not.
+
+**The kill switch.** Using it does three things at once: `paused` begins,
+arming ends, and everything in [section 10.3](#103-leaving-ok) happens.
+Because arming ends, `disarmed` holds as well: `status.active_states` then
+lists both `paused` and `disarmed`, and `status.armed_until` is `null`.
+`paused` ends only when a person at the Mac arms deskhand again, which ends
+`disarmed` too. There is no way to resume without arming.
+
+**Arming.** A person arms deskhand from the menu bar for a duration they
+choose. `disarmed` begins again at `status.armed_until`, or sooner if the
+person disarms it. `gated` does not end arming. The two are independent: if
+the allowance returns before arming runs out, the state can be `ok` again
+with nobody at the Mac.
+
+### 10.5 Returning to `ok`
+
+Nothing is restored when the state becomes `ok` again.
+
+- Every frame taken earlier is gone. The caller takes a new screenshot.
+- If the lease was dropped, the caller acquires it again. If it was not, it
+  is still held, unless it ran out in the meantime.
+- A repeated `operation_id` returns its stored result again
+  ([section 4.3](#43-operation_id)).
+- Held input whose release had to wait is released first. Until it is,
+  effect calls get `cleanup_pending`.
 
 ## 11. Conditions that are not states
 
-The names that can appear in `status.conditions` are `credentials_warning`,
-`cleanup_pending`, `log_unavailable`, `login_window` and `user_active`.
+A condition is a fact that `status` reports in `conditions`, beside the
+state. A condition never changes `status.state`, never drops the lease and
+never invalidates a frame. No condition refuses a read tool.
 
-*Defined in deskhand-r2q2.*
+| Condition | Set while | Effect on calls |
+| --- | --- | --- |
+| `credentials_warning` | A replacement credential was rejected. | None on tool calls. |
+| `cleanup_pending` | Input that deskhand pressed has still to be released. | Every effect call is refused with `cleanup_pending`. |
+| `log_unavailable` | deskhand's last attempt to write to the action log failed. | An effect call whose intent entry cannot be written is refused with `log_unavailable`. |
+| `login_window` | The console shows the login window. | None of its own: the state is `not_console`. It also blocks releases. |
+| `user_active` | The person at the Mac used the keyboard or pointer within the last 3 s. | Effect calls are refused with `user_active`, and an executing effect is aborted with it. |
+
+These five names are the only ones that can appear. Each appears at most
+once, and the order carries no meaning. `cleanup_pending`, `log_unavailable`
+and `user_active` are also error codes; as conditions they are advance
+notice. A caller MAY read them to skip a call that would be refused. It MUST
+still handle the error, because a condition can change between `status` and
+the next call.
+
+### 11.1 `credentials_warning`
+
+deskhand reloads its server certificate, private key and bearer token when
+their files change and when it receives `SIGHUP`. Before a new certificate
+and key replace the old pair, all of this must be true:
+
+- the key matches the certificate;
+- the certificate chains to the private CA and is in date;
+- its subject alternative names include every configured Service DNS name.
+
+**Set** when a reload is rejected. deskhand keeps serving with the previous
+pair and logs the reason, never the credential. **Cleared** by the next
+reload that succeeds.
+
+**Effect on calls:** none. It tells an operator that a rotation did not take
+effect: the certificate in use is the old one, and it will run out.
+
+A token file that is missing, unreadable or malformed after a change also
+sets the condition, but the old token is not kept. No token is valid until
+the file is fixed, and every request gets `401`
+([section 2.4](#24-order-of-checks-and-http-status-codes)). The condition can
+then only be seen on the Mac.
+
+What a caller sees across a rotation that succeeds:
+
+- New connections get the new certificate. Existing connections run until
+  they close, which is at most 5 minutes later
+  ([section 2.1](#21-endpoint)).
+- The token is checked on every request. A replaced token stops working at
+  once, unless the Mac is configured with an overlap window in which the
+  previous token is also accepted. The default window is 0.
+- The principal is the subject of the client certificate
+  ([section 1](#1-terms)). Replacing the token, or rotating either
+  certificate while the client's subject stays the same, keeps the lease,
+  the frames and the operation records. A client certificate with a
+  different subject is a different principal and sees none of them.
+
+### 11.2 `cleanup_pending`
+
+**Set** when deskhand owes a release it has not posted: the held-input
+ledger ([section 12.7](#127-held-input-ledger)) has at least one entry and no
+operation is executing. That happens when the releases of an abort had to
+wait, when deskhand starts with entries left by the previous run, and when
+posting a release failed. **Cleared** when the ledger is empty.
+
+**Effect on calls:** every effect call is refused with `cleanup_pending`
+(step 4 of [section 9.5](#95-order-of-refusals)). Read tools and lease
+operations are not affected.
+
+deskhand tries again on every change of state and at least once a second. No
+call is needed to make it try. It posts the releases as soon as cleanup is
+authorized ([section 12.8](#128-cleanup-authorization)).
+
+Cleanup waits only while the screen is locked, the session is off the
+console or secure input is on, and each of those is a state. So a caller
+usually gets that state's name first. It sees the code `cleanup_pending`
+only in the short time between the state ending and the releases going out,
+or when a release keeps failing. `status.conditions` shows the condition in
+every state.
+
+### 11.3 `log_unavailable`
+
+**Set** when deskhand's most recent attempt to reach the writer of the
+action log failed: the connection was lost or refused, or an entry was not
+committed. deskhand checks the writer when it starts and whenever the
+connection drops, and keeps retrying on its own. **Cleared** when an attempt
+succeeds.
+
+**Effect on calls:** the condition itself refuses nothing. Every effect call
+tries to commit its intent entry as the last step before admission (step 15
+of [section 9.5](#95-order-of-refusals)). It is refused with
+`log_unavailable` exactly when that fails, and then nothing is posted. Read
+tools are not refused.
+
+If the outcome entry cannot be written after an effect ran, the input is
+already out. The call returns its true result, the condition is set, and the
+operation record still holds the outcome. The action log then shows an
+intent with no outcome.
+
+### 11.4 `login_window`
+
+**Set** while the console shows the login window, for example after someone
+chose "Login Window" from the fast user switching menu. **Cleared** when it
+no longer does.
+
+The login window always means the state `not_console`, because deskhand's
+session does not own the console then. If the console-ownership signal and
+the login-window signal disagree, deskhand reports `not_console` anyway. A
+Mac where nobody is logged in runs no deskhand and answers nothing
+([section 2.1](#21-endpoint)).
+
+**Effect on calls:** none of its own. Every tool except `status` is already
+refused with `not_console`, or with a state of higher precedence. The
+condition tells the caller why, without an eleventh state. It also blocks
+releases ([section 12.8](#128-cleanup-authorization)): deskhand posts no
+input of any kind at the login window.
+
+### 11.5 `user_active`
+
+**Set** while the person at the Mac produced keyboard or pointer input less
+than `USER_ACTIVITY_LOOKBACK_MS` ago ([section 16](#16-constants)).
+**Cleared** once that long has passed with no such input. Input that
+deskhand posted does not count. `status` evaluates the condition when it is
+called.
+
+**Effect on calls:**
+
+- An effect call that would start executing while it is set is refused with
+  `user_active` (step 11 of [section 9.5](#95-order-of-refusals)). Nothing
+  is posted.
+- An executing effect is aborted with `user_active` when the person uses
+  the keyboard or pointer
+  ([section 13.2](#132-the-person-at-the-mac)).
+- Read tools are not refused. The lease is kept and frames stay valid. The
+  person has probably changed the screen, so the caller SHOULD back off and
+  then take a new screenshot.
+
+`details.idle_ms` on the error is the time since the person's last input.
+
+`user_active` is not a state because a person at the Mac does not make it
+unusable: reads still work, nothing is dropped, and the refusal ends by
+itself.
 
 ## 12. Operation outcome model
 
-The wire-visible part is in [section 4.3](#43-operation_id) and
-[section 6.6](#66-held-input).
+Every admitted effect call has one operation record. The record is what
+makes a repeated `operation_id` safe, and what tells a caller after any
+failure whether input reached the Mac. The wire-visible rules are in
+[section 4.3](#43-operation_id) and [section 6.6](#66-held-input). This
+section adds storage, write ordering, aborts and recovery.
 
-*Defined in deskhand-r2q2.*
+**Input that has already been posted cannot be undone.** deskhand can stop,
+and it can release what it is holding down. It cannot take back a click, a
+typed character or a drop, and it does not try: it posts no compensating
+input. Nothing in this section changes that.
+
+### 12.1 Records
+
+- The key is (principal, `holder_id`, `operation_id`).
+- A record holds its status, `events_posted`, the request digest, the time
+  of admission and, once the operation is over, the result that was
+  returned.
+- **Payload binding.** The digest is the SHA-256 of the canonical request.
+  The canonical request for the operation digest is RFC 8785 over
+  `{name, arguments}` as received: the tool name plus its arguments, and no
+  transport metadata (no header, no JSON-RPC `id`, no `_meta`). A repeated
+  `operation_id` with a different digest gets `operation_id_conflict` and
+  never executes. The digest is not returned on the wire.
+- Records are kept in a file on the Mac that only deskhand's user can read
+  or write. They survive a restart and a credential rotation
+  ([section 11.1](#111-credentials_warning)).
+
+### 12.2 Lifecycle
+
+```text
+accepted -> executing -> completed | aborted | failed
+```
+
+| Status | Meaning | Input posted |
+| --- | --- | --- |
+| `accepted` | The call was admitted. Nothing has been posted. | none |
+| `executing` | deskhand is posting the action's events. | possibly some |
+| `completed` | Every event of the action was posted, and everything it pressed was released. | all of it |
+| `aborted` | deskhand stopped part-way for one of the causes in [section 12.4](#124-aborts). | `events_posted` events |
+| `failed` | A fault inside deskhand ended the operation. | `events_posted` events |
+| `failed_before_execution` | deskhand stopped or crashed while the record was `accepted`. | none |
+| `aborted_by_restart` | deskhand stopped or crashed while the record was `executing`. | at least `events_posted` events |
+
+`accepted` and `executing` are the only statuses that change. The other five
+are final, and a final record is never rewritten.
+
+`events_posted` counts synthetic input events: one pointer move, one button
+press, one button release, one scroll, one key press or one key release each
+count as one. Releases that deskhand posts to clean up after an abort are
+not counted. This contract does not fix how many events an action takes (a
+drag posts as many moves as it needs), so the count shows how far an action
+got only roughly. Zero means that no input reached the Mac, except on
+`aborted_by_restart`, where the count is a lower bound.
+
+### 12.3 Write ordering
+
+An effect call goes through these steps in this order.
+
+1. Checks 1 to 14 of [section 9.5](#95-order-of-refusals) pass.
+2. The intent entry is committed to the action log (check 15). If it cannot
+   be committed, the call is refused with `log_unavailable`, nothing is
+   posted and no record exists.
+3. The record is created as `accepted`. The call is now admitted.
+4. The record is written as `executing` and flushed to stable storage
+   (`fsync`). This happens before the first event is posted.
+5. The events are posted. Before each key-down or button-down event the
+   held-input ledger is written and flushed; after each matching up event
+   it is cleared and flushed ([section 12.7](#127-held-input-ledger)).
+6. When the action is over, or after an abort and its releases, the final
+   status, `events_posted` and the result are written and flushed.
+7. The outcome entry is written to the action log.
+8. The response is sent.
+
+deskhand never posts an event it could not first record. If a record or
+ledger write fails, the event that the write was guarding is not posted, and
+the operation ends as `failed` with `internal_error`. While the record file
+or the ledger cannot be read or written, every effect call fails with
+`internal_error` and nothing is posted.
+
+Because step 6 comes before step 8, a result that the caller received is the
+result a later repeat returns.
+
+### 12.4 Aborts
+
+An executing operation ends early for one of these causes. The executor
+looks for the first six before every event and while it waits
+([section 13](#13-timing-bounds)).
+
+| Cause | Code | `operation.status` |
+| --- | --- | --- |
+| The state left `ok`: kill switch, allowance gone, arming ran out, lock, console switch, display sleep, lost permission, secure input | the new state's name | `aborted` |
+| The person at the Mac used the keyboard or pointer | `user_active` | `aborted` |
+| The frontmost app, or the app under the target, is no longer allowed | `denied_app` | `aborted` |
+| The lease ran out | `lease_expired` | `aborted` |
+| The holder released the lease | `lease_not_held` | `aborted` |
+| The caller closed the connection | `cancelled`, seen on a repeat | `aborted` |
+| A fault inside deskhand | `internal_error` | `failed` |
+| deskhand stopped or crashed | `interrupted`, seen on a repeat | `aborted_by_restart` |
+
+When deskhand notices several causes at the same check, the code follows the
+order of [section 9.5](#95-order-of-refusals), so a state's name comes
+first.
+
+On an abort deskhand does this, in order:
+
+1. It stops. No further event of the action is posted.
+2. It releases every key and button that the operation pressed and has not
+   yet released, in the reverse of the order it pressed them, if cleanup is
+   authorized ([section 12.8](#128-cleanup-authorization)). If it is not,
+   the releases wait in the ledger and `cleanup_pending` is set.
+3. It records `aborted` with the count of events posted, durably.
+4. It writes the outcome to the action log.
+5. It answers with the code of the cause.
+
+What an abort leaves behind is whatever was posted before it. An aborted
+`type` leaves the characters already typed. An aborted `click` may have
+clicked. An aborted `drag` ends when its button is released, which drops
+whatever was being dragged at the place the pointer had reached. The caller
+takes a new screenshot to see where things stand.
+
+### 12.5 Repeats and stored results
+
+The table in [section 4.3](#43-operation_id) says what a repeated
+`operation_id` returns. Behind it:
+
+- When an operation ends, deskhand stores the `structuredContent` it is
+  about to return in the record, before it sends the response.
+- A repeat with the same digest gets that stored result with `replayed` set
+  to `true`. On a stored error, `code`, `operation`, `measured` and
+  `details` are as stored. `state` is the state now, which is always `ok`
+  because a stored result is only returned in `ok`. `message` may be worded
+  differently.
+- A replay posts nothing, measures nothing, needs neither the lease nor a
+  live frame, and does not count toward the action ceiling.
+- While the first call is still `accepted` or `executing`, a repeat gets
+  `operation_in_progress` at once. It does not wait for the first call.
+- A response that was lost is recovered the same way: the caller repeats the
+  call with the same arguments, inside the retention window.
+
+### 12.6 Retention and capacity
+
+- A record is kept for `OPERATION_RETENTION_MS` from its admission. The
+  default is 24 hours. After that deskhand deletes it, and the same
+  `operation_id` would be treated as new. That is why a caller MUST NOT
+  repeat an `operation_id` after the window.
+- A record inside the window is never evicted, whatever its status.
+- A principal can have at most `OPERATION_MAX_RECORDS` records inside the
+  window, counted across all of its `holder_id` values. The default is
+  10,000. At the cap, a call with a new `operation_id` is refused with
+  `operation_capacity` and posts nothing. A repeat of an existing
+  `operation_id` is still answered. The refusal ends when the oldest record
+  leaves the window.
+- Both values are configured per Mac and reported in `status.limits`.
+
+At the default ceiling of 60 actions a minute, a caller that never pauses
+reaches the default cap after about 2 hours 47 minutes.
+
+### 12.7 Held-input ledger
+
+deskhand keeps a durable ledger of every key and button that might be down
+because of it. The ledger, not the count of events, decides what is
+released.
+
+1. Before posting a key-down or button-down event, deskhand writes a
+   "possibly held" entry for that key or button and flushes it to stable
+   storage.
+2. After posting the matching up event, it clears the entry and flushes
+   again.
+3. A crash between the write and the post, or between the post and the
+   clear, leaves the entry in place. Recovery then releases something that
+   may not be down. That is the safe direction: an extra key-up or button-up
+   does no harm.
+4. Each operation tracks the keys and buttons it pressed. On an abort it
+   releases only those.
+5. Cleanup after a restart runs from the ledger. It posts only the key-up
+   and button-up events that match the entries, and nothing else.
+6. A crash during cleanup leaves the remaining entries for the next start.
+
+An entry is cleared only after its release has been posted. If posting a
+release fails, the entry stays and deskhand tries again. While an entry
+remains and no operation is executing, the `cleanup_pending` condition is
+set ([section 11.2](#112-cleanup_pending)).
+
+### 12.8 Cleanup authorization
+
+Every release needs authorization. That covers the releases that end an
+ordinary abort and the releases of restart cleanup alike. A release is
+authorized only when **none** of these blocking conditions holds:
+
+- the screen is locked (`locked`);
+- deskhand's session does not own the console (`not_console`);
+- the console shows the login window (`login_window`);
+- secure input is on (`secure_input`).
+
+Each one is judged on its own. The state that `status` reports is not
+enough: if the state is `paused` and the screen is also locked, releases
+wait, although `paused` has the higher precedence.
+
+Releases **are** allowed while `gated`, `paused` or `disarmed`, because a
+release removes input and does not add any. `display_asleep`, the permission
+states, the app policy and `user_active` do not block a release either.
+
+- If an abort is caused by the screen locking, by a console switch or by
+  secure input turning on, its releases are deferred, not posted. The
+  operation is still recorded `aborted` and the call still answers with the
+  state's name. The entries stay in the ledger.
+- Until cleanup can run, deskhand logs `cleanup_pending`, reports the
+  condition and refuses every effect call.
+- When the last blocking condition ends, deskhand posts the deferred
+  releases before it admits any effect.
+
+deskhand never unlocks a session and never posts at the login window, not
+even a release. Whether synthetic input that is still held outlives the
+process that posted it is a spike item. This contract assumes it can, which
+is why the ledger is durable.
+
+### 12.9 Restart
+
+When deskhand starts, before it answers any call:
+
+1. Every `accepted` record becomes `failed_before_execution`. Nothing was
+   posted for it.
+2. Every `executing` record becomes `aborted_by_restart`. Events may have
+   been posted. `events_posted` is the last count that reached the disk and
+   is a lower bound.
+3. All frames are gone and the lease is gone. `status.started_at` has a new
+   value.
+4. deskhand is `disarmed` ([section 10.1](#101-detection)).
+5. If the ledger has entries, `cleanup_pending` is set. deskhand releases
+   them as soon as cleanup is authorized
+   ([section 12.8](#128-cleanup-authorization)). That can be at once, and it
+   can be much later.
+
+Steps 1 and 2 are written durably. A repeat of such an `operation_id` gets
+`interrupted` with the record's status ([section 4.3](#43-operation_id)). A
+caller treats `aborted_by_restart` as "input may have reached the Mac, and
+deskhand cannot say how much".
+
+Operation records, the retention window and the count per principal carry
+over unchanged.
 
 ## 13. Timing bounds
 
-The constants are in [section 16](#16-constants): a person's input aborts an
-executing effect within 250 ms, and an expired or revoked allowance, lease or
-arming period stops deskhand within 1 s.
+The constants are in [section 16](#16-constants). This section says what
+each bound is measured from, and what deskhand has done by the end of it.
 
-*Defined in deskhand-r2q2.*
+| Event | Bound | By then deskhand has |
+| --- | --- | --- |
+| The allowance, the lease or the arming period ends | `DEADLINE_BOUND_MS` (1 s) after the end time | cancelled the executing effect, released its held input and dropped the lease |
+| The allowance file is removed, or replaced by one that is not valid | `DEADLINE_BOUND_MS` (1 s) after the change | the same |
+| The person at the Mac uses the keyboard or pointer during an effect | `USER_ACTIVITY_ABORT_MS` (250 ms) after their input | stopped posting and released what the operation held |
+
+In this section "released" means released if cleanup is authorized
+([section 12.8](#128-cleanup-authorization)). If it is not, deskhand has
+stopped posting within the bound and the releases wait.
+
+### 13.1 The deadline
+
+While an effect executes, and while a lease is held, deskhand works to one
+deadline:
+
+```text
+deadline = min(allowance expires_at, lease expiry, arming expiry)
+```
+
+- **When it is checked.** Before every posted event, at every activity poll
+  while an operation waits with input held (the duration of a drag, the
+  hold of a key), and by a timer while no operation is executing.
+- **Expiry.** All three end times are known in advance. Within
+  `DEADLINE_BOUND_MS` of the deadline, deskhand has cancelled the executing
+  operation, released its held input and dropped the lease.
+- **Revocation.** If the allowance file is removed or replaced, deskhand
+  notices within 1 s, through a file watch plus a poll
+  ([section 14.4](#144-reading-and-revocation)). If no valid allowance is
+  left, deskhand has cancelled, released and dropped the lease within
+  `DEADLINE_BOUND_MS` of the change. A replacement that is valid only moves
+  the deadline.
+- **Moving the deadline.** The lease is renewed through `status`, which an
+  executing effect does not hold up, so a renewal moves the deadline while
+  an effect runs. Arming again does the same.
+- **No look-ahead.** deskhand does not refuse a call because it could not
+  finish before the deadline. It admits the call and aborts it at the
+  deadline. A caller SHOULD renew the lease before an action that comes
+  close to what is left of it.
+
+| What ended | State afterwards | Code on the aborted call | Lease |
+| --- | --- | --- | --- |
+| Allowance | `gated` | `gated` | dropped |
+| Arming period | `disarmed` | `disarmed` | dropped |
+| Lease | unchanged | `lease_expired` | ended |
+
+### 13.2 The person at the Mac
+
+- **Before execution.** An effect call is refused with `user_active` when
+  the person's last input is less than `USER_ACTIVITY_LOOKBACK_MS` old
+  ([section 16](#16-constants)).
+- **During execution.** deskhand reads the platform's hardware-input idle
+  signal every `USER_ACTIVITY_POLL_MS` (100 ms), including while it waits
+  with input held. Its own posted events do not count. How it tells them
+  from the person's is chosen by the spike.
+- **The bound.** Within `USER_ACTIVITY_ABORT_MS` (250 ms) of the person's
+  input, deskhand has posted the operation's last event and released what
+  the operation held. Up to 100 ms of that is the wait for the next poll.
+  The rest is for stopping and releasing.
+- Events can still be posted in the gap before the poll that notices. The
+  bound limits that gap. It does not close it.
+- The call returns `user_active` with `operation.status` `aborted` and
+  `details.idle_ms`.
+
+### 13.3 Other changes of state
+
+The executor reads the state at the same moments as the deadline: before
+every posted event, and at every activity poll while it waits. So once
+deskhand knows that the state is not `ok`, it posts no further event of the
+operation, and an operation that is waiting stops within one poll interval
+(100 ms). The kill switch is known to deskhand at once.
+
+How long macOS takes to report a lock, a console switch, a sleeping display
+or secure input is not bounded by this contract. The spike measures it.
 
 ## 14. Allowance file format
 
-*Defined in deskhand-r2q2.*
+The LAN gate on each Mac (birbhomes-r-ttg5) publishes a short-lived
+allowance file while the Mac is on the home LAN. deskhand only reads it.
+Without a valid allowance the state is `gated` (amendment 2). birbhomes owns
+the publisher. This section is deskhand's side of that interface, and
+`docs/schemas/allowance.json` is the schema of the file's contents.
+
+### 14.1 The file
+
+- The path is deskhand configuration, supplied per Mac by birbhomes.
+- deskhand opens the file with `O_NOFOLLOW`, so the last component of the
+  path cannot be a symbolic link. It then checks the file it opened, not
+  the path:
+  - it is a regular file;
+  - it is owned by root;
+  - it is not writable by group or by others;
+  - the directory that holds it is owned by root.
+- deskhand's user must be able to read it. birbhomes publishes it
+  world-readable.
+- birbhomes guarantees that it publishes atomically: it writes the new file
+  beside the old one and renames it into place. deskhand therefore never
+  sees a half-written file, and treats a file that does not parse as
+  invalid, not as a reason to wait.
+
+### 14.2 Contents
+
+One JSON object in UTF-8 with exactly these four members:
+
+```json
+{
+  "version": 1,
+  "mac": "lunus-macbook-pro",
+  "not_before": "2026-11-14T15:00:00Z",
+  "expires_at": "2026-11-14T15:02:00Z"
+}
+```
+
+| Member | Rule |
+| --- | --- |
+| `version` | The integer `1`. Any other value is invalid. |
+| `mac` | This Mac's configured name, the same string as `status.mac`: 1 to 63 characters from `a-z 0-9 -`. Compared exactly. An allowance for another Mac is invalid. |
+| `not_before` | A timestamp. The allowance is not valid before it. |
+| `expires_at` | A timestamp later than `not_before`. The allowance is not valid at or after it. |
+
+- Timestamps are UTC RFC 3339 in the same form as on the wire:
+  `YYYY-MM-DDTHH:MM:SS`, an optional fraction of up to 9 digits, and a
+  literal `Z`. An offset such as `+00:00` is invalid, although it also means
+  UTC.
+- An unknown member makes the file invalid. A change to the format gets a
+  new `version`.
+- How long an allowance lasts is birbhomes' choice, and deskhand sets no
+  minimum or maximum. A short one bounds how long deskhand keeps serving
+  after the publisher stops.
+
+The schema checks the shape. That `mac` names this Mac and that
+`expires_at` is later than `not_before` are checked by deskhand.
+
+### 14.3 When the allowance is valid
+
+At time `now` on deskhand's clock, the allowance is valid when all of this
+holds:
+
+1. The file checks of [section 14.1](#141-the-file) pass.
+2. The contents conform to [section 14.2](#142-contents).
+3. `mac` equals this Mac's configured name.
+4. `not_before` minus `ALLOWANCE_SKEW_TOLERANCE_MS` is not later than `now`.
+5. `now` is earlier than `expires_at`.
+
+In every other case the state is `gated`: the file is missing or cannot be
+read, a check fails, the allowance is not yet valid, or it has expired. The
+wire does not say which. deskhand logs the reason on the Mac.
+
+The publisher and deskhand read the same clock, so the tolerance only
+matters when that clock is stepped. It is configured per Mac and is 0 by
+default. It applies to `not_before` only: `expires_at` is never extended.
+
+### 14.4 Reading and revocation
+
+- deskhand consults the allowance on every tool call, `status` included. It
+  may answer from a copy of the file's contents that is at most 1 s old
+  (`ALLOWANCE_CACHE_MAX_MS`).
+- The copy holds the contents, not the verdict. `expires_at` is compared
+  with the clock every time, so the cache never delays an expiry.
+- deskhand also watches the file and reads it again on a period short
+  enough to keep the bound of [section 13.1](#131-the-deadline), and never
+  longer than 1 s. This runs whether or not calls arrive.
+- **Revocation** is removing the file, or replacing it with one that is not
+  valid now. deskhand notices within 1 s and is then `gated`.
+- A replacement that is valid takes effect when it is read. The deadline
+  moves to its `expires_at`, whether that is earlier or later.
+
+### 14.5 Becoming and leaving `gated`
+
+- **Becoming `gated`** aborts the operation in flight with `gated`, releases
+  its held input if cleanup is authorized, invalidates every frame and drops
+  the lease ([section 10.3](#103-leaving-ok),
+  [section 10.4](#104-gated-paused-and-disarmed)).
+- **Leaving `gated`** needs a valid allowance and nothing else. deskhand
+  finds it at the next read, within 1 s of publication. Nothing is restored
+  ([section 10.5](#105-returning-to-ok)), and arming is not affected.
 
 ## 15. Clean stop
 
-*Defined in deskhand-r2q2.*
+deskhand-r-nkjj asks for a way for the host's LAN gate to stop deskhand and
+leaves the mechanism to birbhomes. birbhomes-r-ttg5 rules out the obvious
+one: the gate's root adapter must not terminate processes of the personal
+user. So deskhand can be stopped in two ways, and the LAN gate uses the
+first.
+
+### 15.1 Gate stop
+
+The LAN gate stops deskhand by withdrawing the allowance. It removes the
+file to stop at once, or stops publishing and lets the allowance expire.
+deskhand then:
+
+1. Aborts the executing effect with `gated` ([section 12.4](#124-aborts)),
+   and refuses read calls in flight with `gated`.
+2. Releases the input that the effect held, if cleanup is authorized
+   ([section 12.8](#128-cleanup-authorization)).
+3. Drops the lease and invalidates every frame.
+4. Writes the outcome of the aborted operation to the action log, and logs
+   the change of state.
+5. Keeps running in the state `gated`. `status` is answered and reports
+   `gated`. Every other tool is refused with `gated`.
+
+Steps 1 to 3 are done within `DEADLINE_BOUND_MS` of the removal or of
+`expires_at` ([section 13.1](#131-the-deadline)).
+
+deskhand does not exit on a gate stop. Away from home its LAN address is
+unreachable anyway, and the packet filter on the Mac keeps other devices
+out. Because the process stays up, deskhand serves again as soon as a valid
+allowance is published, with no restart. Whether it is still armed then
+depends only on the arming period
+([section 10.4](#104-gated-paused-and-disarmed)).
+
+### 15.2 Process stop
+
+The process itself is stopped with `SIGTERM`. launchd sends it when the
+LaunchAgent is unloaded: at logout, on uninstall and on upgrade. The LAN
+gate does not use this path. On `SIGTERM` deskhand:
+
+1. Stops accepting connections and reads no further request from the
+   connections it has.
+2. Aborts the executing effect. It stops posting and releases the input the
+   effect held, if cleanup is authorized. If it is not, the entries stay in
+   the ledger and the next start reports `cleanup_pending`.
+3. Records the outcome durably. The aborted operation ends as
+   `aborted_by_restart` with the true count of events posted. An admitted
+   call that had not started executing ends as `failed_before_execution`.
+4. Writes the outcome to the action log and logs the stop.
+5. Lets read calls in flight finish, closes every connection and exits.
+
+Steps 1 to 4 are done within `DEADLINE_BOUND_MS` of the signal.
+
+An effect call that was in flight gets no response: the caller sees the
+connection close and treats the outcome as unknown. Once deskhand is back,
+a repeat of the `operation_id` returns `interrupted` with the record's
+status and count ([section 4.3](#43-operation_id)).
+
+If deskhand is killed instead (`SIGKILL`, a crash, loss of power), none of
+this runs, and the next start recovers from the record file and the ledger
+([section 12.9](#129-restart)). To a caller the two look the same. The
+difference is that after a clean stop `events_posted` is exact, and nothing
+is left held unless cleanup was not authorized.
+
+After either kind of process stop deskhand starts `disarmed`, with no lease
+and no frames. `SIGHUP` does not stop deskhand; it reloads the credentials
+([section 11.1](#111-credentials_warning)).
 
 ## 16. Constants
 
 Contract constants are fixed by this document. Configured values are set per
-Mac and reported by `status.limits`.
+Mac and, unless the table says otherwise, reported by `status.limits`.
 
 | Name | Value | Kind |
 | --- | --- | --- |
@@ -1061,6 +1760,8 @@ Mac and reported by `status.limits`.
 | `USER_ACTIVITY_POLL_MS` | 100 | contract |
 | `USER_ACTIVITY_ABORT_MS` | 250 | contract |
 | `DEADLINE_BOUND_MS` | 1,000 | contract |
+| `ALLOWANCE_CACHE_MAX_MS` | 1,000 | contract |
+| `ALLOWANCE_SKEW_TOLERANCE_MS` | default 0; 0 to 60,000 | configured; not reported by `status` |
 | `LEASE_TTL_MS` | default 30,000; 5,000 to 120,000 | contract; chosen per call |
 | `ACTIONS_PER_MINUTE` | default 60 | configured |
 | `KEYBOARD_MAX_TEXT_LENGTH` | 1024 code points | contract |
@@ -1087,21 +1788,116 @@ Mac and reported by `status.limits`.
   period ending or being revoked, deskhand has cancelled the executing
   operation, released its held input and dropped the lease.
 
+What each bound is measured from is in [section 13](#13-timing-bounds). The
+two allowance values are used in
+[section 14](#14-allowance-file-format).
+
 ## 17. Changes from the shared contract
 
-1. **Screenshot limits.** The default downscale targets a long edge of at most
-   2576 px and at most 3,750,000 pixels, in place of 1568 px. *Approved by the
-   owner on 2026-11-12.*
-2. **`gated` state.** A tenth state, with the highest precedence, for a
-   missing, invalid or expired LAN-gate allowance. *Pending approval
-   (deskhand-nxas).*
-3. **No node allowlist inside deskhand.** deskhand does not filter by source
-   address; the pf anchor does, and the credential is the access control.
-   *Pending approval (deskhand-nxas).*
+The "Shared contract" block is the same text in deskhand-r-nkjj, crew-r-yqso
+and birbhomes-r-5elb. That block and the rest of each request are
+authoritative. This document departs from the request text in three places,
+and each departure is a numbered amendment.
 
-Until an amendment is approved, deskhand follows the request text.
+- An amendment is **approved** when the owner has left a note on every
+  affected request: deskhand-r-nkjj, crew-r-yqso, birbhomes-r-5elb and
+  birbhomes-r-ttg5. deskhand, crew, birbhomes and forge share one owner.
+- Until an amendment is approved, deskhand follows the request text.
+- `docs/contract.md` v1.0 is not published until all three are approved.
+- This draft describes the contract with all three applied, so that Crew can
+  build against it now. If the owner rejects one, the sections named below
+  change before v1.0.
 
-Detail and the approval record: *Defined in deskhand-r2q2.*
+| # | Amendment | Status |
+| --- | --- | --- |
+| 1 | Screenshot limits | Approved by the owner on 2026-11-12. |
+| 2 | `gated` state | Pending: deskhand-nxas. |
+| 3 | No node-IP allowlist inside deskhand | Pending: deskhand-nxas, and the owner's decision in deskhand-fxz0. |
+
+### 17.1 Amendment 1: screenshot limits
+
+- **Text it changes.** deskhand-r-nkjj, "Required behaviour", Screenshot:
+  "downscaled by default to at most 1568 px on the long edge."
+- **The change.** By default a screenshot is downscaled to a long edge of at
+  most 2576 px and to at most 3,750,000 pixels. A caller may ask for a
+  smaller long edge, down to 256 px. deskhand never returns an image over
+  either limit ([section 7](#7-screenshot-sizing-and-encoding)).
+- **Rationale.** Callers use current models only. Those accept images up to
+  2576 px on the long edge and about 3.75 megapixels, and their providers
+  reject a larger image instead of shrinking it. A 1568 px default throws
+  away detail that the model could use to place a click.
+- **Status.** Approved by the owner on 2026-11-12.
+
+| Request | What changes for it |
+| --- | --- |
+| deskhand-r-nkjj | The Screenshot item of "Required behaviour" reads 2576 px and 3,750,000 pixels in place of 1568 px. |
+| crew-r-yqso | "Images": Crew sizes its per-request image cap, and what it keeps out of checkpoints, for images of up to 2576 px and 5,000,000 bytes. |
+| birbhomes-r-5elb | Nothing. |
+| birbhomes-r-ttg5 | Nothing. |
+
+### 17.2 Amendment 2: the `gated` state
+
+- **Text it changes.** The shared contract, "States": "`ok`, `locked`,
+  `display_asleep`, `not_console`, `disarmed`, `paused`,
+  `permission_missing`, `permission_stale`, `secure_input`." It also gives a
+  name to the refusal in birbhomes-r-ttg5: "have deskhand refuse calls when
+  it is absent or expired."
+- **The change.** A tenth state, `gated`, holds while the LAN-gate allowance
+  is missing, invalid, not yet valid or expired
+  ([section 14](#14-allowance-file-format)). It has the highest precedence,
+  it is reported by `status` and used as an error code like every other
+  state, and it drops the lease ([section 10](#10-states)). The rule that
+  every tool except `status` fails with the state's name is unchanged and
+  covers it.
+- **Rationale.** birbhomes-r-ttg5 already requires the refusal, and none of
+  the nine states describes it. Reusing one would mislead: `disarmed` tells
+  a person to arm deskhand, which would not help. Answering nothing would
+  hide `status`, so a caller could not tell a Mac whose gate is closed from
+  one that is broken. A name of its own lets Crew report that the Mac's LAN
+  gate is closed, and wait. It ranks first because it is the outermost
+  gate, and nothing a person does at the Mac ends it.
+- **Status.** Pending approval, tracked by deskhand-nxas. The refusal itself
+  is request text and is built either way. What waits for approval is the
+  name, its precedence and that it drops the lease.
+
+| Request | What changes for it |
+| --- | --- |
+| deskhand-r-nkjj | The "States" list of the shared contract gains `gated`: ten values in place of nine. |
+| crew-r-yqso | The same list. Under "Availability", `gated` is one more tool error that the model can read, alongside away, locked, disarmed and paused. |
+| birbhomes-r-5elb | The same list. Nothing in the network path changes. |
+| birbhomes-r-ttg5 | The refusal "when it is absent or expired" is the state `gated`, and the allowance has the format of [section 14](#14-allowance-file-format). The acceptance item "stops serving within the gate's expiry" is met by `gated`: deskhand keeps answering `status` and refuses everything else ([section 15.1](#151-gate-stop)). |
+
+### 17.3 Amendment 3: no node-IP allowlist inside deskhand
+
+- **Text it changes.** birbhomes-r-ttg5, "What to do": "Supply the per-Mac
+  configuration: listen address, allowlist of node addresses, app policy,
+  credential file paths."
+- **The change.** deskhand's configuration has no allowlist of node
+  addresses, and deskhand does not filter by source address. The pf anchor
+  of birbhomes-r-5elb is the only source filter. deskhand still binds one
+  LAN address and still requires both credentials on every request
+  ([section 2](#2-transport-and-authentication)).
+- **Rationale.** The shared contract already says where access is decided:
+  "A source filter can only name nodes. The credential is the access
+  control." The pf anchor admits the port from the node addresses only,
+  before a connection reaches deskhand. A second list inside deskhand would
+  repeat it, would have to be changed in step with it whenever a node is
+  added or readdressed, and would look like an outage when the two differ.
+  It would keep out nothing that the anchor lets in.
+- **Status.** Pending. It needs the owner's decision in deskhand-fxz0
+  (whether deskhand keeps a node-IP allowlist) and then the approval notes
+  tracked by deskhand-nxas. The project plan's default answer is no
+  allowlist. If the owner decides to keep one, this amendment is withdrawn:
+  deskhand then takes the list from its per-Mac configuration and refuses
+  connections from any other source address. Nothing on the wire changes
+  for a caller on a listed node.
+
+| Request | What changes for it |
+| --- | --- |
+| deskhand-r-nkjj | No text changes. "Caller identity" in the shared contract stays as it is, and this amendment settles that deskhand itself runs no source filter. |
+| crew-r-yqso | Nothing. A caller on a node that the pf anchor admits sees no difference. |
+| birbhomes-r-5elb | The pf anchor (item 4 of "What to do") is the only source filter, so its list of node addresses is the only one to maintain. |
+| birbhomes-r-ttg5 | "allowlist of node addresses" leaves the per-Mac configuration that birbhomes supplies to deskhand. |
 
 ## 18. Open questions to verify against the spec before v1.0
 
@@ -1165,14 +1961,17 @@ alone would accept a trailing newline.
 | `defs.json` | Shared definitions: `state`, `condition`, `error_code`, `holder_id`, `operation_id`, `frame_id`, `rect`, `point`, `frame_point`, `key`, `modifiers`, `measured`, `lease_view`, `effect_result`, `tool_error` and others. |
 | `tools/<tool>.input.json` | The `arguments` of each tool. |
 | `tools/<tool>.output.json` | The `structuredContent` of each tool: success or `tool_error`. |
+| `allowance.json` | The contents of the LAN-gate allowance file ([section 14](#14-allowance-file-format)). Self-contained, and not served by `tools/list`. |
 | `examples/<tool>.<input\|output>.<name>.json` | Instances that validate against the schema named by the first two parts. |
 | `examples/invalid/<tool>.<input\|output>.<name>.json` | Instances that MUST be rejected by that schema. |
+| `examples/allowance.<name>.json`, `examples/invalid/allowance.<name>.json` | Instances that validate against `allowance.json`, and instances that it MUST reject. |
 | `examples/wire/*.json` | Whole JSON-RPC messages. In `tools-call.<tool>.<name>.<request\|response>.json`, `params.arguments` and `result.structuredContent` validate against the tool's schemas. |
 
 ## Appendix A. Decisions made in this draft
 
 The plan did not settle these. They are listed so the owner and Crew can
-object before v0.9.
+object before v1.0. Items 1 to 24 come from the wire surface (0.1-draft) and
+items 25 to 46 from the behavior sections (0.9-draft).
 
 1. Lease operations ride on `status` as an optional `lease` argument, and a
    refused lease operation is reported in `lease_result`, not as a tool error.
@@ -1217,3 +2016,48 @@ object before v0.9.
     rule for `details.argument`.
 23. `lease_expired` describes the most recent lease only and has no time limit.
 24. Operation retention and the record cap are reported in `status.limits`.
+25. `display_asleep` holds while any active display is asleep. A successful
+    `displays` result therefore always has `asleep` `false` in v0.
+26. deskhand starts `disarmed`. Neither arming nor `paused` survives a
+    restart, and `paused` ends only by arming.
+27. `gated` does not end arming.
+28. Leaving `ok` also stops read calls in flight: a screenshot that was not
+    yet returned is discarded.
+29. An unreadable or uncertain signal makes its state hold. This widens the
+    plan's rule for the lock signal to every state.
+30. The login window always gives the state `not_console`, also when the two
+    platform signals disagree.
+31. A rejected token file is not treated like a rejected certificate: the old
+    token is not kept, and every request gets `401` until the file is fixed.
+32. The `log_unavailable` condition refuses nothing by itself. A call is
+    refused only when its own intent entry fails. A failed outcome entry does
+    not change the result of the call.
+33. deskhand retries pending cleanup on every change of state and at least
+    once a second.
+34. The order of `status.conditions` carries no meaning.
+35. `events_posted` counts single synthetic events and leaves out cleanup
+    releases. The number of events per action is not fixed.
+36. The intent entry is logged before the record is created, and the final
+    record, with the stored result, is durable before the response is sent.
+37. On a replayed error, `state` is the state at the time of the replay.
+38. The retention window runs from admission. The record cap counts a
+    principal's records across all of its `holder_id` values.
+39. A failed record or ledger write stops the event it was guarding, and the
+    operation ends as `failed` with `internal_error`.
+40. The state and the deadline are also checked at every 100 ms activity poll
+    while an operation waits. Without that the bounds could not hold during a
+    5 s key hold.
+41. No look-ahead: a call that cannot finish before the deadline is admitted
+    and then aborted at the deadline.
+42. Allowance contents: `version` is the integer 1; unknown members are
+    invalid; timestamps need a literal `Z`; `mac` is 1 to 63 characters from
+    `a-z 0-9 -`; deskhand sets no limit on the lifetime.
+43. `ALLOWANCE_SKEW_TOLERANCE_MS` is 0 by default, at most 60,000, and
+    applies to `not_before` only.
+44. The 1 s revocation bound covers noticing and acting together, so the
+    backstop poll runs more often than the plan's "1 s poll".
+45. Clean stop has two forms. The LAN gate withdraws the allowance and
+    deskhand keeps running as `gated`. `SIGTERM` ends the process within 1 s,
+    records the operation in flight as `aborted_by_restart` with an exact
+    count, and sends that call no response.
+46. `contract_version` follows the document version and is `0.9-draft`.
