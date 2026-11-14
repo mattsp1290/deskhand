@@ -12,23 +12,27 @@ public struct LeaseHolder: Hashable, Sendable, CustomStringConvertible {
     public var description: String { "\(holderID) (\(principal))" }
 }
 
-/// One acquisition of the lease. A renewal moves `expiresAt` and keeps everything else.
+/// One acquisition of the lease. A renewal moves `deadline` and keeps everything else.
 public struct Lease: Hashable, Sendable {
     public let holder: LeaseHolder
     /// Differs between acquisitions, also by the same holder. An effect compares it with the lease
     /// it was admitted under, so a release followed by a new `acquire` between two checks still
     /// ends that effect (contract 5.3).
     public let serial: UInt64
+    /// The wall clock at acquisition, for `acquired_at`.
     public let acquiredAt: Timestamp
-    public internal(set) var expiresAt: Timestamp
+    /// When the lease runs out, on the monotonic clock: a step of the wall clock neither lengthens
+    /// nor shortens it.
+    public internal(set) var deadline: ContinuousClock.Instant
 
-    /// The lease runs out at `expiresAt`, not after it.
-    public func isLive(at now: Timestamp) -> Bool { now < expiresAt }
+    /// The lease runs out at `deadline`, not after it.
+    public func isLive(at now: ClockReading) -> Bool { now.monotonic < deadline }
 
     /// `expires_in_ms`: never negative.
-    public func remainingMs(at now: Timestamp) -> Int {
-        Int(max(0, expiresAt.millisecondsSinceEpoch - now.millisecondsSinceEpoch))
-    }
+    public func remainingMs(at now: ClockReading) -> Int { now.milliseconds(until: deadline) }
+
+    /// `expires_at` as seen from `now`.
+    public func expiresAt(at now: ClockReading) -> Timestamp { now.wallTime(at: deadline) }
 }
 
 /// The lease of this Mac (contract 5). There is at most one, so one holder drives the desktop.
@@ -48,14 +52,14 @@ public enum LeaseEndCause: Hashable, Sendable {
     case expired
     case released
     /// `gated`, `paused` or `disarmed` began (contract 10.4).
-    case dropped(BlockingState)
+    case dropped(LeaseDroppingState)
 
     /// The code an effect executing under the ended lease is aborted with (contract 5.3, 13.1).
     public var abortReason: ToolErrorReason {
         switch self {
         case .expired: .leaseExpired
         case .released: .leaseNotHeld
-        case .dropped(let state): .blocked(state)
+        case .dropped(let state): .blocked(state.blocking)
         }
     }
 }
@@ -66,7 +70,7 @@ public struct LeaseEnd: Hashable, Sendable {
     public let cause: LeaseEndCause
 }
 
-/// Why an effect call does not hold the lease (contract 9.5 step 5). Each case is one tool error.
+/// Why an effect call does not hold the lease (contract 9.5 step 6). Each case is one tool error.
 public enum LeaseDenial: Error, Hashable, Sendable {
     case notHeld
     case heldByOther(expiresInMs: Int)
@@ -83,9 +87,9 @@ public enum LeaseDenial: Error, Hashable, Sendable {
     /// For people and models; not stable.
     public var message: String {
         switch self {
-        case .notHeld: "The named holder does not hold the lease. Acquire it with status."
+        case .notHeld: "The named holder does not hold the lease. Acquire it with the lease tool."
         case .heldByOther: "Another holder holds the lease."
-        case .expired: "The named holder's lease ran out. Acquire it again with status."
+        case .expired: "The named holder's lease ran out. Acquire it again with the lease tool."
         }
     }
 }
