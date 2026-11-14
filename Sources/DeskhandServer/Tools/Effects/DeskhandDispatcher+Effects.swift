@@ -25,12 +25,12 @@ extension DeskhandDispatcher {
         return await executor.perform(call)
     }
 
-    /// `operation` for an error of an effect tool, when a record exists for its handles.
+    /// `operation` for an error of an effect tool, when a record exists for its handles. A call with
+    /// those handles still being admitted has none, unlike in `status` (contract 9.2).
     func existingRecord(_ handles: EffectHandles, caller: ToolCaller) async -> OperationContext? {
         guard let holderID = handles.holderID, let operationID = handles.operationID else { return nil }
         let key = OperationKey(principal: caller.principal, holderID: holderID, operationID: operationID)
-        guard case .found(let view)? = try? await executor.operationStatus(for: key) else { return nil }
-        return .existing(view)
+        return await executor.recordedOperation(for: key).map { .existing($0) }
     }
 
     /// An effect call whose source address is unknown cannot write its intent entry, so it is

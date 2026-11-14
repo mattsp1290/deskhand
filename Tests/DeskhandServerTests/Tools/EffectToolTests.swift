@@ -87,7 +87,7 @@ struct EffectToolTests {
         #expect(content["current_state"] == "ok")
         #expect(content["operation"] == view.jsonValue)
         #expect(content["measured"] != nil)
-        #expect(ToolOutcome(repeated).isError)
+        #expect(ToolOutcome(repeated)?.isError == true)
 
         let query = OperationQuery(holderID: ToolFixture.holder, operationID: OperationID("op-press")!)
         #expect(try await harness.status(StatusArguments(operation: query)).operation == .found(view))

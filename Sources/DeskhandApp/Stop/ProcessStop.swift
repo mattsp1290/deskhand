@@ -9,6 +9,11 @@ import Foundation
 enum ProcessStop {
     static func install(executor: InputExecutor, host: any CleanStopHost) -> TerminationSignal {
         let stop = CleanStop(executor: executor, host: host, exit: { Foundation.exit($0) })
-        return TerminationSignal { Task { await stop.stop() } }
+        return TerminationSignal {
+            // Read where the signal is handled, so the bound runs from the signal, not from the
+            // task that starts the stop.
+            let signalled = ContinuousClock.now
+            Task { await stop.stop(signalledAt: signalled) }
+        }
     }
 }

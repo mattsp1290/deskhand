@@ -167,6 +167,10 @@ final class ConnectionHandler: ChannelInboundHandler {
 
     private func respond(_ response: HandlerResponse, to admitted: AdmittedHead, context: ChannelHandlerContext) {
         guard case .handling = state, context.channel.isActive else { return }
+        if response.closesWithoutResponse {
+            close(context: context)
+            return
+        }
         var status = response.status
         var body = response.body
         var mustClose = !admitted.keepAlive || closeAfterResponse || isPastMaxAge(now: context.eventLoop.now)

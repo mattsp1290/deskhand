@@ -28,7 +28,7 @@ final class StopStarter: Sendable {
 
 /// The executor's part of a process stop (contract 15.2): the call in flight ends with the restart
 /// statuses and an exact count, its input is released or stays owed, and no later call runs.
-@Suite("Stop: the executor")
+@Suite("Stop: the executor", .timeLimit(.minutes(1)))
 struct ExecutorStopTests {
     static let shiftK: JSONValue = ["type": "press", "key": "k", "modifiers": ["shift"], "hold_ms": 500]
 
@@ -56,9 +56,8 @@ struct ExecutorStopTests {
         let stop = try #require(await starter.stop)
         let key = call.key
         #expect(
-            stop.operation
-                == StoppedOperation(key: key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true, logged: true)
-        )
+            stop.operation == StoppedOperation(key: key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true))
+        #expect(await harness.executor.awaitStopEntries() == true)
         #expect(stop.heldInput.isEmpty)
         #expect(mac.released == [.named(.k), .modifierKey(.shift)])
         #expect(mac.ledgerOnDisk.isEmpty)
@@ -115,9 +114,8 @@ struct ExecutorStopTests {
 
         #expect(answer.structuredContent == nil)
         let stop = try #require(await starter.stop)
-        #expect(
-            stop.operation
-                == StoppedOperation(key: call.key, outcome: .failedBeforeExecution, recorded: true, logged: true))
+        #expect(stop.operation == StoppedOperation(key: call.key, outcome: .failedBeforeExecution, recorded: true))
+        #expect(await harness.executor.awaitStopEntries() == true)
         #expect(harness.mac.posted.isEmpty)
         let entries = await harness.logEntries
         #expect(entries.map(\.kind) == [.intent, .outcome])
@@ -163,34 +161,69 @@ struct ExecutorStopTests {
         #expect(mac.ledgerOnDisk.isEmpty)
     }
 
-    @Test("a stop waits for a refusal entry held back for a late intent, which is then written once, after it")
-    func stopWaitsForHeldRefusal() async throws {
-        let harness = try Harness(waitLimit: .milliseconds(100))
-        let gate = Gate.opening(after: .seconds(3))
+    @Test(
+        "a stop returns once the record is written and the input released, while the outcome entry's append still waits"
+    )
+    func stopDoesNotWaitForTheOutcomeEntry() async throws {
+        let mac = FakeMac()
+        // Long enough that only the gate decides when the outcome append returns.
+        let harness = try Harness(mac: mac, waitLimit: .seconds(30))
+        let starter = StopStarter(harness.executor)
+        let gate = Gate()
+        mac.change { $0.onSleep = { await starter.start() } }
+        await harness.onLog(.outcome) { await gate.pass() }
+        let call = try harness.keyboard(Self.shiftK)
+        let performing = Task { await harness.executor.perform(call) }
+        var arrivals = gate.arrived.makeAsyncIterator()
+        _ = await arrivals.next()
+
+        let stop = try #require(await starter.stop)
+        #expect(
+            stop.operation
+                == StoppedOperation(key: call.key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true))
+        #expect(mac.released == [.named(.k), .modifierKey(.shift)])
+        #expect(try await harness.status() == .found(OperationView(status: .abortedByRestart, eventsPosted: 2)))
+        #expect(await harness.logEntries.map(\.kind) == [.intent])
+
+        let executor = harness.executor
+        let entries = Task { await executor.awaitStopEntries() }
+        await gate.open()
+        #expect(await entries.value == true)
+        #expect(await harness.logEntries.map(\.kind) == [.intent, .outcome])
+        #expect(await performing.value.structuredContent == nil)
+    }
+
+    @Test(
+        "a stop returns while a refusal entry is held back for a late intent; the entries wait for it, written once, after it"
+    )
+    func entriesWaitForHeldRefusal() async throws {
+        // The intent's append gives up after it, and the held refusal entry's append has as long.
+        let harness = try Harness(waitLimit: .seconds(1))
+        let gate = Gate()
         await harness.onLog(.intent) { await gate.pass() }
         let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
         #expect(answer.code == .logUnavailable)
         #expect(await harness.logEntries.isEmpty)
 
         let executor = harness.executor
-        let returned = Mutex(false)
-        let stopping = Task {
-            let stop = await executor.stop()
-            returned.withLock { $0 = true }
-            return stop
+        #expect(await executor.stop() == ExecutorStop(operation: nil, heldInput: []))
+        let settled = Mutex(false)
+        let entries = Task {
+            let logged = await executor.awaitStopEntries()
+            settled.withLock { $0 = true }
+            return logged
         }
-        while !(await executor.isStopping) { await Task.yield() }
+        // Only the gate lets the intent's append return, so this can only fail when the wait is wrong.
         try await Task.sleep(for: .milliseconds(200))
-        #expect(!returned.withLock { $0 }, "the stop returned while the refusal entry was still held back")
+        #expect(!settled.withLock { $0 }, "the entries settled while the refusal entry was still held back")
 
         await gate.open()
-        let stop = await stopping.value
-        #expect(stop == ExecutorStop(operation: nil, heldInput: []))
-        let entries = await harness.logEntries
-        #expect(entries.map(\.kind) == [.intent, .refusal])
-        guard case .refusal(let refusal)? = entries.last else { return }
+        #expect(await entries.value == nil)
+        let written = await harness.logEntries
+        #expect(written.map(\.kind) == [.intent, .refusal])
+        guard case .refusal(let refusal)? = written.last else { return }
         #expect(refusal.code == .logUnavailable)
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(await executor.awaitStopEntries() == nil)
         #expect(await harness.logEntries.count == 2, "the held refusal entry was written twice")
         #expect(harness.mac.posted.isEmpty)
     }

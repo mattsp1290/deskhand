@@ -10,16 +10,16 @@ enum ToolOutcome: Hashable, Sendable {
     /// unless the operation completed (contract 12.5).
     case replayed(JSONValue, isError: Bool)
 
-    /// What an effect call answered with. A call dropped before admission has nobody left to
-    /// answer (contract 9.5); its outcome is never sent.
-    init(_ answer: EffectAnswer) {
+    /// What an effect call answered with, or `nil` when it gets no answer: a call dropped before
+    /// admission, whose connection already closed (contract 9.5), and every call once deskhand is
+    /// stopping, the one the stop ended included, whose connection then closes unanswered
+    /// (contract 15.2).
+    init?(_ answer: EffectAnswer) {
         switch answer {
         case .completed(let result): self = .success(result.jsonValue)
         case .error(let error): self = .failure(error)
         case .replayed(let replay, let content): self = .replayed(content, isError: replay.isError)
-        case .dropped:
-            self = .failure(
-                ToolError(.internalError, message: "The connection closed before the call was admitted.", state: .ok))
+        case .dropped: return nil
         }
     }
 
@@ -60,7 +60,8 @@ struct ToolRunner {
     let dispatcher: any ToolDispatcher
     let caller: ToolCaller
 
-    func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome {
+    /// `nil` when the call gets no answer (``ToolOutcome/init(_:)``).
+    func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
         if let fault = arguments.strictFault {
             return .failure(await refusal(.invalidArguments(fault), tool, arguments))
         }
@@ -81,7 +82,7 @@ struct ToolRunner {
         await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller)
     }
 
-    private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome {
+    private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome? {
         switch call {
         case .status(let arguments): .success(try await dispatcher.status(arguments, caller: caller).jsonValue)
         case .displays: .success(try await dispatcher.displays(caller: caller).jsonValue)

@@ -25,6 +25,11 @@ struct TerminationSignalTests {
         await Self.deliver(SIGUSR2, count: 2)
     }
 
+    @Test("a signal sent as soon as the source is installed is never lost", .timeLimit(.minutes(1)))
+    func signalAtInstall() async {
+        for _ in 0..<200 { await Self.deliver(SIGUSR2, count: 1) }
+    }
+
     @Test(
         "SIGTERM runs the handler, again on a second delivery, and the process lives on",
         .tags(.requiresMacSession), .macSessionTestsEnabled)

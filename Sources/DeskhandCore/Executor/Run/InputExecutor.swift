@@ -87,13 +87,15 @@ public actor InputExecutor {
     /// section ends at its next check (contract 15.2).
     var stopRequested = false
     /// Calls that entered the admission section and have not answered yet: a call that left the
-    /// section is still writing its outcome entry, which a stop waits for.
+    /// section is still writing its outcome entry, which ``awaitStopEntries()`` waits for.
     var callsAnswering = 0
-    var stopWaiters: [CheckedContinuation<Void, Never>] = []
-    /// The operation the stop ended, once it ended.
+    var stopWaiters: [StopWaiter] = []
+    /// The operation the stop ended, once its record was written.
     var stoppedOperation: StoppedOperation?
+    /// The stopped operation's outcome entry was committed.
+    var stoppedOutcomeLogged = false
     /// Refusal entries held back until their call's intent append returns (``PendingIntent``),
-    /// which a stop waits for as it waits for an outcome entry.
+    /// which ``awaitStopEntries()`` waits for as it waits for an outcome entry.
     var refusalsHeld = 0
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
@@ -142,6 +144,13 @@ public actor InputExecutor {
         return .notFound
     }
 
+    /// The record for `key`, with the live count while it executes: what the `operation` member of
+    /// an error other than `operation_in_progress` and `operation_id_conflict` describes (contract
+    /// 9.2). `nil` while a call with that key is still being admitted, since it has no record yet.
+    public func recordedOperation(for key: OperationKey) -> OperationView? {
+        recordView(key, at: seams.state.snapshot())
+    }
+
     /// Loads the record file again after a failed write, and reads the ledger again, while no call
     /// is in the admission section (contract 12.3). Returns ``storesAvailable``.
     @discardableResult
@@ -183,6 +192,7 @@ public actor InputExecutor {
         interruptions = PendingInterruptions()
         if wasExecuting { seams.observer.executionDidChange(executing: false) }
         seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
+        resumeStopWaiters()
     }
 
     /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``. The
@@ -205,11 +215,11 @@ public actor InputExecutor {
     }
 
     /// Writes a refusal entry ``logRefusal(_:after:)`` held back, once its intent append returned.
-    /// A stop waiting for it returns after it, so the entry is written once, after its intent.
+    /// ``awaitStopEntries()`` returns after it, so the entry is written once, after its intent.
     func logHeldRefusal(_ entry: ActionLogRefusal) async {
         await logRefusal(entry)
         refusalsHeld -= 1
-        resumeStopWaitersIfIdle()
+        resumeStopWaiters()
     }
 
     /// Runs one append to the action log within ``waitLimit`` and reports how it went, for the

@@ -5,8 +5,10 @@ import Testing
 /// What a clean stop did, in order, across the host, the executor and the exit.
 final class StopTrace: Sendable {
     enum Step: Hashable, Sendable {
+        case beginStop
         case stopAccepting
         case executorStop
+        case entries
         case dropLease
         case log(CleanStopReport)
         case close
@@ -27,10 +29,15 @@ final class StopTrace: Sendable {
     }
 }
 
+/// A host that records each step, and holds step 1 until `accepting` opens when there is one.
 struct RecordingStopHost: CleanStopHost {
     let trace: StopTrace
+    var accepting: Gate?
 
-    func stopAcceptingCalls() async { trace.record(.stopAccepting) }
+    func stopAcceptingCalls() async {
+        trace.record(.stopAccepting)
+        await accepting?.pass()
+    }
     func dropLeaseAndFrames() async { trace.record(.dropLease) }
     func logStop(_ report: CleanStopReport) { trace.record(.log(report)) }
     func closeConnections() async { trace.record(.close) }
@@ -38,6 +45,13 @@ struct RecordingStopHost: CleanStopHost {
 
 /// An executor whose stop answers `answer`, after `gate` opens when there is one.
 actor FakeStoppableExecutor: StoppableExecutor {
+    func beginStop() { trace.record(.beginStop) }
+
+    func awaitStopEntries() -> Bool? {
+        trace.record(.entries)
+        return answer.operation.map { _ in true }
+    }
+
     let trace: StopTrace
     let gate: Gate?
     let answer: ExecutorStop
@@ -57,16 +71,30 @@ actor FakeStoppableExecutor: StoppableExecutor {
     }
 }
 
-/// The process stop (contract 15.2): one deadline of `DEADLINE_BOUND_MS` for every wait, the steps
-/// in order, one exit with status 0.
-@Suite("Stop: the clean stop")
+/// The process stop (contract 15.2): one deadline, ``CleanStop/margin`` short of
+/// `DEADLINE_BOUND_MS` after the signal, for every wait; the executor marked stopping before step 1;
+/// the steps in order; one exit with status 0.
+@Suite("Stop: the clean stop", .timeLimit(.minutes(1)))
 struct CleanStopTests {
+    static let deadlineMs = Int64(ContractConstants.deadlineBoundMs) - Int64(CleanStop.defaultMargin / .milliseconds(1))
+
     static func cleanStop(
-        _ executor: any StoppableExecutor, trace: StopTrace, scheduler: ManualScheduler
+        _ executor: any StoppableExecutor, trace: StopTrace, scheduler: ManualScheduler, accepting: Gate? = nil
     ) -> CleanStop {
         CleanStop(
-            executor: executor, host: RecordingStopHost(trace: trace), scheduler: scheduler,
+            executor: executor, host: RecordingStopHost(trace: trace, accepting: accepting), scheduler: scheduler,
             exit: { trace.record(.exit($0)) })
+    }
+
+    /// The executor is marked stopping before step 1, which runs alongside the executor's stop and
+    /// ends before the connections close; the other steps are in `rest`'s order.
+    static func expectSteps(_ trace: StopTrace, beginStop: Bool = true, then rest: [StopTrace.Step]) {
+        let steps = trace.steps
+        if beginStop { #expect(steps.first == .beginStop, "\(steps)") }
+        #expect(steps.filter { $0 != .stopAccepting && $0 != .beginStop } == rest)
+        let accepting = steps.firstIndex(of: .stopAccepting)
+        #expect(accepting != nil, "step 1 never ran: \(steps)")
+        if let accepting, let close = steps.firstIndex(of: .close) { #expect(accepting < close) }
     }
 
     @Test("an idle stop runs every step in order and exits 0 at once")
@@ -78,38 +106,75 @@ struct CleanStopTests {
         let report = await Self.cleanStop(executor, trace: trace, scheduler: scheduler).stop()
 
         let expected = CleanStopReport(
-            executor: ExecutorStop(operation: nil, heldInput: []), leaseDropped: true, elapsed: .zero)
+            executor: ExecutorStop(operation: nil, heldInput: []), outcomeLogged: nil, leaseDropped: true,
+            elapsed: .zero)
         #expect(report == expected)
-        #expect(trace.steps == [.stopAccepting, .executorStop, .dropLease, .log(expected), .close, .exit(0)])
+        Self.expectSteps(trace, then: [.executorStop, .dropLease, .entries, .log(expected), .close, .exit(0)])
     }
 
-    @Test("an executor that has not answered by the bound is left behind, and the process exits 0 at it")
+    @Test(
+        "an executor that has not answered is left behind, and the process exits 0 short of the bound after the signal")
     func executorPastTheBound() async {
         let trace = StopTrace()
         let scheduler = ManualScheduler()
-        let gate = Gate.opening(after: .seconds(30))
+        let gate = Gate()
         let executor = FakeStoppableExecutor(trace: trace, gate: gate)
         let stop = Self.cleanStop(executor, trace: trace, scheduler: scheduler)
+        // The stop starts 300 ms after the signal arrived; the deadline runs from the signal.
+        let signal = scheduler.now
+        scheduler.advance(byMilliseconds: 300)
 
-        let running = Task { await stop.stop() }
+        let running = Task { await stop.stop(signalledAt: signal) }
         var arrivals = gate.arrived.makeAsyncIterator()
         _ = await arrivals.next()
         await scheduler.waitForSleepers(1)
-        scheduler.advance(byMilliseconds: Int64(ContractConstants.deadlineBoundMs) - 1)
+        scheduler.advance(byMilliseconds: Self.deadlineMs - 300 - 1)
         #expect(trace.exits.isEmpty)
         scheduler.advance(byMilliseconds: 1)
         let report = await running.value
 
-        let expected = CleanStopReport(executor: nil, leaseDropped: false, elapsed: .seconds(1))
+        let expected = CleanStopReport(
+            executor: nil, outcomeLogged: nil, leaseDropped: false, elapsed: .milliseconds(Self.deadlineMs))
         #expect(report == expected)
-        #expect(trace.steps == [.stopAccepting, .executorStop, .log(expected), .exit(0)])
+        #expect(report.elapsed < .milliseconds(ContractConstants.deadlineBoundMs))
+        let steps = trace.steps.filter { $0 != .stopAccepting }
+        #expect(steps == [.beginStop, .executorStop, .log(expected), .exit(0)])
+        await gate.open()
+    }
+
+    @Test(
+        "a step 1 that hangs holds up neither the executor's stop nor the lease's drop, and the exit comes at the deadline"
+    )
+    func hungStepOne() async {
+        let trace = StopTrace()
+        let scheduler = ManualScheduler()
+        let accepting = Gate()
+        let executor = FakeStoppableExecutor(trace: trace)
+        let stop = Self.cleanStop(executor, trace: trace, scheduler: scheduler, accepting: accepting)
+
+        let running = Task { await stop.stop() }
+        let expected = CleanStopReport(
+            executor: ExecutorStop(operation: nil, heldInput: []), outcomeLogged: nil, leaseDropped: true,
+            elapsed: .zero)
+        while !trace.steps.contains(.log(expected)) { await Task.yield() }
+        #expect(trace.exits.isEmpty)
+        await scheduler.waitForSleepers(1)
+        scheduler.advance(byMilliseconds: Self.deadlineMs)
+        #expect(await running.value == expected)
+
+        #expect(
+            trace.steps.filter { $0 != .stopAccepting } == [
+                .beginStop, .executorStop, .dropLease, .entries, .log(expected), .exit(0),
+            ])
+        #expect(trace.steps.contains(.stopAccepting))
+        await accepting.open()
     }
 
     @Test("a second stop while the first runs waits for it, changes nothing, and the process exits once")
     func secondStopIsHarmless() async {
         let trace = StopTrace()
         let scheduler = ManualScheduler()
-        let gate = Gate.opening(after: .seconds(30))
+        let gate = Gate()
         let executor = FakeStoppableExecutor(trace: trace, gate: gate)
         let stop = Self.cleanStop(executor, trace: trace, scheduler: scheduler)
 
@@ -127,7 +192,7 @@ struct CleanStopTests {
     }
 
     @Test(
-        "SIGTERM mid-operation: aborted_by_restart with the exact count, input released or kept owed, lease dropped, logged, exit 0 within the bound",
+        "SIGTERM mid-operation: aborted_by_restart with the exact count, input released or kept owed, lease dropped, logged, exit 0",
         arguments: [false, true])
     func stopMidOperation(locked: Bool) async throws {
         let mac = FakeMac()
@@ -153,12 +218,11 @@ struct CleanStopTests {
         let held: [HeldInput] = locked ? [.modifierKey(.shift), .named(.k)] : []
         let expected = CleanStopReport(
             executor: ExecutorStop(
-                operation: StoppedOperation(
-                    key: call.key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true, logged: true),
+                operation: StoppedOperation(key: call.key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true),
                 heldInput: held),
-            leaseDropped: true, elapsed: .zero)
+            outcomeLogged: true, leaseDropped: true, elapsed: .zero)
         #expect(report == expected)
-        #expect(trace.steps == [.stopAccepting, .dropLease, .log(expected), .close, .exit(0)])
+        Self.expectSteps(trace, beginStop: false, then: [.dropLease, .log(expected), .close, .exit(0)])
         #expect(mac.released == (locked ? [] : [.named(.k), .modifierKey(.shift)]))
         #expect(mac.ledgerOnDisk == held)
         #expect(try await harness.status() == .found(OperationView(status: .abortedByRestart, eventsPosted: 2)))

@@ -170,6 +170,44 @@ struct DeskhandStack: Sendable {
     var entries: [ActionLogEntry] { get async { await log.base.entries } }
 }
 
+/// The process stop's host over a running stack (contract 15.2). It records the steps and leaves
+/// the listener up, so a test sees what the listener does on its own with the calls a stop ended,
+/// and can still read over the wire afterwards.
+final class StackStopHost: CleanStopHost {
+    enum Step: Hashable, Sendable {
+        case stopAccepting
+        case dropLease
+        case log
+        case close
+        case exit(Int32)
+    }
+
+    private let recorded = Mutex<(steps: [Step], report: CleanStopReport?)>(([], nil))
+
+    var steps: [Step] { recorded.withLock { $0.steps } }
+    var report: CleanStopReport? { recorded.withLock { $0.report } }
+
+    func stopAcceptingCalls() async { recorded.withLock { $0.steps.append(.stopAccepting) } }
+    func dropLeaseAndFrames() async { recorded.withLock { $0.steps.append(.dropLease) } }
+    func logStop(_ report: CleanStopReport) {
+        recorded.withLock {
+            $0.steps.append(.log)
+            $0.report = report
+        }
+    }
+    func closeConnections() async { recorded.withLock { $0.steps.append(.close) } }
+    /// The process exit, which a test's stop only records.
+    func exit(_ status: Int32) { recorded.withLock { $0.steps.append(.exit(status)) } }
+}
+
+extension DeskhandStack {
+    /// The clean stop over this stack, its deadline on the stack's clock, which only an executing
+    /// operation's waits or the test move: no step runs out of time on a slow machine.
+    func cleanStop(host: StackStopHost) -> CleanStop {
+        CleanStop(executor: executor, host: host, scheduler: FakeClockScheduler(clock: clock), exit: host.exit)
+    }
+}
+
 /// The state owner the app runs (deskhand-qbi7's role): it reads the platform's signals, reduces
 /// them through the ``DeskOwner``, and carries the result out against the executor, then lets the
 /// watchdog re-evaluate.

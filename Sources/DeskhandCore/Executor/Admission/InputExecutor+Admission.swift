@@ -15,8 +15,8 @@ extension InputExecutor {
     /// 12.3). Call it from the task of the request: a connection that closes before admission drops
     /// the call, and one that closes later aborts it with `cancelled`.
     ///
-    /// Once ``stop()`` was called every call is ``EffectAnswer/dropped`` at once, as is the call
-    /// the stop ends (contract 15.2).
+    /// Once ``beginStop()`` was called every call is ``EffectAnswer/dropped`` at once, as is the
+    /// call the stop ends (contract 15.2).
     public func perform(_ call: EffectCall) async -> EffectAnswer {
         guard !stopRequested else { return .dropped }
         let snapshot = seams.state.snapshot()
@@ -46,7 +46,7 @@ extension InputExecutor {
         callsAnswering += 1
         let answer = await runSection(call, keyboardPlan: keyboardPlan)
         callsAnswering -= 1
-        resumeStopWaitersIfIdle()
+        resumeStopWaiters()
         return answer
     }
 
