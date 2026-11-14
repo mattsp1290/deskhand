@@ -30,22 +30,23 @@ import Testing
         }
     }
 
-    @Test func aMissingDirectoryFailsTheWriteThatGuardsAPress() throws {
+    /// A missing directory is not an empty ledger: the ledger does not load, so no press is guarded
+    /// by a file that cannot exist.
+    @Test func aMissingDirectoryFailsTheLoad() throws {
         try withTemporaryDirectory { directory in
-            var ledger = try HeldInputLedger(store: FileHeldInputStore(path: directory + "/absent/held-input.json"))
-            do throws(HeldInputLedgerError) {
-                try ledger.willPress(.keyA)
-                Issue.record("willPress returned without a ledger file")
-            } catch {
-                guard case .writeFailed(let cause) = error else {
-                    Issue.record("\(error)")
-                    return
-                }
-                #expect(cause as? StorageError == .io(operation: "open", errno: ENOENT))
-            }
-            let pending = ledger.pending()
-            let available = ledger.isAvailable
-            #expect(pending.isEmpty && !available)
+            try expectReadFailed(
+                directory + "/absent/held-input.json", .io(operation: "open directory", errno: ENOENT))
+        }
+    }
+
+    /// Re-reviews A3 and B4: whoever can write the directory could remove the ledger, which would
+    /// then load empty with input still down.
+    @Test func refusesALedgerInADirectoryOthersCanWrite() throws {
+        try withTemporaryDirectory { directory in
+            let path = directory + "/held-input.json"
+            try FileHeldInputStore(path: path).replace(with: Array(#"{"held":[],"version":1}"#.utf8))
+            try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: directory)
+            try expectReadFailed(path, .directoryWritableByOthers(mode: 0o777))
         }
     }
 

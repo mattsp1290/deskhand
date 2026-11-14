@@ -53,13 +53,15 @@ import Testing
         }
     }
 
-    @Test func refusesAFileOwnedBySomeoneElse() throws {
+    /// The directory is checked first: a stranger owns neither it nor the file.
+    @Test func refusesAStoreOwnedBySomeoneElse() throws {
         try Self.withDirectory { directory in
             let path = directory + "/operations.jsonl"
             _ = try OperationStore(storage: FileOperationStorage(path: path), now: Sample.start)
             let stranger = UInt32(geteuid()) &+ 1
             #expect(
-                throws: OperationStoreLoadError.unreadable(.wrongOwner(owner: UInt32(geteuid()), expected: stranger))
+                throws: OperationStoreLoadError.unreadable(
+                    .directoryWrongOwner(owner: UInt32(geteuid()), expected: stranger))
             ) {
                 try OperationStore(storage: FileOperationStorage(path: path, owner: stranger), now: Sample.start)
             }
