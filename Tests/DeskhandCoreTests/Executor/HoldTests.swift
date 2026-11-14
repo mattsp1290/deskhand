@@ -71,6 +71,27 @@ struct HoldTests {
         #expect(slept <= .milliseconds(4_970), "slept \(slept)")
     }
 
+    @Test("a timer that returns early only makes a hold poll more often")
+    func earlyTimerKeepsTheHold() async throws {
+        let mac = FakeMac()
+        // Every sleep returns after at most 10 ms, as ExecutionTimer allows; the clock still advances.
+        mac.change { world in
+            world.onSleep = {
+                mac.change { world in
+                    let asked = Int64(((world.sleeps.last ?? .zero) / .milliseconds(1)).rounded(.up))
+                    world.offsetMs -= max(0, asked - 10)
+                }
+            }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(
+            try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300]))
+        #expect(answer.result?.eventsPosted == 2, "\(String(describing: answer.toolError?.message))")
+        #expect(mac.read(\.sleeps).count > 3 + InputExecutor.holdPollSlack)
+        let held = try #require(mac.heldFor(from: Self.isKeyDown, to: Self.isKeyUp))
+        #expect(held >= .milliseconds(300), "key held for \(held), hold_ms 300")
+    }
+
     @Test("a hold whose clock reading does not advance ends as a fault, and releases the key")
     func frozenClockEndsHold() async throws {
         let mac = FakeMac { $0.frozenOffsetMs = 0 }

@@ -65,6 +65,15 @@ public struct HeldInputLedger: ~Copyable {
         self.store = store
     }
 
+    /// A ledger whose store could not be read at start. It is unavailable, so every effect call is
+    /// refused with `internal_error` (contract 12.3), until ``reload()`` reads the store. Unlike
+    /// after a failed write, it knows no entries, so nothing is released until then.
+    public init(unreadable store: any HeldInputStore) {
+        entries = []
+        self.store = store
+        isAvailable = false
+    }
+
     /// Entries in press order. Non-empty with no operation executing means `cleanup_pending`.
     public func pending() -> [HeldInput] { entries }
 

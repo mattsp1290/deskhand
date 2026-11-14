@@ -20,8 +20,8 @@ public actor InputExecutor {
         /// How long the executor waits for an append to the action log, the frame check of step 9
         /// and the patch recapture of step 13 (contract 9.5, 12.3). An intent the writer has not
         /// acknowledged by then is `log_unavailable`, a recapture that has not answered is
-        /// `stale_frame` `pixels_changed`, and an outcome or refusal entry is given up as not
-        /// written (contract 11.3).
+        /// `stale_frame` `pixels_changed`, and an outcome or refusal entry counts as not written
+        /// until the writer answers (contract 11.3).
         public var waitLimit: Duration
 
         public init(
@@ -82,6 +82,7 @@ public actor InputExecutor {
     var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
+    var logAttempts = ActionLogAttempts()
     /// Set by ``stop()`` and never cleared: every later call is dropped, and the call in the
     /// section ends at its next check (contract 15.2).
     var stopRequested = false
@@ -91,6 +92,9 @@ public actor InputExecutor {
     var stopWaiters: [CheckedContinuation<Void, Never>] = []
     /// The operation the stop ended, once it ended.
     var stoppedOperation: StoppedOperation?
+    /// Refusal entries held back until their call's intent append returns (``PendingIntent``),
+    /// which a stop waits for as it waits for an outcome entry.
+    var refusalsHeld = 0
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release.
@@ -181,27 +185,53 @@ public actor InputExecutor {
         seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
     }
 
-    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``.
-    func logRefusal(_ entry: ActionLogRefusal?) async {
+    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``. The
+    /// entry of a call whose intent append has not returned waits for that append instead, and is
+    /// then written by ``logHeldRefusal(_:)``.
+    func logRefusal(_ entry: ActionLogRefusal?, after intent: PendingIntent? = nil) async {
         guard let entry else { return }
+        if let intent, intent.holdRefusal(entry) {
+            refusalsHeld += 1
+            return
+        }
         let log = seams.log
-        await logAppend {
+        await logAppend { () async -> Void? in
             do throws(ActionLogFailure) {
-                try await log.commitRefusal(entry)
-                return true
+                return try await log.commitRefusal(entry)
             } catch {
-                return false
+                return nil
             }
         }
     }
 
+    /// Writes a refusal entry ``logRefusal(_:after:)`` held back, once its intent append returned.
+    /// A stop waiting for it returns after it, so the entry is written once, after its intent.
+    func logHeldRefusal(_ entry: ActionLogRefusal) async {
+        await logRefusal(entry)
+        refusalsHeld -= 1
+        resumeStopWaitersIfIdle()
+    }
+
     /// Runs one append to the action log within ``waitLimit`` and reports how it went, for the
-    /// `log_unavailable` condition (contract 11.3). `false` when it failed or did not answer in time.
+    /// `log_unavailable` condition (contract 11.3). `nil` when it failed or did not answer in time.
+    /// An append that answers late reports then, unless a newer one already did.
     @discardableResult
-    func logAppend(_ append: @escaping @Sendable () async -> Bool) async -> Bool {
-        let succeeded = await awaitBounded(within: waitLimit, append) ?? false
+    func logAppend<T: Sendable>(_ append: @escaping @Sendable () async -> T?) async -> T? {
+        let attempt = logAttempts.start()
+        let answer = await awaitBounded(within: waitLimit, append) { late in
+            await self.reportLogAppend(attempt, succeeded: late != nil, answered: true)
+        }
+        guard let answer else {
+            reportLogAppend(attempt, succeeded: false, answered: false)
+            return nil
+        }
+        reportLogAppend(attempt, succeeded: answer != nil, answered: true)
+        return answer
+    }
+
+    private func reportLogAppend(_ attempt: Int, succeeded: Bool, answered: Bool) {
+        guard logAttempts.decides(attempt, answered: answered) else { return }
         seams.observer.actionLogDidAppend(succeeded: succeeded)
-        return succeeded
     }
 
     /// `user_active` before admission, at the last look, before every event and at every poll

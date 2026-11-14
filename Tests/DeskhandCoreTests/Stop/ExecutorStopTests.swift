@@ -163,6 +163,38 @@ struct ExecutorStopTests {
         #expect(mac.ledgerOnDisk.isEmpty)
     }
 
+    @Test("a stop waits for a refusal entry held back for a late intent, which is then written once, after it")
+    func stopWaitsForHeldRefusal() async throws {
+        let harness = try Harness(waitLimit: .milliseconds(100))
+        let gate = Gate.opening(after: .seconds(3))
+        await harness.onLog(.intent) { await gate.pass() }
+        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
+        #expect(answer.code == .logUnavailable)
+        #expect(await harness.logEntries.isEmpty)
+
+        let executor = harness.executor
+        let returned = Mutex(false)
+        let stopping = Task {
+            let stop = await executor.stop()
+            returned.withLock { $0 = true }
+            return stop
+        }
+        while !(await executor.isStopping) { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!returned.withLock { $0 }, "the stop returned while the refusal entry was still held back")
+
+        await gate.open()
+        let stop = await stopping.value
+        #expect(stop == ExecutorStop(operation: nil, heldInput: []))
+        let entries = await harness.logEntries
+        #expect(entries.map(\.kind) == [.intent, .refusal])
+        guard case .refusal(let refusal)? = entries.last else { return }
+        #expect(refusal.code == .logUnavailable)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await harness.logEntries.count == 2, "the held refusal entry was written twice")
+        #expect(harness.mac.posted.isEmpty)
+    }
+
     @Test("a second stop during the first changes nothing and reports the same operation")
     func secondStopIsHarmless() async throws {
         let mac = FakeMac()

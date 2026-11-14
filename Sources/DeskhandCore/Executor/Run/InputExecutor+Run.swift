@@ -80,8 +80,10 @@ enum Ending: Sendable {
 
 extension InputExecutor {
     /// A hold polls once per `USER_ACTIVITY_POLL_MS`, once more to end, and once per move of the
-    /// deadline. These many polls beyond what its length needs mean the clock it is timed by does
-    /// not advance, and the hold ends as a fault about `DEADLINE_BOUND_MS` after it was due.
+    /// deadline. These many polls beyond what its length needs, at each of which the clock read no
+    /// later than at the one before, mean the clock it is timed by does not advance, and the hold
+    /// ends as a fault about `DEADLINE_BOUND_MS` after it was due. A poll at which the clock did
+    /// advance is not counted, so a timer that returns early only polls more often.
     public static let holdPollSlack = ContractConstants.deadlineBoundMs / ContractConstants.userActivityPollMs
 
     /// Contract 12.3 steps 4 to 9 for an admitted call.
@@ -217,14 +219,20 @@ extension InputExecutor {
         guard let anchor = execution.holdAnchor else { return nil }
         let end = anchor.advanced(by: elapsed)
         let poll = Duration.milliseconds(ContractConstants.userActivityPollMs)
-        let maxPolls = Int((elapsed / poll).rounded(.up)) + Self.holdPollSlack
-        var polls = 0
+        let maxStalledPolls = Int((elapsed / poll).rounded(.up)) + Self.holdPollSlack
+        var stalledPolls = 0
+        var previous = anchor
         while true {
             let snapshot = seams.state.snapshot()
             let now = snapshot.reading.monotonic
             guard now < end else { return nil }
-            guard polls < maxPolls else { return .fault("The clock did not advance while input was held.") }
-            polls += 1
+            if now <= previous {
+                guard stalledPolls < maxStalledPolls else {
+                    return .fault("The clock did not advance while input was held.")
+                }
+                stalledPolls += 1
+            }
+            previous = now
             var wait = min(now.duration(to: end), poll)
             let deadline = snapshot.report.effectDeadline(
                 of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
@@ -258,12 +266,11 @@ extension InputExecutor {
         let receipt = execution.receipt
         let loggedMeasured = (recorded ?? outcome).measured
         let now = seams.state.snapshot().reading.wall
-        await logAppend {
+        await logAppend { () async -> Void? in
             do throws(ActionLogFailure) {
-                try await log.commitOutcome(receipt, logged, measured: loggedMeasured, now: now)
-                return true
+                return try await log.commitOutcome(receipt, logged, measured: loggedMeasured, now: now)
             } catch {
-                return false
+                return nil
             }
         }
         guard let recorded else {

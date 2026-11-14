@@ -62,6 +62,82 @@ struct ActionLogTests {
         await gate.open()
     }
 
+    @Test("an intent that lands after its wait ran out is followed, not preceded, by its refusal entry")
+    func lateIntentIsFollowedByItsRefusal() async throws {
+        let harness = try Harness(waitLimit: Self.shortWait)
+        let gate = Gate.opening(after: .seconds(3))
+        await harness.onLog(.intent) { await gate.pass() }
+        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
+        #expect(answer.code == .logUnavailable)
+        #expect(await harness.logEntries.isEmpty, "the refusal entry went ahead of the intent it answers")
+
+        await gate.open()
+        #expect(await eventually { await harness.logEntries.count == 2 })
+        let entries = await harness.logEntries
+        #expect(entries.map(\.kind) == [.intent, .refusal])
+        guard case .refusal(let refusal)? = entries.last else { return }
+        #expect(refusal.code == .logUnavailable)
+        #expect(refusal.operationID == OperationID("op-1"))
+        #expect(refusal.frameSHA256 == ExecutorFixture.frameSHA256)
+        #expect(harness.mac.posted.isEmpty)
+    }
+
+    @Test("an append that answers after its wait ran out reports its answer then")
+    func lateAnswerIsReported() async throws {
+        let harness = try Harness(waitLimit: Self.shortWait)
+        let gate = Gate.opening(after: .seconds(3))
+        await harness.onLog(.outcome) { await gate.pass() }
+        let answer = await harness.executor.perform(try harness.pointer(["type": "move", "x": 1, "y": 1]))
+        #expect(answer.result?.eventsPosted == 1)
+        #expect(harness.mac.read(\.logAppends) == [true, false])
+
+        await gate.open()
+        #expect(await eventually { harness.mac.read(\.logAppends).count == 3 })
+        #expect(harness.mac.read(\.logAppends) == [true, false, true])
+    }
+
+    @Test("an append that runs out of time after a newer append succeeded does not set log_unavailable")
+    func staleFailureIsDropped() async throws {
+        let harness = try Harness(waitLimit: .seconds(1))
+        let gate = Gate.opening(after: .seconds(4))
+        await harness.onLog(.refusal) { await gate.pass() }
+        let paused = ExecutorFixture.report([.paused], at: harness.mac.reading)
+        harness.mac.change { $0.report = paused }
+        let executor = harness.executor
+        let refusedCall = try harness.pointer(["type": "move", "x": 1, "y": 1], operation: "op-r")
+        let refused = Task { await executor.perform(refusedCall) }
+        var arrivals = gate.arrived.makeAsyncIterator()
+        _ = await arrivals.next()
+
+        harness.mac.change { $0.report = ExecutorFixture.okReport }
+        let admitted = await executor.perform(
+            try harness.pointer(["type": "move", "x": 1, "y": 1], operation: "op-ok"))
+        #expect(admitted.result?.eventsPosted == 1)
+        #expect(await refused.value.code == .paused)
+        #expect(harness.mac.read(\.logAppends) == [true, true])
+
+        await gate.open()
+        #expect(await eventually { await harness.logEntries.count == 3 })
+        #expect(harness.mac.read(\.logAppends) == [true, true])
+    }
+
+    @Test("the section is free while an outcome entry waits for the writer")
+    func sectionIsFreeWhileTheOutcomeEntryWaits() async throws {
+        let harness = try Harness(waitLimit: .milliseconds(300))
+        let gate = Gate.opening(after: .seconds(3))
+        await harness.onLog(.outcome) { await gate.pass() }
+        let executor = harness.executor
+        let first = try harness.pointer(["type": "move", "x": 1, "y": 1])
+        let task = Task { await executor.perform(first) }
+        var arrivals = gate.arrived.makeAsyncIterator()
+        _ = await arrivals.next()
+        let second = await executor.perform(try harness.pointer(["type": "move", "x": 2, "y": 2], operation: "op-2"))
+        #expect(second.code != .busy)
+        #expect(second.result?.eventsPosted == 1)
+        _ = await task.value
+        await gate.open()
+    }
+
     @Test("a frame check that does not answer refuses with internal_error, and frees the section")
     func hungFrameCheck() async throws {
         let gate = Gate.opening(after: .seconds(2))
@@ -170,4 +246,16 @@ struct ActionLogTests {
         #expect(refusals.map(\.code) == [.invalidArgument, .paused])
         #expect(refusals.allSatisfy { $0.tool == .keyboard && $0.operationID == OperationID("op-1") })
     }
+}
+
+/// Whether `condition` holds within `limit`, checking every 10 ms: for what an append that outlived
+/// its wait does later, in a task of its own.
+func eventually(within limit: Duration = .seconds(2), _ condition: () async -> Bool) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: limit)
+    while clock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await condition()
 }

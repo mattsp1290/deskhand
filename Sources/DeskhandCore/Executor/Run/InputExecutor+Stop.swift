@@ -47,13 +47,15 @@ extension InputExecutor {
     /// still owed from earlier operations are then posted, if cleanup is authorized; otherwise they
     /// stay in the ledger.
     ///
-    /// Returns once no call is left to answer. A call still before admission can wait on the action
+    /// Returns once no call is left to answer and no refusal entry is held back for an intent append
+    /// that has not returned (``PendingIntent``): that entry is written once the append returns,
+    /// after its intent, never by the stop itself. A call still before admission can wait on the action
     /// log, the frame check or the patch recapture for up to ``Configuration/waitLimit``, so the
     /// caller bounds the wait by the stop's own deadline. Calling it again waits the same way and
     /// returns the same operation.
     public func stop() async -> ExecutorStop {
         stopRequested = true
-        if callsAnswering > 0 { await withCheckedContinuation { stopWaiters.append($0) } }
+        if !isIdle { await withCheckedContinuation { stopWaiters.append($0) } }
         _ = releaseOwedInput()
         return ExecutorStop(operation: stoppedOperation, heldInput: ledger.pending())
     }
@@ -82,20 +84,24 @@ extension InputExecutor {
         let log = seams.log
         let receipt = execution.receipt
         let now = seams.state.snapshot().reading.wall
-        let logged = await logAppend {
+        let logged = await logAppend { () async -> Void? in
             do throws(ActionLogFailure) {
-                try await log.commitOutcome(receipt, outcome, measured: measured, now: now)
-                return true
+                return try await log.commitOutcome(receipt, outcome, measured: measured, now: now)
             } catch {
-                return false
+                return nil
             }
         }
         stoppedOperation = StoppedOperation(
-            key: execution.call.key, outcome: outcome, recorded: recorded, logged: logged)
+            key: execution.call.key, outcome: outcome, recorded: recorded, logged: logged != nil)
         return .dropped
     }
 
-    func resumeStopWaiters() {
+    /// No call is left to answer and no refusal entry is held back.
+    private var isIdle: Bool { callsAnswering == 0 && refusalsHeld == 0 }
+
+    /// Resumes the stops waiting, once nothing is left for them to wait for.
+    func resumeStopWaitersIfIdle() {
+        guard isIdle else { return }
         let waiters = stopWaiters
         stopWaiters = []
         for waiter in waiters { waiter.resume() }
