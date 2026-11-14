@@ -11,10 +11,13 @@
         "listChanged": false
       }
     },
-    "serverInfo": {
-      "name": "deskhand",
-      "title": "deskhand",
-      "version": "0.1.0"
-    }
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "deskhand",
+        "version": "0.1.0"
+      }
+    },
+    "ttlMs": 300000,
+    "cacheScope": "private"
   }
 }

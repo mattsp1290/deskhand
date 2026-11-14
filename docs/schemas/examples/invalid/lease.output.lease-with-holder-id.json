@@ -1,0 +1,9 @@
+{
+  "lease_result": {
+    "op": "acquire",
+    "outcome": "acquired"
+  },
+  "lease": {
+    "holder_id": "crew:inst-7f3a:desk-lunus"
+  }
+}

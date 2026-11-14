@@ -5,15 +5,15 @@
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/status_result" },
-    { "$ref": "../defs.json#/$defs/tool_error" }
+    { "$ref": "#/$defs/status_error" }
   ],
   "$defs": {
     "status_result": {
       "type": "object",
       "properties": {
         "contract_version": {
-          "description": "Version of docs/contract.md this build implements.",
-          "type": "string"
+          "description": "Version of docs/contract.md this build implements. These schemas describe 0.10-draft.",
+          "const": "0.10-draft"
         },
         "mcp_protocol_version": { "const": "2026-07-28" },
         "server_version": { "type": "string" },
@@ -46,15 +46,18 @@
           ]
         },
         "lease": {
-          "description": "The live lease after any lease operation in this call, or null when nobody holds it.",
+          "description": "The lease as seen from the holder_id the call named. Null exactly when the call named no holder_id.",
           "anyOf": [
             { "$ref": "../defs.json#/$defs/lease_view" },
             { "type": "null" }
           ]
         },
-        "lease_result": {
-          "description": "Present exactly when the call carried a lease argument.",
-          "$ref": "#/$defs/lease_result"
+        "operation": {
+          "description": "Present exactly when the call had an operation argument: the record for that (principal, holder_id, operation_id), or null when there is none.",
+          "anyOf": [
+            { "$ref": "../defs.json#/$defs/operation_view" },
+            { "type": "null" }
+          ]
         },
         "display_config_generation": {
           "$ref": "../defs.json#/$defs/display_config_generation"
@@ -76,36 +79,161 @@
         "display_config_generation",
         "limits"
       ],
-      "not": { "required": ["code"] }
-    },
-    "lease_result": {
-      "type": "object",
-      "properties": {
-        "op": { "type": "string", "enum": ["acquire", "renew", "release"] },
-        "outcome": {
-          "type": "string",
-          "enum": ["acquired", "renewed", "released", "not_held", "refused"]
+      "not": {
+        "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
+        "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "state": { "const": "ok" } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "active_states": { "maxItems": 0 } } }
         },
-        "code": {
-          "description": "Why the operation was refused. Present exactly when outcome is refused.",
-          "type": "string",
-          "enum": [
-            "gated",
-            "paused",
-            "disarmed",
-            "lease_not_held",
-            "lease_held_by_other",
-            "lease_expired"
-          ]
+        {
+          "if": {
+            "properties": { "state": { "const": "gated" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "gated" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "paused" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "paused" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "disarmed" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "disarmed" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "not_console" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "not_console" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "locked" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "locked" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "display_asleep" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "display_asleep" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "permission_missing" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "permission_missing" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "permission_stale" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "permission_stale" }]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "const": "secure_input" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "active_states": {
+                "minItems": 1,
+                "prefixItems": [{ "const": "secure_input" }]
+              }
+            }
+          }
         }
-      },
-      "required": ["op", "outcome"],
-      "if": {
-        "properties": { "outcome": { "const": "refused" } },
-        "required": ["outcome"]
-      },
-      "then": { "required": ["code"] },
-      "else": { "not": { "required": ["code"] } }
+      ]
+    },
+    "status_error": {
+      "description": "A tool_error with one of the codes that status can return (docs/contract.md section 9.3).",
+      "allOf": [
+        { "$ref": "../defs.json#/$defs/tool_error" },
+        {
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_argument",
+                "internal_error"
+              ]
+            }
+          }
+        }
+      ]
     },
     "limits": {
       "description": "The limits in force on this Mac. Contract constants are repeated so a caller can check them; configured values are authoritative here.",
@@ -113,8 +241,11 @@
       "properties": {
         "max_long_edge": { "const": 2576 },
         "min_long_edge": { "const": 256 },
-        "max_pixels": { "const": 3750000 },
-        "max_image_bytes": { "const": 5000000 },
+        "max_pixels": { "const": 3588000 },
+        "max_image_bytes": {
+          "description": "Largest encoded image in bytes, before base64.",
+          "const": 3750000
+        },
         "frame_max_age_ms": {
           "type": "integer",
           "minimum": 5000,

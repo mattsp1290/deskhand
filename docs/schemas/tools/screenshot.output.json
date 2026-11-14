@@ -6,9 +6,35 @@
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/screenshot_result" },
-    { "$ref": "../defs.json#/$defs/tool_error" }
+    { "$ref": "#/$defs/screenshot_error" }
   ],
   "$defs": {
+    "screenshot_error": {
+      "description": "A tool_error with one of the codes that screenshot can return (docs/contract.md section 9.3).",
+      "allOf": [
+        { "$ref": "../defs.json#/$defs/tool_error" },
+        {
+          "properties": {
+            "code": {
+              "enum": [
+                "gated",
+                "paused",
+                "disarmed",
+                "not_console",
+                "locked",
+                "display_asleep",
+                "permission_missing",
+                "permission_stale",
+                "secure_input",
+                "invalid_argument",
+                "image_too_large",
+                "internal_error"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "screenshot_result": {
       "type": "object",
       "properties": {
@@ -30,8 +56,12 @@
           "$ref": "../defs.json#/$defs/pixel_size"
         },
         "output_pixel_size": {
-          "description": "Size of the returned image. Pointer targets are expressed in this pixel space.",
-          "$ref": "../defs.json#/$defs/pixel_size"
+          "description": "Size of the returned image. Pointer targets are expressed in this pixel space. Neither edge is over 2576, and width times height is at most 3,588,000, which a schema cannot state.",
+          "$ref": "../defs.json#/$defs/pixel_size",
+          "properties": {
+            "width": { "maximum": 2576 },
+            "height": { "maximum": 2576 }
+          }
         },
         "point_pixel_scale": {
           "description": "Native pixels per point for this display.",
@@ -54,10 +84,10 @@
           "enum": [85, 75, 65, 60]
         },
         "image_bytes": {
-          "description": "Size of the encoded image before base64.",
+          "description": "Size of the encoded image before base64. At most 3,750,000, so the base64 text is at most 5,000,000 characters.",
           "type": "integer",
           "minimum": 1,
-          "maximum": 5000000
+          "maximum": 3750000
         },
         "captured_at": { "$ref": "../defs.json#/$defs/timestamp" },
         "max_age_ms": {
@@ -74,7 +104,7 @@
           ]
         },
         "frontmost_app": {
-          "description": "The frontmost app at capture.",
+          "description": "The frontmost app at capture. When deskhand could not determine one: bundle_id and team_id null and name empty.",
           "$ref": "../defs.json#/$defs/app_ref"
         }
       },

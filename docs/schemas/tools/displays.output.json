@@ -5,9 +5,34 @@
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/displays_result" },
-    { "$ref": "../defs.json#/$defs/tool_error" }
+    { "$ref": "#/$defs/displays_error" }
   ],
   "$defs": {
+    "displays_error": {
+      "description": "A tool_error with one of the codes that displays can return (docs/contract.md section 9.3).",
+      "allOf": [
+        { "$ref": "../defs.json#/$defs/tool_error" },
+        {
+          "properties": {
+            "code": {
+              "enum": [
+                "gated",
+                "paused",
+                "disarmed",
+                "not_console",
+                "locked",
+                "display_asleep",
+                "permission_missing",
+                "permission_stale",
+                "secure_input",
+                "invalid_argument",
+                "internal_error"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "displays_result": {
       "type": "object",
       "properties": {

@@ -13,6 +13,9 @@
         "x": 1204,
         "y": 778
       }
+    },
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28"
     }
   }
 }

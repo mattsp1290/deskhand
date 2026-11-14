@@ -2,8 +2,8 @@
 
 | Item | Value |
 | --- | --- |
-| Document version | `0.9-draft` |
-| `contract_version` reported by `status` | `0.9-draft` |
+| Document version | `0.10-draft` |
+| `contract_version` reported by `status` | `0.10-draft` |
 | MCP protocol revision | `2026-07-28` |
 | Schemas | `docs/schemas/` (JSON Schema Draft 2020-12) |
 | Source requests | deskhand-r-nkjj, crew-r-yqso, birbhomes-r-5elb, birbhomes-r-ttg5 |
@@ -15,12 +15,12 @@ Where this document departs from it, the departure is a numbered amendment in
 
 Sections 2 to 9 define the wire surface. Sections 10 to 15 define behavior:
 states, conditions, the operation outcome model, timing bounds, the allowance
-file and clean stop. Statements about the MCP specification come from the
-project plan's research notes; the ones that could not be checked against the
-specification text are collected in
-[section 18](#18-open-questions-to-verify-against-the-spec-before-v10) and are
-marked **(Qn)** where they are used. Platform signals that the spike
-(deskhand-r-waw0) has still to choose are marked "chosen by the spike".
+file and clean stop. Statements about the MCP specification and about provider
+image limits were checked against the published text on 2026-11-14.
+[Section 18](#18-verified-against-the-specification-on-2026-11-14) lists the
+sources, and the few points that the specification does not state. Platform
+signals that the spike (deskhand-r-waw0) has still to choose are marked
+"chosen by the spike".
 
 The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
@@ -28,7 +28,9 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
 - **Caller.** The MCP client. In v0 this is Crew's executor.
 - **Principal.** The authenticated caller: the subject distinguished name of
-  the client certificate. The bearer token must be valid on every request but
+  the client certificate. Its key is the RFC 4514 string of the certificate's
+  DER-encoded subject, so two certificates with the same subject are the same
+  principal. The bearer token must be valid on every request but
   is not part of the principal's identity. All of Crew shares one client
   certificate, so deskhand sees one principal per Mac and cannot tell Crew's
   internal callers apart. Separating them is Crew's job.
@@ -36,9 +38,14 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   driving the desktop. It is not a credential.
 - **Handle.** A `frame_id`, an `operation_id` or the lease. Every handle is
   scoped to the pair (principal, `holder_id`).
-- **Read tool.** `status`, `displays`, `screenshot`.
-- **Effect tool.** `pointer`, `keyboard`. A caller MUST treat any tool it does
-  not know as an effect.
+- **Read tool.** `status`, `displays`, `screenshot`. A read changes nothing on
+  the Mac and nothing inside deskhand except minting a frame.
+- **Effect tool.** `pointer`, `keyboard`. They post input. A caller MUST treat
+  any tool it does not know as an effect.
+- **Lease tool.** `lease` ([section 5](#5-lease), amendment 4). It posts no
+  input, but it changes who may. A caller classifies it as an effect. In this
+  document "effect call" and "effects" still mean `pointer` and `keyboard`
+  only.
 - **Global points.** macOS global display coordinates: the origin is the
   top-left corner of the main display, x grows to the right, y grows downward,
   and the unit is the point. Coordinates on displays left of or above the main
@@ -52,23 +59,34 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
 - deskhand serves MCP `2026-07-28` over the streamable HTTP transport, without
   sessions. There is no `initialize` request and no session header. Every
-  request stands alone.
+  request stands alone. deskhand ignores an `Mcp-Session-Id` request header:
+  it never refuses a request because of one, and it never mints or echoes
+  one.
 - The endpoint is `https://deskhand-<mac>.forge.svc:<port>/mcp`. The same Mac
   also answers as `deskhand-<mac>.forge.svc.cluster.local`. `<mac>` is
   `lunus-macbook-pro` or `m1max2021`. The port is deployment configuration
   (birbhomes-r-5elb) and is not fixed by this contract.
 - The only HTTP method is `POST`. One request body carries one JSON-RPC
   message. Batches are not accepted.
-- deskhand always answers with one `application/json` body. It never opens an
-  event stream, sends no server-to-client requests and sends no notifications
-  **(Q6)**.
+- deskhand always answers with one `application/json` body. The transport
+  lets a server choose JSON or an event stream for each request, and deskhand
+  always chooses JSON. It never opens an event stream, sends no
+  server-to-client requests and sends no notifications.
 - HTTP/1.1 over TLS 1.3. deskhand offers neither HTTP/2 nor an earlier TLS
   version. It sends no CORS headers.
 - deskhand listens on one configured LAN address and port. It never listens on
-  loopback only and never on all interfaces. This departs on purpose from the
-  MCP transport guidance that a server running locally should bind to
-  localhost **(Q16)**: every caller is on another machine, and the listener is
-  protected by mutual TLS, the token and the host's packet filter.
+  loopback only and never on all interfaces. The transport says: "When running
+  locally, servers SHOULD bind only to localhost (127.0.0.1) rather than all
+  network interfaces (0.0.0.0)." deskhand does not run locally in that sense:
+  every caller is on another machine. It binds one LAN address, never
+  `0.0.0.0`, and the listener is protected by mutual TLS, the token and the
+  host's packet filter.
+- **The address can be missing.** When the Mac starts away from home, or
+  leaves, the configured address does not exist and the bind fails
+  (`EADDRNOTAVAIL`). deskhand does not exit. It tries the bind again at least
+  every 5 s (`BIND_RETRY_MS`) and serves as soon as the address is back, with
+  no manual step. Nothing else changes while it waits. No caller can reach
+  it, so nothing on the wire reports the wait.
 - Keep-alive connections are capped at 5 minutes. Once a connection is that
   old, deskhand closes it after the response in flight has been sent. It never
   cuts a call short to enforce the cap. A caller MUST be ready to reconnect
@@ -86,10 +104,18 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 
 Both factors are required on every request.
 
-1. **Mutual TLS.** The caller presents a client certificate that chains to the
-   private CA and is in date. deskhand trusts that CA only. A missing or
-   untrusted client certificate fails the TLS handshake, so the caller sees a
-   TLS alert or a closed connection and no HTTP status.
+1. **Mutual TLS.** The caller presents a client certificate. deskhand accepts
+   it only when all of this holds:
+   - it chains to the private CA, which is the only CA deskhand trusts, and
+     it is in date;
+   - its extended key usage includes `clientAuth`;
+   - its subject equals the expected client subject that is configured for
+     this Mac, compared as the RFC 4514 string of the DER-encoded subject.
+
+   Anything else fails the TLS handshake, so the caller sees a TLS alert or a
+   closed connection and no HTTP status. The same CA signs each Mac's server
+   certificate, which is why chaining to the CA is not enough: a server
+   certificate, or any other certificate from that CA, is refused.
 2. **Bearer token.** `Authorization: Bearer <token>`, where the token is the
    per-Mac token. It is compared in constant time.
 
@@ -109,19 +135,34 @@ no authorization metadata and runs no OAuth flow.
 | `Origin` | MUST be absent. Any value is refused. | `403` |
 | `Authorization` | `Bearer <token>`. | `401` |
 | `Content-Type` | `application/json`, with or without `charset=utf-8`. | `415` |
-| `Accept` | SHOULD be `application/json, text/event-stream`. Refused only if present and it admits neither `application/json` nor `*/*`. | `406` |
+| `Accept` | The caller MUST list both `application/json` and `text/event-stream`, as the transport requires. deskhand is lenient: it refuses only a header that is present and admits neither `application/json` nor `*/*`. | `406` |
+| `MCP-Protocol-Version` | MUST be present and be a date of the form `YYYY-MM-DD`. | `400`, `-32020` |
 | `MCP-Protocol-Version` | MUST be `2026-07-28`. | `400`, `-32022` |
-| `Mcp-Method` | MUST equal the body's `method`. | `400`, `-32020` |
-| `Mcp-Name` | On `tools/call`, MUST equal the body's `params.name`. Ignored on other methods **(Q5)**. | `400`, `-32020` |
+| `Mcp-Method` | MUST be present and equal the body's `method`. | `400`, `-32020` |
+| `Mcp-Name` | On `tools/call`, MUST be present and equal the body's `params.name`. Ignored on other methods. | `400`, `-32020` |
+| `Mcp-Session-Id` | Ignored. Never echoed. | none |
 
 The service port in `Host` is the port the caller dials on the cluster Service.
 It can differ from the port deskhand listens on, so deskhand takes the accepted
 `Host` values from configuration.
 
-An absent `Mcp-Method`, or an absent `Mcp-Name` on `tools/call`, is treated as
-a mismatch (`-32020`). An absent `MCP-Protocol-Version` is treated as an
-unsupported version (`-32022`). If the request body also declares a protocol
-version, it MUST equal the `MCP-Protocol-Version` header **(Q1)**.
+- **A missing or malformed required header is `-32020`.** That covers an
+  absent `MCP-Protocol-Version`, one that is not a date, an absent
+  `Mcp-Method` and an absent `Mcp-Name` on `tools/call`. `-32022` is only for
+  a well-formed version that deskhand does not support.
+- **Header values are compared exactly.** `Mcp-Method` and `Mcp-Name` are
+  compared with the body byte for byte, so the comparison is case-sensitive.
+  Header names are case-insensitive, as in HTTP.
+- **Encoded values are decoded first.** A value that is not plain ASCII
+  arrives as `=?base64?<base64 of the UTF-8 text>?=`. deskhand decodes that
+  form before it compares. A `tools/call` for a tool with a non-ASCII name
+  therefore gets `-32602` (unknown tool) and not `-32020`. A value in that
+  form that does not decode is a malformed header (`-32020`).
+- **The body repeats the protocol version.** Every request MUST carry
+  `params._meta["io.modelcontextprotocol/protocolVersion"]`, a string, and it
+  MUST equal the `MCP-Protocol-Version` header. A request without it, or with
+  a value that is not a string, is refused with `400` and `-32602`. A value
+  that differs from the header is refused with `400` and `-32020`.
 
 ### 2.4 Order of checks and HTTP status codes
 
@@ -129,7 +170,7 @@ deskhand applies these checks in order and stops at the first failure.
 
 | # | Check | On failure |
 | --- | --- | --- |
-| 1 | TLS handshake with a trusted client certificate | handshake fails, no HTTP response |
+| 1 | TLS handshake with the expected client certificate ([section 2.2](#22-authentication)) | handshake fails, no HTTP response |
 | 2 | Header block is at most 16,384 bytes | `431` |
 | 3 | Path is `/mcp` | `404` |
 | 4 | Method is `POST` | `405` with `Allow: POST` |
@@ -139,21 +180,44 @@ deskhand applies these checks in order and stops at the first failure.
 | 8 | `Content-Type` is `application/json` | `415` |
 | 9 | Body is at most 65,536 bytes | `413` |
 | 10 | `Accept` admits JSON | `406` |
-| 11 | Body is JSON | `400`, JSON-RPC `-32700` |
-| 12 | Body is one JSON-RPC 2.0 request object | `400`, JSON-RPC `-32600` |
-| 13 | `MCP-Protocol-Version` is `2026-07-28` | `400`, JSON-RPC `-32022` |
-| 14 | MCP headers match the body | `400`, JSON-RPC `-32020` |
-| 15 | `method` is one of the three in [section 3](#3-mcp-methods) | `200`, JSON-RPC `-32601` |
-| 16 | On `tools/call`, `params.name` is a known tool and `arguments`, if present, is an object | `200`, JSON-RPC `-32602` |
+| 11 | Body is strict JSON (see below) | `400`, JSON-RPC `-32700` |
+| 12 | Body is one JSON-RPC 2.0 request object or notification object | `400`, JSON-RPC `-32600` |
+| 13 | `MCP-Protocol-Version` is present and well formed | `400`, JSON-RPC `-32020` |
+| 14 | `MCP-Protocol-Version` is `2026-07-28` | `400`, JSON-RPC `-32022` |
+| 15 | The body is a notification (it has no `id`) | not a failure: answered `202` with no body, and no later check runs |
+| 16 | `params._meta["io.modelcontextprotocol/protocolVersion"]` is present and is a string | `400`, JSON-RPC `-32602` |
+| 17 | That value equals the `MCP-Protocol-Version` header | `400`, JSON-RPC `-32020` |
+| 18 | `Mcp-Method` is present and equals `method`; on `tools/call`, `Mcp-Name` is present and equals `params.name` | `400`, JSON-RPC `-32020` |
+| 19 | `method` is one of the three in [section 3](#3-mcp-methods) | `404`, JSON-RPC `-32601` |
+| 20 | On `tools/call`, `params.name` is a known tool and `arguments`, if present, is an object | `200`, JSON-RPC `-32602` |
 
 Responses to failures 2 to 10 have no meaningful body. A caller MUST decide on
 the status code alone. `401` never says which part of the credential was wrong.
 
-Once check 16 passes the HTTP status is always `200`, and every refusal from
+Once check 20 passes the HTTP status is always `200`, and every refusal from
 that point on is an `isError` tool result ([section 9](#9-errors)).
 
-A body that is a JSON-RPC notification (no `id`) is answered `202` with no body
-and is otherwise ignored **(Q7)**.
+**Notifications (check 15).** This revision of MCP defines no notification
+that a client sends over HTTP. deskhand still accepts one: a body with a
+`method` and no `id` that passed checks 1 to 14 is answered `202` with no body
+and is otherwise ignored. A notification with a missing or unsupported
+`MCP-Protocol-Version` header gets the `400` of check 13 or 14.
+
+**Strict JSON (check 11).** deskhand refuses a body that an ordinary parser
+would accept in more than one way, because Crew shows a person one reading and
+deskhand must not act on another:
+
+- A JSON object with two members of the same name is refused, at any depth.
+- A string that is not valid Unicode is refused: an unpaired surrogate, written
+  as a `\u` escape or as raw bytes, and invalid UTF-8.
+- Where the fault lies decides the error. Inside `params.arguments` of a
+  `tools/call` it is the tool error `invalid_argument`, reported with the
+  other argument faults ([section 9.5](#95-order-of-refusals)) and before any
+  schema check. Anywhere else in the body it is `400` with `-32700`.
+
+RFC 8785, which the operation digest uses
+([section 12.1](#121-records)), cannot canonicalize either kind of body, so
+deskhand never has to.
 
 ### 2.5 Size limits
 
@@ -161,34 +225,61 @@ and is otherwise ignored **(Q7)**.
 | --- | --- | --- |
 | Request header block | 16,384 bytes | |
 | Request body | 65,536 bytes | The largest valid call (1024 fully escaped code points of `keyboard` text plus 64 bundle identifiers) is under 32,000 bytes. |
-| Encoded image (`MAX_IMAGE_BYTES`) | 5,000,000 bytes, before base64 | Provider image limit. |
-| Response body | 7,000,000 bytes | Base64 turns 5,000,000 bytes into 6,666,668 characters (33% overhead). The rest is the JSON envelope and the metadata, which appears twice. |
+| Encoded image (`MAX_IMAGE_BYTES`) | 3,750,000 bytes, before base64 | The provider limit counts the base64 text, and the strictest provider allows 5,000,000 characters. 3,750,000 bytes encode to exactly 4 × 3,750,000 / 3 = 5,000,000 characters. |
+| Response body (`MAX_RESPONSE_BODY_BYTES`) | 5,400,000 bytes | 5,000,000 base64 characters, plus 400,000 bytes for the JSON envelope and the metadata, which appears twice and is a few kilobytes each time. |
 
-deskhand never sends a response body over 7,000,000 bytes. A caller MUST accept
+deskhand never sends a response body over 5,400,000 bytes. A caller MUST accept
 response bodies up to that size.
 
 ## 3. MCP methods
 
 deskhand implements exactly `server/discover`, `tools/list` and `tools/call`.
 `server/discover` and `tools/list` answer in every state, because they reveal
-nothing about the desktop. Every other method gets `-32601` **(Q15)**.
+nothing about the desktop. Every other method gets `404` with `-32601`. The
+specification requires `server/discover` of every server and `tools/list` of
+every server with the `tools` capability. It has no `ping` in this revision.
 
 Requests are JSON-RPC 2.0 objects whose `id` is a string or an integer. The
 response echoes the `id`. deskhand keeps no `id` from one HTTP request to the
 next and never compares them.
 
+Every request carries `params`, because every request carries
+`params._meta["io.modelcontextprotocol/protocolVersion"]`
+([section 2.3](#23-request-headers)). deskhand reads that one member of
+`params._meta` and ignores the rest, including
+`io.modelcontextprotocol/clientInfo` and
+`io.modelcontextprotocol/clientCapabilities`. It requires no client
+capability, so it never answers `-32021`. `_meta` is not part of a tool's
+arguments and is not part of the operation digest
+([section 12.1](#121-records)).
+
 Every successful result carries `resultType`. deskhand always sends
-`"resultType": "complete"` **(Q2)**. deskhand ignores `params._meta`, apart from
-any protocol-version declaration the specification puts there **(Q1)**.
+`"resultType": "complete"` and never `"input_required"`.
+
+**Caching hints.** The specification requires `ttlMs` and `cacheScope` on the
+results of `server/discover` and `tools/list`. deskhand sends `"ttlMs": 300000`
+and `"cacheScope": "private"` on both. Five minutes is safe because neither
+result changes while deskhand runs. `private` is the cautious value: the
+answers are the same for every caller, but nothing is gained by letting a
+proxy share them.
 
 ### 3.1 `server/discover`
 
-Request: `{"jsonrpc": "2.0", "id": 1, "method": "server/discover"}`.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "server/discover",
+  "params": {
+    "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+  }
+}
+```
 
 The result states that deskhand supports protocol revision `2026-07-28` only,
 has the `tools` capability with `listChanged` false, and identifies itself as
-`deskhand` with its build version. The field names below are provisional
-**(Q3)**.
+`deskhand` with its build version. The server identity is inside the result's
+`_meta`, under `io.modelcontextprotocol/serverInfo`.
 
 ```json
 {
@@ -198,23 +289,32 @@ has the `tools` capability with `listChanged` false, and identifies itself as
     "resultType": "complete",
     "supportedVersions": ["2026-07-28"],
     "capabilities": { "tools": { "listChanged": false } },
-    "serverInfo": {
-      "name": "deskhand",
-      "title": "deskhand",
-      "version": "0.1.0"
-    }
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "deskhand",
+        "version": "0.1.0"
+      }
+    },
+    "ttlMs": 300000,
+    "cacheScope": "private"
   }
 }
 ```
+
+deskhand sends no `instructions`. That member is optional guidance for a
+model, and what a model should know about deskhand is in the tool descriptions
+and in Crew's own prompts.
 
 The contract version is not in this result. A caller reads it from
 `status.contract_version`, which this contract controls.
 
 ### 3.2 `tools/list`
 
-The result is `{"resultType": "complete", "tools": [...]}` with the five tools
-in the order `status`, `displays`, `screenshot`, `pointer`, `keyboard`, in one
-page with no cursor. The list never changes while deskhand runs.
+The result is
+`{"resultType": "complete", "tools": [...], "ttlMs": 300000, "cacheScope": "private"}`
+with the six tools in the order `status`, `displays`, `screenshot`, `pointer`,
+`keyboard`, `lease`, in one page. There is no `nextCursor`, which means the
+list is complete. The list never changes while deskhand runs.
 
 Each tool entry has `name`, `title`, `description`, `inputSchema`,
 `outputSchema` and `annotations`.
@@ -228,31 +328,47 @@ Each tool entry has `name`, `title`, `description`, `inputSchema`,
 - Input schemas are closed objects with no `oneOf`, `anyOf` or `allOf` at the
   top level, so they can be handed to a model provider unchanged. Unions are
   nested one level down, under `action`.
-- Each output schema is `oneOf` the tool's success shape and the shared
-  `tool_error` shape, so `structuredContent` conforms to `outputSchema` whether
-  or not `isError` is set **(Q8)**. The two shapes are disjoint: an error
-  always has `code` and a success never does.
+- `holder_id`, `operation_id` and every argument of `lease` are supplied by
+  the caller's executor. They are never chosen by a model.
+- Each output schema is `oneOf` the tool's success shape and the tool's error
+  shape, so `structuredContent` conforms to `outputSchema` whether or not
+  `isError` is set. The specification does not say whether `outputSchema`
+  governs an error result; this layout is correct either way. The two shapes
+  are disjoint: an error always has `code` and a success never does.
+- A tool's error shape is the shared `tool_error` with `code` limited to the
+  codes that tool can return ([section 9.3](#93-tool-error-codes)).
+- JSON Schema 2020-12 is the specification's default dialect for both
+  schemas.
 
 | Tool | Title | Kind | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 | --- | --- | --- | --- | --- | --- | --- |
-| `status` | Status and lease | read | `false` | `false` | `true` | `false` |
+| `status` | Status | read | `true` | `false` | `true` | `false` |
 | `displays` | List displays | read | `true` | `false` | `true` | `false` |
 | `screenshot` | Take a screenshot | read | `true` | `false` | `false` | `true` |
 | `pointer` | Pointer input | effect | `false` | `true` | `true` | `true` |
 | `keyboard` | Keyboard input | effect | `false` | `true` | `true` | `true` |
+| `lease` | Lease | lease | `false` | `false` | `false` | `false` |
 
-All four annotations are set explicitly on every tool. Notes:
+All four annotations are set explicitly on every tool, because the
+specification's defaults (`destructiveHint` and `openWorldHint` true) would
+be wrong for most of them. Notes:
 
-- `status` is not marked read-only because its optional `lease` argument
-  changes who holds the lease. It never touches the desktop, so it stays a read
-  in Crew's read-or-effect table.
+- `status` is read-only. It reports state and looks records up, and it
+  changes nothing ([section 6.1](#61-status)).
 - `screenshot` is not marked idempotent because each call mints a new frame and
   supersedes the previous one. It is open-world because the image shows
   whatever any app put on the screen, which the caller treats as untrusted.
 - `pointer` and `keyboard` are idempotent because `operation_id` is a required
   argument: the same arguments are performed once.
+- `lease` is not read-only: it changes who holds the lease, and a release
+  aborts the effect that is executing under it. It is not marked idempotent
+  because it has no `operation_id` and a repeated `acquire` moves the expiry.
+  It never touches the desktop itself, so it is neither destructive nor
+  open-world.
 - The "Kind" column is this contract's classification. A caller keeps its own
-  table and MUST NOT rely on the annotations.
+  table and MUST NOT rely on the annotations. In that table `lease` is an
+  effect, as any tool outside the shared contract's three reads is
+  (amendment 4).
 
 ### 3.3 `tools/call`
 
@@ -261,7 +377,11 @@ All four annotations are set explicitly on every tool. Notes:
   "jsonrpc": "2.0",
   "id": 4,
   "method": "tools/call",
-  "params": { "name": "pointer", "arguments": { "...": "..." } }
+  "params": {
+    "name": "pointer",
+    "arguments": { "...": "..." },
+    "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+  }
 }
 ```
 
@@ -290,10 +410,12 @@ Every result has the same four members:
   `{"type": "image", "data": "<base64>", "mimeType": "image/jpeg"}`. No other
   result carries an image.
 
-Whole request and response messages for `server/discover` and `tools/call`
-are in `docs/schemas/examples/wire/`. There is a `tools/list` request but no
-response example, because the response is the five schema pairs after the
-rule in [section 3.2](#32-toolslist).
+Whole request and response messages for `server/discover` and `tools/call`,
+and the JSON-RPC errors of [section 9.4](#94-json-rpc-errors), are in
+`docs/schemas/examples/wire/`. Every request there carries
+`params._meta["io.modelcontextprotocol/protocolVersion"]`. There is a
+`tools/list` request but no response example, because the response is the six
+schema pairs after the rule in [section 3.2](#32-toolslist).
 
 ## 4. Handles and scoping
 
@@ -305,8 +427,11 @@ nothing without the certificate and the token.
 ### 4.1 `holder_id`
 
 - Assigned by the caller. 1 to 128 characters from `A-Z a-z 0-9 . _ : -`.
-- It names the lease holder. `screenshot`, `pointer` and `keyboard` require
-  it; `status` requires it inside `lease`.
+- It names the lease holder. `screenshot`, `pointer`, `keyboard` and `lease`
+  require it. `status` takes it as an option.
+- deskhand never returns a `holder_id` in any result. A caller learns whether
+  the holder it named holds the lease, and nothing about any other holder
+  ([section 5.4](#54-what-status-shows)).
 - A Crew installation that is restored from a backup MUST choose a new
   `holder_id`, so that it cannot mistake an old lease for its own.
 
@@ -319,7 +444,10 @@ nothing without the certificate and the token.
 - A frame belongs to the (principal, `holder_id`) that took it. Taking a
   screenshot does not require the lease.
 - "Latest" is judged per (principal, `holder_id`, `display_id`). A screenshot
-  taken under one `holder_id` never makes another holder's frame stale.
+  taken under one `holder_id` never makes another holder's frame stale. The
+  shared contract says "not the latest for that display"; the narrowing to
+  one holder is clarification 1 in
+  [section 17.5](#175-clarifications).
 - Every effect call names a `frame_id`. deskhand refuses it with `stale_frame`
   under the rules in [section 8.3](#83-frame-staleness).
 - Frames do not survive a restart or any change of state away from `ok`.
@@ -334,18 +462,27 @@ nothing without the certificate and the token.
   it passed every check in [section 9.5](#95-order-of-refusals). A call that is
   refused before admission posts nothing and leaves no record, so the same
   `operation_id` can be sent again later and is then judged afresh.
+- Admission is atomic. One effect call at a time is being admitted or is
+  executing on a Mac, so two calls with the same `operation_id` can never both
+  be admitted ([section 9.5](#95-order-of-refusals)).
 - Lifecycle: `accepted` → `executing` → `completed`, `aborted` or `failed`. A
   restart turns `accepted` into `failed_before_execution` and `executing` into
   `aborted_by_restart`.
-- Each record stores the SHA-256 of the canonical request: the JSON object
+- Each record stores a keyed digest (HMAC-SHA-256,
+  [section 12.1](#121-records)) of the canonical request: the JSON object
   `{"name": <tool name>, "arguments": <arguments as received>}` in RFC 8785
   canonical form. Defaults are not filled in first, so a caller that repeats a
   call MUST send the same arguments, not an equivalent spelling.
+- `status` with an `operation` argument looks a record up without executing
+  anything ([section 6.1](#61-status)). That is how a caller learns what
+  became of a call whose response it lost
+  ([section 12.5](#125-repeats-and-stored-results)).
 
 What a call with an `operation_id` that already has a record returns:
 
 | Record | Same digest | Different digest |
 | --- | --- | --- |
+| none yet: the first call is still being admitted | `operation_in_progress` | `operation_id_conflict` |
 | `accepted` or `executing` | `operation_in_progress` | `operation_id_conflict` |
 | `completed` | the stored success, with `replayed: true` | `operation_id_conflict` |
 | `aborted` or `failed` | the stored error, with `replayed: true` | `operation_id_conflict` |
@@ -353,9 +490,13 @@ What a call with an `operation_id` that already has a record returns:
 | `failed_before_execution` | `interrupted`, `operation.status` `failed_before_execution` | `operation_id_conflict` |
 
 A replay never posts input. It is answered before any lease or frame check,
-but only while the state is `ok`. `operation_in_progress` and
-`operation_id_conflict` carry `operation` (the record's status and events
-posted so far) but never the stored result.
+but only while the state is `ok`, and only when no other effect call is being
+admitted or is executing: until that call is over a repeat gets `busy`.
+`operation_in_progress` and `operation_id_conflict` carry `operation` (the
+record's status and events posted so far) but never the stored result. For a
+first call that is still being admitted they carry `operation` with `status`
+`accepted` and `events_posted` 0, although no record exists yet. If that
+first call is then refused, no record is kept.
 
 While the state is not `ok`, the shared contract's rule holds for repeats too:
 the call fails with the state's name. deskhand then adds `operation` when a
@@ -387,15 +528,28 @@ Persistence, write ordering, aborts and restart recovery are in
 ## 5. Lease
 
 deskhand owns one lease per Mac. One holder drives the desktop at a time. The
-lease is managed with the `lease` argument of `status`; no sixth tool is
-needed. Effect calls name the holder with `holder_id` and never acquire or
-renew the lease themselves.
+lease is managed with a sixth tool, `lease` (amendment 4,
+[section 17.4](#174-amendment-4-the-lease-tool)). Effect calls name the holder
+with `holder_id` and never acquire or renew the lease themselves. `status`
+never changes the lease.
+
+Schemas: `tools/lease.input.json`, `tools/lease.output.json`.
 
 ### 5.1 Operations
 
-`status` arguments: `{"lease": {"op": ..., "holder_id": ..., "ttl_ms": ...}}`.
-`ttl_ms` is 5,000 to 120,000 and defaults to 30,000. A value outside the range
-is `invalid_argument`; deskhand does not clamp it.
+`lease` arguments: `{"op": ..., "holder_id": ..., "ttl_ms": ...}`. `op` and
+`holder_id` are required.
+
+- `ttl_ms` is 5,000 to 120,000 and defaults to 30,000. A value outside the
+  range is `invalid_argument`; deskhand does not clamp it.
+- `ttl_ms` belongs to `acquire` and `renew`. On `release` it MUST be absent,
+  and a `release` that carries it is `invalid_argument` with
+  `details.argument` `/ttl_ms`. The input schema is flat
+  ([section 3.2](#32-toolslist)) and cannot state this rule, so deskhand
+  checks it.
+- `lease` has no `operation_id` and keeps no operation record. Repeating a
+  lease call is safe: each `op` leads to the same holder state when it is
+  sent twice.
 
 | `op` | When no live lease | When the caller holds it | When another holder holds it |
 | --- | --- | --- | --- |
@@ -403,19 +557,36 @@ is `invalid_argument`; deskhand does not clamp it.
 | `renew` | `refused`, `lease_expired` if the caller's own lease was the last one and it ran out; otherwise `refused`, `lease_not_held` | `renewed`; expiry reset to `ttl_ms` from now | `refused`, `lease_held_by_other` |
 | `release` | `not_held` (a no-op, so a repeated release is safe) | `released` | `refused`, `lease_held_by_other` |
 
-The outcome is in `lease_result` of the `status` result. A refused lease
-operation does **not** make the call an error: `status` still returns the full
-snapshot with `isError: false`, and `lease_result.outcome` is `refused` with
-the reason in `lease_result.code`. A caller MUST read `lease_result`.
+The result has two members:
+
+| Member | Meaning |
+| --- | --- |
+| `lease_result` | `{op, outcome}`, plus `code` exactly when `outcome` is `refused`, plus `expires_in_ms` exactly when `code` is `lease_held_by_other`: how long the other holder's lease still runs if it is not renewed. |
+| `lease` | The lease as the named holder sees it after the operation ([section 5.4](#54-what-status-shows)). `held_by_caller` is `true` after `acquired` and `renewed` and `false` after every other outcome. |
+
+A refused lease operation does **not** make the call an error. The result has
+`isError: false`, `lease_result.outcome` is `refused` and the reason is in
+`lease_result.code`. A caller MUST read `lease_result`. The only tool errors
+of `lease` are `invalid_argument` and `internal_error`.
+
+The schema ties the values together: `acquire` ends as `acquired`, `renewed`
+or `refused`; `renew` as `renewed` or `refused`; `release` as `released`,
+`not_held` or `refused`, and the only code a `release` can be refused with is
+`lease_held_by_other`.
 
 `renew` never acquires. A caller that believes it holds a lease it has lost
 finds out on its next renewal.
 
 ### 5.2 Allowed states
 
+`lease` answers in every state. It is never refused with a tool error that
+carries a state's name, which is part of amendment 4: the shared contract's
+rule that every tool except `status` fails with the state's name does not
+apply to it in that form.
+
 | State | `acquire`, `renew` | `release` |
 | --- | --- | --- |
-| `gated`, `paused`, `disarmed` | `refused` with the state's name | allowed |
+| `gated`, `paused`, `disarmed` | `refused` with the state's name in `lease_result.code` | allowed |
 | every other state, including `ok` | allowed | allowed |
 
 `gated`, `paused` and `disarmed` drop the lease when they begin, so no lease
@@ -443,14 +614,29 @@ its held input is released. The aborted call returns the code in the table.
 
 ### 5.4 What `status` shows
 
-`status.lease` is `null` or `{holder_id, acquired_at, expires_at,
-expires_in_ms}`. `holder_id` is shown to the principal that holds the lease and
-is `null` for any other principal. A caller SHOULD schedule renewal from
-`expires_in_ms` (for example at half of it), because its clock and the Mac's
-can differ.
+`status` reports the lease only as seen from a holder that the call names.
 
-Crew's executor owns the lease. It SHOULD NOT pass a `lease` argument through
-from a member's own `status` call.
+| `status` call | `status.lease` |
+| --- | --- |
+| no `holder_id` argument | `null` |
+| `holder_id` names the (principal, holder) that holds the live lease | `{held_by_caller: true, acquired_at, expires_at, expires_in_ms}` |
+| `holder_id` names anyone else, or no lease is live | `{held_by_caller: false}` |
+
+The `lease` member of a `lease` result has the same shape and is never
+`null`, because that call always names a holder.
+
+- No result carries a `holder_id`. deskhand never tells one caller the label
+  of another. Crew shares one principal, and the label is the only thing
+  that separates its internal callers.
+- `{held_by_caller: false}` does not say whether the lease is free. A holder
+  finds that out by calling `lease` with `acquire`, which answers
+  `lease_held_by_other` and `expires_in_ms` when it is not.
+- A caller SHOULD schedule renewal from `expires_in_ms` (for example at half
+  of it), because its clock and the Mac's can differ.
+
+Crew's executor owns the lease and is the only caller of `lease`. A `lease`
+call is an effect in Crew's table, so it is never run as a read on a member's
+behalf, and its arguments are never chosen by a model.
 
 ## 6. Tools
 
@@ -471,20 +657,35 @@ Schemas: `tools/status.input.json`, `tools/status.output.json`.
 `status` answers in every state and is never refused with a state's name. Its
 only tool error is `invalid_argument` (and `internal_error`).
 
+`status` is a pure read. It changes nothing, it never posts input, and it
+does not touch the lease. Both arguments are optional:
+
+| Argument | Rule |
+| --- | --- |
+| `holder_id` | Report the lease as seen from this holder ([section 5.4](#54-what-status-shows)). |
+| `operation` | `{holder_id, operation_id}`, both required. Look up the operation record for (principal, `holder_id`, `operation_id`). Nothing is executed. |
+
+The lookup answers in every state, is never held up by an executing effect,
+does not need the lease and does not count toward the action ceiling. It
+returns the record's `status` and `events_posted`, not the stored result. A
+call with that key that is being admitted at that moment is reported as
+`accepted` with 0 events, so `null` always means that no such call is in
+progress.
+
 | Member | Meaning |
 | --- | --- |
-| `contract_version` | `0.9-draft` for this document. |
+| `contract_version` | `0.10-draft` for this document. |
 | `mcp_protocol_version` | `2026-07-28`. |
 | `server_version` | The deskhand build. |
 | `mac` | This Mac's configured name. |
 | `time` | deskhand's clock, for skew detection. |
 | `started_at` | When this process started. A new value means every frame and the lease are gone. |
 | `state` | The state with the highest precedence ([section 10](#10-states)). |
-| `active_states` | Every state other than `ok` that holds now, in precedence order. Empty when `state` is `ok`. |
+| `active_states` | Every state other than `ok` that holds now, in precedence order. Empty exactly when `state` is `ok`; otherwise its first item is `state`. The schema enforces both. |
 | `conditions` | Active conditions that are not states ([section 11](#11-conditions-that-are-not-states)). |
 | `armed_until` | When arming expires, or `null`. |
-| `lease` | [Section 5.4](#54-what-status-shows). |
-| `lease_result` | Present exactly when the call had a `lease` argument. |
+| `lease` | [Section 5.4](#54-what-status-shows). `null` exactly when the call named no `holder_id`. |
+| `operation` | Present exactly when the call had an `operation` argument: `{status, events_posted}` of that record, or `null` when deskhand has no record for it. `null` means that no input was ever posted for that `operation_id`, or that its record has passed the retention window. |
 | `display_config_generation` | The current display configuration generation. |
 | `limits` | The limits in force ([section 16](#16-constants)), including the configured ones. |
 
@@ -519,7 +720,8 @@ Schemas: `tools/screenshot.input.json`, `tools/screenshot.output.json`.
 A region is aligned outward to whole native pixels and the result's
 `capture_rect` reports what was captured. The pointer is never drawn into the
 image; `pointer_position` reports where it was. Apps on the Mac's capture
-exclusion list are absent from the image.
+exclusion list are absent from the image, and so are deskhand's own windows
+([section 6.9](#69-app-policy)).
 
 Result: the image block ([section 3.3](#33-toolscall)) and this metadata.
 
@@ -530,13 +732,13 @@ Result: the image block ([section 3.3](#33-toolscall)) and this metadata.
 | `display_id`, `display_config_generation` | The display and the configuration it was captured under. |
 | `capture_rect` | The captured rectangle in global points. The origin may be negative. |
 | `source_pixel_size` | Size of `capture_rect` in native pixels. |
-| `output_pixel_size` | Size of the returned image. This is the frame pixel space. |
+| `output_pixel_size` | Size of the returned image. This is the frame pixel space. Neither edge is over 2576. |
 | `point_pixel_scale` | Native pixels per point. |
 | `downscale` | The scale applied, in (0, 1]. |
 | `format`, `mime_type`, `jpeg_quality`, `image_bytes` | The encoding. `jpeg_quality` is present for JPEG only. |
 | `captured_at`, `max_age_ms` | The frame becomes `too_old` `max_age_ms` after `captured_at`. |
 | `pointer_position` | Pointer location in frame pixels at capture, or `null` if outside. |
-| `frontmost_app` | Bundle identifier, team identifier and name of the frontmost app at capture. |
+| `frontmost_app` | Bundle identifier, team identifier and name of the frontmost app at capture. When deskhand cannot determine a frontmost app, `bundle_id` and `team_id` are `null` and `name` is the empty string. |
 
 Sizing and encoding are in [section 7](#7-screenshot-sizing-and-encoding).
 
@@ -593,8 +795,9 @@ caller was looking at when it decided to type.
 - A character key names the key that produces that character, unshifted, in
   the active keyboard layout. If the layout has no such key the call is
   `invalid_argument`. A shifted character is the base key plus `shift`.
-- A chord on the Mac's denied global shortcut list is refused with
-  `denied_shortcut`.
+- Every `press` is checked against the Mac's denied global shortcut list: a
+  key or a chord, so a bare key such as `f11` can be denied too. A match is
+  refused with `denied_shortcut` ([section 6.9](#69-app-policy)).
 - Modifier-only presses and chords of several non-modifier keys are not in v0.
 
 ### 6.6 Held input
@@ -632,16 +835,33 @@ exception is a release that cannot be posted yet; deskhand then reports the
 | `completed_at` | When the last event was posted. |
 
 `measured` holds `frontmost_app`, `target_app`, `window_title`, `global_point`
-and `measured_at`. For `pointer`, `target_app` and `window_title` describe the
-topmost window under the first target point and `global_point` is where that
-point mapped. For `keyboard`, `window_title` is the frontmost app's focused
-window and the other two are `null`. Titles are cut to 512 characters.
+and `measured_at`, and `drag_end` for a `drag`.
+
+| Member | `pointer` | `keyboard` |
+| --- | --- | --- |
+| `frontmost_app` | The frontmost app. | The frontmost app. |
+| `target_app` | The app that owns the topmost window under the first target point. | The app that owns keyboard focus. |
+| `window_title` | The title of that window. | The title of the focused window of the app that owns keyboard focus. |
+| `global_point` | Where the first target point mapped. | `null`. |
+| `drag_end` | `drag` only: `target_app`, `window_title` and `global_point` for the last point of `path`. | absent. |
+
+- On a success `frontmost_app` and `target_app` always carry a `bundle_id`,
+  and for `pointer` `global_point` is never `null`. The schemas enforce this.
+  A call for which deskhand could not measure them is refused
+  ([section 6.9](#69-app-policy)).
+- `window_title` is `null` when the window has no title, on every
+  `denied_app`, and whenever the app is on the Mac's capture exclusion list.
+  A title that the frame hides is never sent on the wire.
+- Titles are cut to 512 Unicode scalar values. That is what the schema's
+  `maxLength` counts; a cut by grapheme clusters could exceed it.
 
 deskhand takes `measured` at the app-policy check that precedes the first
-event (step 14 of [section 9.5](#95-order-of-refusals)). It repeats that check
-before every later event. If a repeat fails, the call is aborted with
-`denied_app`, and `measured` is then what deskhand saw at the failing check,
-so it names the app that caused the abort.
+event (step 14 of [section 9.5](#95-order-of-refusals)). It runs that check
+again before every event, including the first
+([section 12.3](#123-write-ordering)). If a check fails after admission, the
+call is aborted with `denied_app`. `measured` is then what deskhand saw at
+the failing check: `target_app` is the app that caused the abort and
+`global_point` is the point that was being checked.
 
 `measured` is therefore present on `denied_app`, on `log_unavailable`, and on
 the result of every admitted call, success or error, including a replay of
@@ -652,18 +872,157 @@ after a restart and has no `measured`. No other response has it.
 
 An effect call MAY carry `permitted_apps`, a list of 1 to 64 distinct bundle
 identifiers (each 1 to 255 characters from `A-Z a-z 0-9 . _ -`, compared
-exactly). When present, the measured frontmost app, and for `pointer` the
-app that owns the topmost window under the target (for `drag`, under the first
-and the last point of `path`), MUST be on this list as well as on the Mac's
-own allowlist. Otherwise the call is refused with
-`denied_app` and `details.denied_by` is `permitted_apps`. The list can only
-narrow the Mac's policy. It lets a Crew session say "only these apps" and have
-deskhand enforce it against what it measures at the moment of the effect.
+exactly). When present, every app that the app-policy check measures
+([section 6.9](#69-app-policy)) MUST have its bundle identifier on this list,
+as well as being allowed by the Mac's own policy. Otherwise the call is
+refused with `denied_app` and `details.denied_by` is `permitted_apps`. The
+list can only narrow the Mac's policy. It lets a Crew session say "only these
+apps" and have deskhand enforce it against what it measures at the moment of
+the effect.
+
+### 6.9 App policy
+
+The app policy keeps an agent away from sensitive apps. It is not a sandbox.
+It is deny-by-default: an app is allowed only if the Mac's configuration
+allows it. Every refusal under this section is `denied_app` with
+`details.denied_by` `policy`, unless it says otherwise.
+
+**Identity.** An app is identified by the pair (bundle identifier,
+code-signing team identifier), read from the running process's code
+signature. An allowlist entry names both, and both must match.
+
+- Software that Apple signs as part of macOS has no team identifier. Its
+  `team_id` is `null` on the wire, and an allowlist entry must say that it
+  means Apple's own signature. The spike confirms how deskhand reads this.
+- An app is never allowed when it has no bundle identifier, when it is
+  unsigned or ad-hoc signed, when its signature is not valid, or when its
+  team does not match the entry.
+- deskhand's own bundle is never allowed, whatever the configuration says:
+  not as the frontmost app, not as the owner of a window and not as the
+  owner of keyboard focus.
+
+**What is checked.**
+
+| Tool | Apps that must be allowed |
+| --- | --- |
+| `pointer` and `keyboard` | The frontmost app. |
+| `pointer` `move`, `click`, `scroll` | The app that owns the topmost window under the target. |
+| `pointer` `drag` | The app that owns the topmost window under every sampled point of the path (see "Drag" below). |
+| `keyboard` | The app that owns keyboard focus. A panel of another process can take keystrokes while the frontmost app stays the same (a launcher, a notification's reply field). The signal is the accessibility focused application, confirmed by the spike. |
+
+**Uncertainty refuses.** If any check is uncertain, deskhand refuses. Each of
+these is `denied_app` with `details.denied_by` `policy`:
+
+- the frontmost app cannot be determined, or its identity cannot be read;
+- no window is found under a checked point, or the owner of the topmost one
+  cannot be determined. The menu bar, the Dock and the desktop are windows of
+  system processes, and those processes are denied unless they are
+  allowlisted;
+- the owner of keyboard focus cannot be read.
+
+`measured` then reports what deskhand has. An app it could not determine is
+`{"bundle_id": null, "team_id": null, "name": ""}`.
+
+The other checks fail closed in the same way. A target patch that cannot be
+captured again is `stale_frame` with reason `pixels_changed`
+([section 8.4](#84-target-patch-check)). An idle signal that cannot be read,
+or that cannot be told apart from deskhand's own events, counts as
+`user_active` ([section 13.2](#132-the-person-at-the-mac)).
+
+**deskhand's own windows.** deskhand's menu bar item, its menus, its arming
+window and its indicator belong to deskhand's bundle, which is always denied.
+
+- They are left out of every frame and out of every patch comparison, like
+  an app on the capture exclusion list.
+- The indicator ignores pointer events and is skipped when deskhand looks for
+  the topmost window under a point. Every other deskhand window under a point
+  refuses the call.
+- Arming cannot be done by posted input
+  ([section 10.4](#104-gated-paused-and-disarmed)).
+
+**Drag.** A drag is checked along its whole path, not only at its ends.
+
+- Before admission (step 14 of [section 9.5](#95-order-of-refusals)) deskhand
+  samples every segment of `path` at steps of at most 8 frame pixels
+  (`DRAG_POLICY_SAMPLE_PX`), including every point of `path`, and checks the
+  owner of the topmost window under each sample.
+- During the drag it never moves the pointer more than 8 frame pixels in one
+  event. Before each move it checks the frontmost app and the owner of the
+  topmost window under the point it is about to move to. If that check
+  fails, the pointer does not move there: the drag is aborted with
+  `denied_app` while the pointer is still over an allowed window.
+- The release that ends a drag, completed or aborted, is posted where the
+  pointer is. A release never moves the pointer.
+- On `denied_app`, `details.point_index` names the point of `path` that the
+  pointer was at or was heading for: 0 for the first point, otherwise the
+  index of the point that ends the segment being checked. For `move`,
+  `click` and `scroll` it is 0. It is absent when the refusal did not come
+  from a point: the frontmost app, or keyboard focus.
+
+**Denied global shortcuts.** A `keyboard` `press` is refused with
+`denied_shortcut` when its key and modifiers are on the Mac's denied shortcut
+list. The list is configured per Mac. Its default is:
+
+| Shortcut | What it would do |
+| --- | --- |
+| `command+space`, `control+space` | Spotlight, input source switching. |
+| `command+tab` | Switch app. |
+| `option+command+escape` | Force Quit. |
+| `control+up`, `control+down`, `control+left`, `control+right` | Mission Control and switching Spaces. |
+| `shift+command+3`, `shift+command+4`, `shift+command+5` | Screenshots and screen recording. |
+| `control+f1` to `control+f8` | Keyboard access and moving keyboard focus: `control+f2` to the menu bar, `control+f3` to the Dock, `control+f8` to the status menus. |
+| `f11` | Show Desktop. |
+| `command+f5`, `option+command+8` | VoiceOver, zoom. |
+| `control+command+q`, `shift+command+q` | Lock the screen, log out. |
+
+- The rule covers a key or a chord. An entry with no modifier, such as `f11`,
+  denies the bare key.
+- **Supersets are denied too.** A press whose key equals an entry's key and
+  whose modifiers include all of that entry's modifiers is denied. So
+  `shift+command+tab` and `control+shift+command+4` are denied by the
+  entries above, and `f11` is denied with any modifiers. This fails closed:
+  it can refuse a harmless chord, and it cannot let a listed one through.
+- The focus-moving entries matter because they move keyboard focus to the
+  menu bar, the Dock or a status menu, where deskhand's own menu is, without
+  changing the frontmost app.
+- `details.shortcut` names the press as it was sent
+  ([section 9.2](#92-the-tool_error-shape)).
+
+**What a refusal costs.** A call that is refused with `denied_app` or
+`denied_shortcut` before admission counts toward the action ceiling
+([section 9.5](#95-order-of-refusals)), so the policy cannot be probed
+without limit.
 
 ## 7. Screenshot sizing and encoding
 
-Constants: `MAX_LONG_EDGE` = 2576, `MIN_LONG_EDGE` = 256, `MAX_PIXELS` =
-3,750,000, `MAX_IMAGE_BYTES` = 5,000,000, JPEG quality steps 85, 75, 65, 60.
+Constants: `MAX_LONG_EDGE` = 2576, `MIN_LONG_EDGE` = 256,
+`MAX_VISUAL_TOKENS` = 4784, `MAX_PIXELS` = 3,588,000, `MAX_IMAGE_BYTES` =
+3,750,000, JPEG quality steps 85, 75, 65, 60.
+
+**The provider's cap.** A model provider accepts an image whose long edge is
+at most 2576 px and which costs at most `MAX_VISUAL_TOKENS` = 4784 visual
+tokens. The figure "about 3.75 megapixels" that goes with it is an
+approximation of that token cap, not a pixel cap. An image over the cap in a
+tool result is rejected, not shrunk. deskhand enforces the token cap through
+a pixel cap that is safe under both ways of counting tokens:
+
+```text
+MAX_PIXELS = MAX_VISUAL_TOKENS * 750 = 4784 * 750 = 3,588,000
+
+by area:     tokens = w * h / 750
+             w * h <= 3,588,000  gives  tokens <= 4784
+
+by patches:  tokens = ceil(w / 28) * ceil(h / 28)
+                    <= (w / 28 + 1) * (h / 28 + 1)
+                    =  (w * h + 28 * (w + h) + 784) / 784
+             with w * h <= 3,588,000 and both edges <= 2576, w + h is
+             largest at 2576 + 3,588,000 / 2576 = 3968.9, so
+             tokens <= (3,588,000 + 28 * 3968.9 + 784) / 784 = 4719.3
+```
+
+So every size that passes the rule below costs at most 4784 tokens, whatever
+its aspect ratio. Over all sizes the rule can produce, the largest patch
+count is 4704 (1541 × 2328).
 
 **Size.** Let `w` and `h` be the source pixel size, `L` the requested
 `max_long_edge` (2576 if omitted), and all arithmetic IEEE 754 double:
@@ -678,15 +1037,19 @@ while out_w * out_h > MAX_PIXELS or max(out_w, out_h) > L:
 
 The loop only guards against floating-point rounding. `downscale` reports
 `scale`. deskhand never upscales and never returns an image that breaks either
-limit, because a model provider rejects such an image instead of shrinking it.
+limit.
 
-| Source | `max_long_edge` | Output | Pixels |
-| --- | --- | --- | --- |
-| 3456 × 2234 | 2576 | 2408 × 1556 | 3,746,848 |
-| 3024 × 1964 | 2576 | 2402 × 1560 | 3,747,120 |
-| 5120 × 2880 | 2576 | 2576 × 1449 | 3,732,624 |
-| 2560 × 1440 | 2576 | 2560 × 1440 | 3,686,400 |
-| 3456 × 2234 | 1568 | 1568 × 1013 | 1,588,384 |
+| Source | `max_long_edge` | Output | Pixels | Tokens by area | Tokens by patches |
+| --- | --- | --- | --- | --- | --- |
+| 3456 × 2234 | 2576 | 2355 × 1522 | 3,584,310 | 4779.1 | 85 × 55 = 4675 |
+| 3024 × 1964 | 2576 | 2350 × 1526 | 3,586,100 | 4781.5 | 84 × 55 = 4620 |
+| 5120 × 2880 | 2576 | 2525 × 1420 | 3,585,500 | 4780.7 | 91 × 51 = 4641 |
+| 2560 × 1440 | 2576 | 2525 × 1420 | 3,585,500 | 4780.7 | 91 × 51 = 4641 |
+| 3456 × 2234 | 1568 | 1568 × 1013 | 1,588,384 | 2117.8 | 56 × 37 = 2072 |
+
+The first two rows are the built-in panels of the two Macs. A 2560 × 1440
+display is now scaled slightly (by 0.9866), because its native 3,686,400
+pixels are over the cap.
 
 **Encoding.**
 
@@ -698,6 +1061,10 @@ limit, because a model provider rejects such an image instead of shrinking it.
 - `image_too_large` mints no frame. Its `details` carry `image_bytes` and
   `max_image_bytes`. The caller retries with `jpeg` or a smaller
   `max_long_edge`.
+- `MAX_IMAGE_BYTES` counts the encoded bytes before base64. Providers count
+  the base64 text, and the strictest limit among them is 5 MB of it.
+  3,750,000 bytes become exactly 5,000,000 base64 characters, so an image
+  that deskhand returns fits every provider.
 - Pixels are 8-bit sRGB with no alpha.
 
 ## 8. Coordinates and frame staleness
@@ -734,8 +1101,8 @@ anything is posted; `details.point_index` names the first such point (0 for
 `move`, `click` and `scroll`). Integers outside -65,536 to 65,535 and
 non-integers are `invalid_argument` instead.
 
-Example: frame 2408 × 1556 of `capture_rect` `{0, 0, 1728, 1117}`. Target
-`(1204, 778)` maps to global point `(864.359, 558.859)`.
+Example: frame 2355 × 1522 of `capture_rect` `{0, 0, 1728, 1117}`. Target
+`(1204, 778)` maps to global point `(883.811, 571.343)`.
 
 ### 8.3 Frame staleness
 
@@ -762,13 +1129,25 @@ a more specific reason once applied.
 ### 8.4 Target-patch check
 
 Constants: `PATCH_SIZE` = 64 frame pixels, `PATCH_CHANNEL_TOLERANCE` = 16,
-`PATCH_MAX_CHANGED_FRACTION` = 0.02.
+`PATCH_MAX_CHANGED_FRACTION` = 0.02, `PATCH_CHECK_MAX_AGE_MS` = 250.
 
 deskhand keeps each live frame's output pixels (as captured, before encoding).
-Immediately before the first event of a `pointer` call it checks one patch for
-`move`, `click` and `scroll` (around the target) and two for `drag` (around the
-first and the last point of `path`). Both are checked before the button goes
-down, because the drag itself changes the screen.
+At step 13 of [section 9.5](#95-order-of-refusals) a `pointer` call checks
+one patch for `move`, `click` and `scroll` (around the target) and two for
+`drag` (around the first and the last point of `path`). Both are checked
+before the button goes down, because the drag itself changes the screen.
+
+- **The check must be fresh.** The first event is posted at most
+  `PATCH_CHECK_MAX_AGE_MS` (250 ms) after the capture that the patch check
+  used. Admission and two durable writes lie between the two
+  ([section 12.3](#123-write-ordering)). If they take longer, deskhand posts
+  nothing and ends the call with `stale_frame`, reason `pixels_changed`,
+  `details.point_index` 0 and `operation.events_posted` 0.
+- **A capture that fails is a changed patch.** If deskhand cannot capture the
+  rectangle again, the call is refused with `stale_frame`, reason
+  `pixels_changed`.
+- **deskhand's own windows are left out** of the frame and of the new capture
+  alike, so its indicator never makes a patch differ.
 
 For a point `(x, y)` in a frame with `capture_rect` `R` and size `(W, H)`:
 
@@ -833,7 +1212,7 @@ Schema: `defs.json#/$defs/tool_error`.
 | `message` | always | For people and models. Not stable. Never parse it. |
 | `state` | always | The highest-precedence state when the error was produced. |
 | `operation_id` | effect tools, when it parsed | Echoed. |
-| `operation` | effect tools, when a record exists for this `operation_id` | `{status, events_posted}`. Its presence means a call with this `operation_id` was admitted and input may have been posted. Its absence means nothing was ever posted for it. |
+| `operation` | effect tools, when a record exists for this `operation_id` | `{status, events_posted}`. Its presence means a call with this `operation_id` was admitted and input may have been posted. Its absence means nothing was ever posted for it. One exception: on `operation_in_progress` and `operation_id_conflict` it can describe a first call that is still being admitted (`accepted`, 0 events). |
 | `replayed` | exactly on the result of an admitted call | `false` when the result is first returned, `true` when it is the stored result returned to a repeat. |
 | `retry_after_ms` | `rate_limited` | The earliest useful retry. |
 | `measured` | `denied_app`, `log_unavailable`, and errors of admitted calls other than `interrupted` | [Section 6.7](#67-effect-results). |
@@ -848,10 +1227,21 @@ schema enforces this. Other codes have no `details`.
 | `stale_frame` | `reason`; also `point_index` when the reason is `pixels_changed` |
 | `out_of_frame` | `point_index`, `output_pixel_size` |
 | `image_too_large` | `image_bytes`, `max_image_bytes` |
-| `user_active` | `idle_ms`: milliseconds since the person's last input |
-| `denied_app` | `denied_by`: `policy` or `permitted_apps` |
+| `user_active` | `idle_ms`: milliseconds since the person's last input; 0 when deskhand could not read it |
+| `denied_app` | `denied_by`: `policy` or `permitted_apps`; also `point_index` when a pointer target caused the refusal |
 | `denied_shortcut` | `shortcut` |
 | `lease_held_by_other` | `expires_in_ms` |
+
+The schema also enforces these rules:
+
+- A code that is not in the table never has `details`.
+- When `code` is the name of a state, `state` is that same state.
+- `operation_in_progress`, `operation_id_conflict`, `interrupted` and
+  `cancelled` always carry `operation_id` and `operation`. `interrupted` and
+  `cancelled` always have `replayed` `true`.
+- On `denied_app`, `measured.window_title` is `null`.
+- Each tool's output schema accepts only the codes that
+  [section 9.3](#93-tool-error-codes) lists for that tool.
 
 - `argument` is a JSON Pointer (RFC 6901) into `arguments`. It names the
   offending value, or the object that lacks a required member or has an
@@ -865,35 +1255,36 @@ schema enforces this. Other codes have no `details`.
 
 ### 9.3 Tool error codes
 
-"Tools" says which tools can return the code. "Posted" says whether the call
-that gets this code can itself have posted input: *no* means never; *maybe*
-means that on an effect tool the code is also used to end an admitted call
-part-way.
+"Tools" says which tools can return the code; "effects" means `pointer` and
+`keyboard`, and each tool's output schema accepts only its own codes.
+"Posted" says whether the call that gets this code can itself have posted
+input: *no* means never; *maybe* means that on an effect tool the code is
+also used to end an admitted call part-way.
 
 | Code | Tools | Posted | Meaning | What the caller does |
 | --- | --- | --- | --- | --- |
-| `gated` | all but `status` | maybe | The LAN-gate allowance is missing, invalid or expired (amendment 2). | Wait for the Mac to be on the LAN. |
-| `paused` | all but `status` | maybe | The kill switch was used. | A person must arm deskhand again. |
-| `disarmed` | all but `status` | maybe | Not armed, or arming ran out. | A person must arm deskhand. |
-| `not_console` | all but `status` | maybe | deskhand's session does not own the console. | Wait. |
-| `locked` | all but `status` | maybe | The screen is locked. deskhand never unlocks. | Wait. |
-| `display_asleep` | all but `status` | maybe | The display is asleep. | Wait. |
-| `permission_missing` | all but `status` | maybe | A macOS permission is not granted. | A person must grant it. |
-| `permission_stale` | all but `status` | maybe | A permission needs to be confirmed again, or capture returns blank frames. | A person must confirm it. |
-| `secure_input` | all but `status` | maybe | Secure input is on (a password field has focus). | Wait. |
-| `stale_frame` | effects | no | The frame can no longer be trusted ([section 8.3](#83-frame-staleness)). | Take a new screenshot. |
+| `gated` | all but `status` and `lease` | maybe | The LAN-gate allowance is missing, invalid or expired (amendment 2). | Wait for the Mac to be on the LAN. |
+| `paused` | all but `status` and `lease` | maybe | The kill switch was used. | A person must arm deskhand again. |
+| `disarmed` | all but `status` and `lease` | maybe | Not armed, or arming ran out. | A person must arm deskhand. |
+| `not_console` | all but `status` and `lease` | maybe | deskhand's session does not own the console. | Wait. |
+| `locked` | all but `status` and `lease` | maybe | The screen is locked. deskhand never unlocks. | Wait. |
+| `display_asleep` | all but `status` and `lease` | maybe | The display is asleep. | Wait. |
+| `permission_missing` | all but `status` and `lease` | maybe | A macOS permission is not granted. | A person must grant it. |
+| `permission_stale` | all but `status` and `lease` | maybe | A permission needs to be confirmed again, or capture returns blank frames. | A person must confirm it. |
+| `secure_input` | all but `status` and `lease` | maybe | Secure input is on (a password field has focus). | Wait. |
+| `stale_frame` | effects | no | The frame can no longer be trusted ([section 8.3](#83-frame-staleness)). It can also end an admitted `pointer` call before its first event ([section 8.4](#84-target-patch-check)); `operation` is then present with 0 events. | Take a new screenshot. |
 | `out_of_frame` | `pointer` | no | A target is outside the frame. | Fix the target. |
-| `user_active` | effects | maybe | The person at the Mac used the keyboard or pointer within the last 3 s, or during the call. | Back off, then take a new screenshot. |
-| `denied_app` | effects | maybe | The frontmost app or the target window's app is not allowed. | Do not retry unchanged. |
-| `denied_shortcut` | `keyboard` | no | The chord is a denied global shortcut. | Do not retry. |
-| `rate_limited` | effects | no | The per-minute action ceiling is reached. | Retry after `retry_after_ms`. |
-| `busy` | effects | no | Another effect is executing. deskhand does not queue. | Retry shortly. |
+| `user_active` | effects | maybe | The person at the Mac used the keyboard or pointer within the last 3 s, or during the call, or deskhand could not tell. | Back off, then take a new screenshot. |
+| `denied_app` | effects | maybe | The frontmost app, the app under a target or the app with keyboard focus is not allowed, or deskhand could not determine it ([section 6.9](#69-app-policy)). | Do not retry unchanged. |
+| `denied_shortcut` | `keyboard` | no | The key or chord is a denied global shortcut. | Do not retry. |
+| `rate_limited` | effects | no | The Mac's action ceiling for the last 60 s is reached ([section 9.5](#95-order-of-refusals)). | Retry after `retry_after_ms`. |
+| `busy` | effects | no | Another effect call is being admitted or is executing. deskhand does not queue. | Retry shortly. |
 | `lease_not_held` | effects | maybe | The named holder does not hold the lease. | Acquire the lease. |
 | `lease_held_by_other` | effects | no | Another holder holds the lease. | Wait for it. |
 | `lease_expired` | effects | maybe | The named holder's lease ran out. | Acquire again. |
 | `invalid_argument` | all | no | Arguments break the schema or a rule in this document. | Fix the call. |
-| `image_too_large` | `screenshot` | no | The encoded image is over 5,000,000 bytes. | Ask for `jpeg` or a smaller `max_long_edge`. |
-| `operation_in_progress` | effects | no | An earlier call with the same `operation_id` is still executing. | Wait and repeat the call to get its result. |
+| `image_too_large` | `screenshot` | no | The encoded image is over 3,750,000 bytes. | Ask for `jpeg` or a smaller `max_long_edge`. |
+| `operation_in_progress` | effects | no | An earlier call with the same `operation_id` is still being admitted or is executing. | Wait, then look the operation up with `status`, or repeat the call to get its result. |
 | `operation_id_conflict` | effects | no | The `operation_id` was used before with different arguments. | A caller bug. Do not retry. |
 | `operation_capacity` | effects | no | The principal's operation records inside the retention window are at the cap (10,000 in 24 h by default). | Wait. |
 | `log_unavailable` | effects | no | The action log could not record the intent, so nothing was posted. | An operator must look. |
@@ -916,26 +1307,31 @@ How to read `operation` on any error:
   `operation_id_conflict`, or a state's name returned to a repeat) they were
   posted by the earlier call and this call posted nothing.
 
-Lease refusals inside `status.lease_result.code` use the same names but are
-not tool errors ([section 5.1](#51-operations)).
+Lease refusals inside the `lease_result.code` of a `lease` result use the
+same names but are not tool errors ([section 5.1](#51-operations)).
 
 ### 9.4 JSON-RPC errors
 
 | Code | HTTP | When |
 | --- | --- | --- |
-| `-32700` Parse error | `400` | The body is not JSON. `id` is `null`. |
-| `-32600` Invalid Request | `400` | Not a JSON-RPC 2.0 request object, or a batch. |
-| `-32601` Method not found | `200` | Any method other than `server/discover`, `tools/list`, `tools/call`. |
+| `-32700` Parse error | `400` | The body is not JSON, or it is not strict JSON outside `params.arguments`: a duplicate member name or a string that is not valid Unicode ([section 2.4](#24-order-of-checks-and-http-status-codes)). `id` is `null`. |
+| `-32600` Invalid Request | `400` | Not a JSON-RPC 2.0 request or notification object, or a batch. |
+| `-32601` Method not found | `404` | Any method other than `server/discover`, `tools/list`, `tools/call`. |
+| `-32602` Invalid params | `400` | `params._meta["io.modelcontextprotocol/protocolVersion"]` is missing or is not a string. |
 | `-32602` Invalid params | `200` | `tools/call` names a tool that does not exist (`"Unknown tool: <name>"`), or `arguments` is present and is not an object. |
 | `-32603` Internal error | `200` | A fault before the tool was reached. |
-| `-32020` Header mismatch | `400` | `Mcp-Method` or `Mcp-Name` is absent or differs from the body, or the body declares a protocol version different from the header. A `tools/call` whose `params` is not an object, or whose `params.name` is missing or not a string, lands here, because `Mcp-Name` cannot match it. |
-| `-32022` Unsupported protocol version | `400` | `MCP-Protocol-Version` is absent or is not `2026-07-28` **(Q4)**. |
+| `-32020` Header mismatch | `400` | A required header is missing or malformed: `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` on `tools/call`. Or `Mcp-Method` or `Mcp-Name` differs from the body, or the body's protocol version differs from the header. A `tools/call` whose `params.name` is missing or not a string lands here, because `Mcp-Name` cannot match it. |
+| `-32022` Unsupported protocol version | `400` | `MCP-Protocol-Version` is well formed and is not `2026-07-28`. |
 
 `error.data` MAY be `{"detail": "...", "header": "..."}`. It is for
-diagnosis and is not stable. The plan's research confirms `400` for `-32020`
-only; the HTTP status of every other row is this contract's choice **(Q9)**.
-That an unknown tool is `-32602` is carried over from earlier revisions
-**(Q14)**.
+diagnosis and is not stable.
+
+The specification fixes `400` for `-32020`, `-32021` and `-32022`, `404` with
+`-32601` for an unknown method, `400` with `-32602` for a missing required
+`_meta` member, and `-32602` with the message `Unknown tool: <name>` for an
+unknown tool. The HTTP status of the other rows is this contract's choice.
+deskhand never sends `-32021` (it requires no client capability), and never
+sends `-32002` or `-32042`, which this revision forbids.
 
 An argument that has the wrong type or breaks a tool's input schema is **not**
 `-32602`. It is the tool error `invalid_argument`, so the model can read it and
@@ -947,7 +1343,8 @@ When several refusals apply, deskhand returns the first in this order. The
 state comes first for every tool except `status`, as the shared contract
 requires.
 
-`status`: `invalid_argument` only.
+`status` and `lease`: `invalid_argument` only. A lease operation that is
+refused is not an error ([section 5.1](#51-operations)).
 
 `displays` and `screenshot`:
 
@@ -958,14 +1355,18 @@ requires.
 `pointer` and `keyboard`:
 
 1. The state's name, unless the state is `ok`.
-2. `invalid_argument`.
-3. The operation record, if one exists for (principal, `holder_id`,
-   `operation_id`): `operation_id_conflict`, a replay, or
-   `operation_in_progress` ([section 4.3](#43-operation_id)).
-4. `cleanup_pending`.
-5. `lease_held_by_other`, `lease_expired`, `lease_not_held`.
-6. `rate_limited`.
-7. `busy`.
+2. `invalid_argument`. A duplicate member name or invalid Unicode inside
+   `arguments` is found here, before the schema is applied
+   ([section 2.4](#24-order-of-checks-and-http-status-codes)).
+3. The admission section. If another effect call holds it:
+   `operation_in_progress` or `operation_id_conflict` when that call has the
+   same (principal, `holder_id`, `operation_id`), otherwise `busy`.
+4. The operation record, if one exists for (principal, `holder_id`,
+   `operation_id`): `operation_id_conflict` or a replay
+   ([section 4.3](#43-operation_id)).
+5. `cleanup_pending`.
+6. `lease_held_by_other`, `lease_expired`, `lease_not_held`.
+7. `rate_limited`.
 8. `operation_capacity`.
 9. `stale_frame` for every reason except `pixels_changed`.
 10. `out_of_frame`.
@@ -975,18 +1376,55 @@ requires.
 14. `denied_app`. `measured` is taken at this step.
 15. `log_unavailable`.
 
-An error from step 1, 2 or 3 carries `operation` whenever `holder_id` and
-`operation_id` are well formed and a record exists for them. From step 4 on no
-record exists, so there is no `operation`.
+While the record file or the held-input ledger cannot be read or written,
+every effect call that reaches step 4 fails there with `internal_error`
+([section 12.3](#123-write-ordering)).
+
+**The admission section.** Each Mac has one admission section, and one effect
+call at a time is inside it. This is the single serial executor: deskhand
+never queues an effect and never runs two.
+
+- A call enters at step 3, by an atomic test-and-set. Nothing can come
+  between the test and the claim.
+- It stays inside through steps 4 to 15, the creation of its record, its
+  execution and its final record write
+  ([section 12.3](#123-write-ordering)). A call that is refused at steps 4
+  to 15 leaves the section when it is refused.
+- A call that arrives while the section is held does not wait. It gets
+  `operation_in_progress` when the holder of the section has the same
+  (principal, `holder_id`, `operation_id`) and the same digest,
+  `operation_id_conflict` when it has the same key and a different digest,
+  and `busy` in every other case. This holds across principals and holders.
+- So the record lookup of step 4 and the creation of the record are never
+  separated by another call's admission. A repeated `operation_id` is
+  performed once, however close together the two calls arrive.
+- `lease`, `status`, `displays` and `screenshot` do not enter the section and
+  are never answered `busy`.
+
+An error from step 1, 2, 3 or 4 carries `operation` whenever `holder_id` and
+`operation_id` are well formed and a record exists for them. At step 3 it
+also describes a call that is still being admitted
+([section 4.3](#43-operation_id)). From step 5 on no record exists, so there
+is no `operation`.
 
 A call that passes all fifteen is admitted: its record is created and
 execution starts. After that only an abort or a fault can end it early, with
 the code of whatever caused it: a state's name, `user_active`, `denied_app`
-(the app check is repeated before every event), `lease_expired` or
-`lease_not_held` (the lease ended), `cancelled` (the caller hung up, so only
-a later repeat sees it) or `internal_error`.
+(the app check is repeated before every event, including the first),
+`stale_frame` (the patch check was too old when the first event was due),
+`lease_expired` or `lease_not_held` (the lease ended), `cancelled` (the
+caller hung up, so only a later repeat sees it) or `internal_error`.
 
-A call counts toward the action ceiling only if it was admitted.
+**The action ceiling.** Each Mac has one counter, across all principals and
+all holders. Releasing the lease or changing `holder_id` does not reset it.
+
+- It counts, over a sliding window of the last 60 s, every admitted call and
+  every call that was refused before admission with `denied_app` or
+  `denied_shortcut`. No other refusal counts, and a replay does not count.
+- A call that reaches step 7 while the count is `ACTIONS_PER_MINUTE` or more
+  is refused with `rate_limited`.
+- `retry_after_ms` is the time until the oldest counted entry leaves the
+  window: its time plus 60,000 ms, minus now.
 
 ## 10. States
 
@@ -1043,8 +1481,8 @@ with the name of `status.state` unless it is `ok`.
 | Request | While the state is not `ok` |
 | --- | --- |
 | `server/discover`, `tools/list` | Answered as usual. |
-| `status` without `lease` | Answered. It reports the state. |
-| `status` with `lease` | Answered. `acquire` and `renew` are refused in `lease_result` while the state is `gated`, `paused` or `disarmed` ([section 5.2](#52-allowed-states)). `release` is always allowed. |
+| `status` | Answered. It reports the state, and its operation lookup works as usual. |
+| `lease` | Answered. `acquire` and `renew` are refused in `lease_result` while the state is `gated`, `paused` or `disarmed` ([section 5.2](#52-allowed-states)). `release` is always allowed. |
 | `displays`, `screenshot` | Refused with the state's name. |
 | `pointer`, `keyboard` | Refused with the state's name, before any other check ([section 9.5](#95-order-of-refusals)). Nothing is posted. |
 
@@ -1088,9 +1526,33 @@ lists both `paused` and `disarmed`, and `status.armed_until` is `null`.
 
 **Arming.** A person arms deskhand from the menu bar for a duration they
 choose. `disarmed` begins again at `status.armed_until`, or sooner if the
-person disarms it. `gated` does not end arming. The two are independent: if
-the allowance returns before arming runs out, the state can be `ok` again
-with nobody at the Mac.
+person disarms it.
+
+**Only a person arms.** Arming, extending the arming period and leaving
+`paused` are acts of the person at the Mac. deskhand does not accept any of
+them:
+
+- from an input event that deskhand posted itself;
+- while an operation is executing;
+- within `USER_ACTIVITY_LOOKBACK_MS` (3 s) of the last event that deskhand
+  posted.
+
+Together with the rule that deskhand's own bundle is always a denied app
+([section 6.9](#69-app-policy)), this keeps an agent from extending its own
+arming. Disarming and the kill switch are never restricted in this way.
+
+**`gated` ends arming.** By default, arming ends when `gated` begins:
+`disarmed` then holds as well, `status.active_states` lists `gated` and
+`disarmed`, and `status.armed_until` is `null`. When the allowance returns,
+the state is `disarmed` until a person arms deskhand again. A Mac that left
+the LAN has probably left with its owner, and it should not start driving
+again by itself when it comes home.
+
+This is the per-Mac setting `gated_ends_arming`, which is `true` by default.
+Where it is `false`, `gated` and arming are independent: if the allowance
+returns before arming runs out, the state can be `ok` again with nobody at
+the Mac. The default is a decision for the owner to confirm
+(Appendix A, item 27).
 
 ### 10.5 Returning to `ok`
 
@@ -1156,11 +1618,14 @@ What a caller sees across a rotation that succeeds:
 - The token is checked on every request. A replaced token stops working at
   once, unless the Mac is configured with an overlap window in which the
   previous token is also accepted. The default window is 0.
-- The principal is the subject of the client certificate
-  ([section 1](#1-terms)). Replacing the token, or rotating either
-  certificate while the client's subject stays the same, keeps the lease,
-  the frames and the operation records. A client certificate with a
-  different subject is a different principal and sees none of them.
+- The principal is the subject of the client certificate, compared as the
+  RFC 4514 string of its DER encoding ([section 1](#1-terms)). Replacing the
+  token, or rotating either certificate while the client's subject stays the
+  same, keeps the lease, the frames and the operation records.
+- A client certificate with a different subject is refused at the handshake
+  until the Mac's expected client subject is changed to match
+  ([section 2.2](#22-authentication)). After that change it is a different
+  principal and sees none of them.
 
 ### 11.2 `cleanup_pending`
 
@@ -1171,7 +1636,7 @@ wait, when deskhand starts with entries left by the previous run, and when
 posting a release failed. **Cleared** when the ledger is empty.
 
 **Effect on calls:** every effect call is refused with `cleanup_pending`
-(step 4 of [section 9.5](#95-order-of-refusals)). Read tools and lease
+(step 5 of [section 9.5](#95-order-of-refusals)). Read tools and lease
 operations are not affected.
 
 deskhand tries again on every change of state and at least once a second. No
@@ -1228,7 +1693,9 @@ input of any kind at the login window.
 than `USER_ACTIVITY_LOOKBACK_MS` ago ([section 16](#16-constants)).
 **Cleared** once that long has passed with no such input. Input that
 deskhand posted does not count. `status` evaluates the condition when it is
-called.
+called. When deskhand cannot read the idle signal, or cannot tell the
+person's input from its own, the condition is set
+([section 13.2](#132-the-person-at-the-mac)).
 
 **Effect on calls:**
 
@@ -1267,12 +1734,23 @@ input. Nothing in this section changes that.
 - A record holds its status, `events_posted`, the request digest, the time
   of admission and, once the operation is over, the result that was
   returned.
-- **Payload binding.** The digest is the SHA-256 of the canonical request.
-  The canonical request for the operation digest is RFC 8785 over
-  `{name, arguments}` as received: the tool name plus its arguments, and no
-  transport metadata (no header, no JSON-RPC `id`, no `_meta`). A repeated
-  `operation_id` with a different digest gets `operation_id_conflict` and
-  never executes. The digest is not returned on the wire.
+- **Payload binding.** The digest is HMAC-SHA-256 over the bytes of the
+  canonical request, keyed with a per-install key. The canonical request for
+  the operation digest is RFC 8785 over `{name, arguments}` as received: the
+  tool name plus its arguments, and no transport metadata (no header, no
+  JSON-RPC `id`, no `_meta`). A repeated `operation_id` with a different
+  digest gets `operation_id_conflict` and never executes. The digest is not
+  returned on the wire.
+- **The key.** deskhand generates 32 random bytes at first start and keeps
+  them in a file that only its user can read or write. The key never leaves
+  the Mac. A plain hash of short typed text could be guessed from the record
+  file; a keyed one cannot. If the key file is lost, deskhand generates a
+  new key and every stored digest stops matching, so a repeat of an old
+  `operation_id` gets `operation_id_conflict`. That is the safe direction:
+  nothing is executed twice.
+- Arguments that RFC 8785 cannot canonicalize never reach this point. A
+  duplicate member name or invalid Unicode is `invalid_argument`
+  ([section 2.4](#24-order-of-checks-and-http-status-codes)).
 - Records are kept in a file on the Mac that only deskhand's user can read
   or write. They survive a restart and a credential rotation
   ([section 11.1](#111-credentials_warning)).
@@ -1308,41 +1786,67 @@ got only roughly. Zero means that no input reached the Mac, except on
 
 An effect call goes through these steps in this order.
 
-1. Checks 1 to 14 of [section 9.5](#95-order-of-refusals) pass.
+1. Checks 1 to 14 of [section 9.5](#95-order-of-refusals) pass. From check 3
+   on, the call holds the Mac's admission section.
 2. The intent entry is committed to the action log (check 15). If it cannot
    be committed, the call is refused with `log_unavailable`, nothing is
    posted and no record exists.
 3. The record is created as `accepted`. The call is now admitted.
 4. The record is written as `executing` and flushed to stable storage
    (`fsync`). This happens before the first event is posted.
-5. The events are posted. Before each key-down or button-down event the
-   held-input ledger is written and flushed; after each matching up event
-   it is cleared and flushed ([section 12.7](#127-held-input-ledger)).
-6. When the action is over, or after an abort and its releases, the final
-   status, `events_posted` and the result are written and flushed.
-7. The outcome entry is written to the action log.
-8. The response is sent.
+5. **The last look.** Immediately before the first event, with nothing
+   between the check and the post, deskhand checks again:
+   - the state is `ok`;
+   - the deadline has not passed ([section 13.1](#131-the-deadline));
+   - the person at the Mac is not active;
+   - the app policy holds: the frontmost app, the app under the target for
+     `pointer`, the owner of keyboard focus for `keyboard`
+     ([section 6.9](#69-app-policy));
+   - for `pointer`, the capture that the patch check used is at most
+     `PATCH_CHECK_MAX_AGE_MS` (250 ms) old
+     ([section 8.4](#84-target-patch-check)).
+
+   If any of these fails, the operation is aborted with the code of the
+   cause and `events_posted` 0. Nothing was posted.
+6. The events are posted. Before every event deskhand repeats the state,
+   deadline, activity and app-policy checks of step 5
+   ([section 12.4](#124-aborts)). Before each key-down or button-down event
+   the held-input ledger is written and flushed; after each matching up
+   event it is cleared and flushed
+   ([section 12.7](#127-held-input-ledger)).
+7. When the action is over, or after an abort and its releases, the final
+   status, `events_posted` and the result are written and flushed. The call
+   then leaves the admission section.
+8. The outcome entry is written to the action log.
+9. The response is sent.
+
+Steps 2 to 4 take time: a round trip to the log writer and two durable
+writes. Step 5 exists because the checks of step 1 are that old by then. An
+app that came to the front in between, or a person who touched the keyboard,
+is seen at step 5 and gets no event.
 
 deskhand never posts an event it could not first record. If a record or
 ledger write fails, the event that the write was guarding is not posted, and
 the operation ends as `failed` with `internal_error`. While the record file
 or the ledger cannot be read or written, every effect call fails with
-`internal_error` and nothing is posted.
+`internal_error` at step 4 of [section 9.5](#95-order-of-refusals) and
+nothing is posted.
 
-Because step 6 comes before step 8, a result that the caller received is the
+Because step 7 comes before step 9, a result that the caller received is the
 result a later repeat returns.
 
 ### 12.4 Aborts
 
 An executing operation ends early for one of these causes. The executor
-looks for the first six before every event and while it waits
-([section 13](#13-timing-bounds)).
+looks for the first six before every event, including the first, and while
+it waits ([section 13](#13-timing-bounds)).
 
 | Cause | Code | `operation.status` |
 | --- | --- | --- |
 | The state left `ok`: kill switch, allowance gone, arming ran out, lock, console switch, display sleep, lost permission, secure input | the new state's name | `aborted` |
-| The person at the Mac used the keyboard or pointer | `user_active` | `aborted` |
-| The frontmost app, or the app under the target, is no longer allowed | `denied_app` | `aborted` |
+| The person at the Mac used the keyboard or pointer, or deskhand can no longer tell | `user_active` | `aborted` |
+| The frontmost app, the app under the next point, or the owner of keyboard focus is not allowed or cannot be determined | `denied_app` | `aborted` |
+| The patch check was more than 250 ms old when the first event was due (`pointer` only) | `stale_frame`, reason `pixels_changed` | `aborted`, 0 events |
 | The lease ran out | `lease_expired` | `aborted` |
 | The holder released the lease | `lease_not_held` | `aborted` |
 | The caller closed the connection | `cancelled`, seen on a repeat | `aborted` |
@@ -1370,6 +1874,17 @@ clicked. An aborted `drag` ends when its button is released, which drops
 whatever was being dragged at the place the pointer had reached. The caller
 takes a new screenshot to see where things stand.
 
+**Where a release lands.** A button release is posted at the pointer's
+current location. A release never moves the pointer: not the release that
+ends an abort, not a deferred release and not a release after a restart
+([section 12.8](#128-cleanup-authorization)). Because a drag checks the
+window under each point before it moves there
+([section 6.9](#69-app-policy)), the pointer of a drag that deskhand aborts
+for `denied_app` is still over an allowed window, and that is where the drop
+lands. A deferred release lands wherever the pointer is when cleanup runs.
+deskhand cannot choose that place, and the app policy does not block a
+release.
+
 ### 12.5 Repeats and stored results
 
 The table in [section 4.3](#43-operation_id) says what a repeated
@@ -1384,10 +1899,33 @@ The table in [section 4.3](#43-operation_id) says what a repeated
   differently.
 - A replay posts nothing, measures nothing, needs neither the lease nor a
   live frame, and does not count toward the action ceiling.
-- While the first call is still `accepted` or `executing`, a repeat gets
-  `operation_in_progress` at once. It does not wait for the first call.
-- A response that was lost is recovered the same way: the caller repeats the
-  call with the same arguments, inside the retention window.
+- While the first call is still being admitted, or is `accepted` or
+  `executing`, a repeat gets `operation_in_progress` at once. It does not
+  wait for the first call.
+- While a different effect call holds the admission section, a repeat gets
+  `busy` ([section 9.5](#95-order-of-refusals)).
+
+**A lost response.** A caller that sent an effect call and got no response
+does not know whether the call was admitted. It SHOULD ask with the
+read-only lookup, `status` with `operation: {holder_id, operation_id}`
+([section 6.1](#61-status)), and SHOULD NOT repeat the call to find out.
+
+| Lookup result | Meaning |
+| --- | --- |
+| `operation` is `null` | The call was never admitted, or it never arrived. No input was posted for it. Nothing will be, unless the caller sends the call again. |
+| `status` `accepted` or `executing` | It is still being admitted or is running. Look again. A call that is still being admitted can yet be refused, and the next lookup is then `null`. |
+| any final status | It is over. `events_posted` says how much went out. |
+
+The lookup never executes anything, so it is safe in the one case where a
+repeat is not: the first call was refused before admission (`busy`,
+`rate_limited`, `stale_frame`) or was lost on the way. A repeat of that call
+would be admitted as a new call and would post its input later, in a
+different context. crew-r-yqso forbids exactly that: "never retried".
+
+Repeating the call stays allowed, and it is the only way to get the stored
+result itself. Inside the retention window a repeat of an admitted call
+returns the stored result and posts nothing. A caller that repeats MUST be
+ready for the call to execute, which is what happens when no record exists.
 
 ### 12.6 Retention and capacity
 
@@ -1466,6 +2004,10 @@ even a release. Whether synthetic input that is still held outlives the
 process that posted it is a spike item. This contract assumes it can, which
 is why the ledger is durable.
 
+A release is a key-up or a button-up and nothing else. A button-up is posted
+at the pointer's current location and never moves the pointer
+([section 12.4](#124-aborts)).
+
 ### 12.9 Restart
 
 When deskhand starts, before it answers any call:
@@ -1489,7 +2031,45 @@ caller treats `aborted_by_restart` as "input may have reached the Mac, and
 deskhand cannot say how much".
 
 Operation records, the retention window and the count per principal carry
-over unchanged.
+over unchanged. The action ceiling's counter is kept in memory and starts
+empty.
+
+### 12.10 Action log entries
+
+The action log is append-only and cannot be edited by the session user. Its
+writer is a separate root process, and deskhand reaches it over a local
+connection ([section 11.3](#113-log_unavailable)). There are three kinds of
+entry.
+
+| Kind | Written | If it cannot be written |
+| --- | --- | --- |
+| intent | Before admission (step 2 of [section 12.3](#123-write-ordering)). | The call is refused with `log_unavailable`. |
+| outcome | After the final record write (step 8). | The call still returns its true result, and the `log_unavailable` condition is set. |
+| refusal | When an effect call is refused before admission, for any code. | Nothing changes for the call. It is best effort. |
+
+Every entry has these fields:
+
+| Field | Content |
+| --- | --- |
+| time | deskhand's clock, UTC. |
+| kind | intent, outcome or refusal. |
+| caller node address | The source address of the connection. |
+| principal | The client certificate's subject. |
+| `holder_id`, `operation_id` | As sent. |
+| tool, action | The tool name and `action.type`. |
+| `frame_id`, frame digest | The frame the call named, and its `sha256` when deskhand still has the frame. |
+| frontmost app | `bundle_id`, `team_id` and name as measured; on an outcome also the target app. |
+| outcome | On an outcome or a refusal: `completed` or the error code, `operation.status` and `events_posted`. |
+
+- Typed text is logged as its length only.
+- No entry holds image bytes, a window title, a token or any part of a
+  credential.
+- A refusal entry lets an operator see what was tried against the app policy
+  (`denied_app`, `denied_shortcut`) even though no operation record exists.
+  It does not fail closed: a refusal posts nothing, so nothing is lost if the
+  entry is.
+- The encoding of an entry, the file's location and its rotation are
+  implementation matters and are not part of this contract.
 
 ## 13. Timing bounds
 
@@ -1527,9 +2107,11 @@ deadline = min(allowance expires_at, lease expiry, arming expiry)
   left, deskhand has cancelled, released and dropped the lease within
   `DEADLINE_BOUND_MS` of the change. A replacement that is valid only moves
   the deadline.
-- **Moving the deadline.** The lease is renewed through `status`, which an
+- **Moving the deadline.** The lease is renewed through `lease`, which an
   executing effect does not hold up, so a renewal moves the deadline while
-  an effect runs. Arming again does the same.
+  an effect runs. A person cannot extend arming while an operation executes
+  ([section 10.4](#104-gated-paused-and-disarmed)), so the arming expiry does
+  not move during an effect.
 - **No look-ahead.** deskhand does not refuse a call because it could not
   finish before the deadline. It admits the call and aborts it at the
   deadline. A caller SHOULD renew the lease before an action that comes
@@ -1550,6 +2132,10 @@ deadline = min(allowance expires_at, lease expiry, arming expiry)
   signal every `USER_ACTIVITY_POLL_MS` (100 ms), including while it waits
   with input held. Its own posted events do not count. How it tells them
   from the person's is chosen by the spike.
+- **Uncertainty counts as activity.** If the idle signal cannot be read, or
+  deskhand cannot separate its own events from the person's, the person
+  counts as active: the call is refused, or the executing effect is aborted,
+  with `user_active`. `details.idle_ms` is then 0.
 - **The bound.** Within `USER_ACTIVITY_ABORT_MS` (250 ms) of the person's
   input, deskhand has posted the operation's last event and released what
   the operation held. Up to 100 ms of that is the wait for the next poll.
@@ -1581,13 +2167,16 @@ the publisher. This section is deskhand's side of that interface, and
 ### 14.1 The file
 
 - The path is deskhand configuration, supplied per Mac by birbhomes.
-- deskhand opens the file with `O_NOFOLLOW`, so the last component of the
-  path cannot be a symbolic link. It then checks the file it opened, not
-  the path:
-  - it is a regular file;
-  - it is owned by root;
-  - it is not writable by group or by others;
-  - the directory that holds it is owned by root.
+- deskhand opens the directory that holds the file with
+  `O_NOFOLLOW | O_DIRECTORY`, and then opens the file inside it with `openat`
+  and `O_NOFOLLOW`. Neither the directory nor the file can be a symbolic
+  link, and the file it reads is the one in the directory it checked. It
+  then checks what it opened, not the paths:
+  - the directory is owned by root and is not writable by group or by
+    others;
+  - the file is a regular file;
+  - the file is owned by root;
+  - the file is not writable by group or by others.
 - deskhand's user must be able to read it. birbhomes publishes it
   world-readable.
 - birbhomes guarantees that it publishes atomically: it writes the new file
@@ -1619,14 +2208,21 @@ One JSON object in UTF-8 with exactly these four members:
   `YYYY-MM-DDTHH:MM:SS`, an optional fraction of up to 9 digits, and a
   literal `Z`. An offset such as `+00:00` is invalid, although it also means
   UTC.
+- A timestamp that is not a real UTC instant makes the file invalid: month
+  13, day 32, 30 February, hour 24, minute or second 60. deskhand never
+  normalizes such a value into a later time. A leap second (`:60`) is
+  refused as well.
 - An unknown member makes the file invalid. A change to the format gets a
   new `version`.
 - How long an allowance lasts is birbhomes' choice, and deskhand sets no
   minimum or maximum. A short one bounds how long deskhand keeps serving
   after the publisher stops.
 
-The schema checks the shape. That `mac` names this Mac and that
-`expires_at` is later than `not_before` are checked by deskhand.
+The schema checks the shape, and its timestamp pattern refuses every
+impossible value except 29 February in a year that is not a leap year. A
+validator MUST also assert the `date-time` format, which catches that case.
+That `mac` names this Mac and that `expires_at` is later than `not_before`
+are checked by deskhand.
 
 ### 14.3 When the allowance is valid
 
@@ -1668,9 +2264,13 @@ default. It applies to `not_before` only: `expires_at` is never extended.
   its held input if cleanup is authorized, invalidates every frame and drops
   the lease ([section 10.3](#103-leaving-ok),
   [section 10.4](#104-gated-paused-and-disarmed)).
+- **Becoming `gated`** also ends arming, unless the Mac is configured with
+  `gated_ends_arming` `false`
+  ([section 10.4](#104-gated-paused-and-disarmed)).
 - **Leaving `gated`** needs a valid allowance and nothing else. deskhand
   finds it at the next read, within 1 s of publication. Nothing is restored
-  ([section 10.5](#105-returning-to-ok)), and arming is not affected.
+  ([section 10.5](#105-returning-to-ok)). By default the state is then
+  `disarmed`, and a person arms deskhand again.
 
 ## 15. Clean stop
 
@@ -1690,20 +2290,24 @@ deskhand then:
    and refuses read calls in flight with `gated`.
 2. Releases the input that the effect held, if cleanup is authorized
    ([section 12.8](#128-cleanup-authorization)).
-3. Drops the lease and invalidates every frame.
+3. Drops the lease, invalidates every frame and, by default, ends arming
+   ([section 10.4](#104-gated-paused-and-disarmed)).
 4. Writes the outcome of the aborted operation to the action log, and logs
    the change of state.
 5. Keeps running in the state `gated`. `status` is answered and reports
-   `gated`. Every other tool is refused with `gated`.
+   `gated`. `displays`, `screenshot`, `pointer` and `keyboard` are refused
+   with `gated`, and `lease` refuses `acquire` and `renew` with it.
 
 Steps 1 to 3 are done within `DEADLINE_BOUND_MS` of the removal or of
 `expires_at` ([section 13.1](#131-the-deadline)).
 
 deskhand does not exit on a gate stop. Away from home its LAN address is
 unreachable anyway, and the packet filter on the Mac keeps other devices
-out. Because the process stays up, deskhand serves again as soon as a valid
-allowance is published, with no restart. Whether it is still armed then
-depends only on the arming period
+out. If the address itself is gone, deskhand keeps trying to bind it
+([section 2.1](#21-endpoint)). Because the process stays up, deskhand
+answers again as soon as a valid allowance is published, with no restart.
+By default it is then `disarmed` and a person arms it, which is the one
+manual step that birbhomes-r-ttg5 allows
 ([section 10.4](#104-gated-paused-and-disarmed)).
 
 ### 15.2 Process stop
@@ -1749,12 +2353,15 @@ Mac and, unless the table says otherwise, reported by `status.limits`.
 | --- | --- | --- |
 | `MAX_LONG_EDGE` | 2576 px | contract (amendment 1) |
 | `MIN_LONG_EDGE` | 256 px | contract |
-| `MAX_PIXELS` | 3,750,000 | contract (amendment 1) |
-| `MAX_IMAGE_BYTES` | 5,000,000 bytes before base64 | contract |
+| `MAX_VISUAL_TOKENS` | 4784 | provider cap (amendment 1) |
+| `MAX_PIXELS` | 3,588,000 (= 4784 × 750) | contract (amendment 1) |
+| `MAX_IMAGE_BYTES` | 3,750,000 bytes before base64 (5,000,000 base64 characters) | contract |
 | `JPEG_QUALITY_STEPS` | 85, 75, 65, 60 | contract |
 | `PATCH_SIZE` | 64 frame pixels | contract |
 | `PATCH_CHANNEL_TOLERANCE` | 16 of 255 | contract |
 | `PATCH_MAX_CHANGED_FRACTION` | 0.02 | contract |
+| `PATCH_CHECK_MAX_AGE_MS` | 250 | contract |
+| `DRAG_POLICY_SAMPLE_PX` | 8 frame pixels | contract |
 | `FRAME_MAX_AGE_MS` | default 60,000; 5,000 to 600,000 | configured |
 | `USER_ACTIVITY_LOOKBACK_MS` | 3,000 | contract |
 | `USER_ACTIVITY_POLL_MS` | 100 | contract |
@@ -1763,7 +2370,10 @@ Mac and, unless the table says otherwise, reported by `status.limits`.
 | `ALLOWANCE_CACHE_MAX_MS` | 1,000 | contract |
 | `ALLOWANCE_SKEW_TOLERANCE_MS` | default 0; 0 to 60,000 | configured; not reported by `status` |
 | `LEASE_TTL_MS` | default 30,000; 5,000 to 120,000 | contract; chosen per call |
-| `ACTIONS_PER_MINUTE` | default 60 | configured |
+| `ACTIONS_PER_MINUTE` | default 60; one counter per Mac over a sliding 60 s window | configured |
+| `GATED_ENDS_ARMING` (`gated_ends_arming`) | default true | configured; not reported by `status` |
+| `DISCOVERY_TTL_MS` | 300,000 (`ttlMs` of `server/discover` and `tools/list`) | contract |
+| `BIND_RETRY_MS` | at most 5,000 | contract |
 | `KEYBOARD_MAX_TEXT_LENGTH` | 1024 code points | contract |
 | `KEY_HOLD_MAX_MS`, `DRAG_DURATION_MAX_MS` | 5,000 | contract |
 | `DRAG_MAX_POINTS` | 32 | contract |
@@ -1772,7 +2382,7 @@ Mac and, unless the table says otherwise, reported by `status.limits`.
 | `OPERATION_MAX_RECORDS` | default 10,000 per principal | configured |
 | `MAX_REQUEST_BODY_BYTES` | 65,536 | contract |
 | `MAX_REQUEST_HEADER_BYTES` | 16,384 | contract |
-| `MAX_RESPONSE_BODY_BYTES` | 7,000,000 | contract |
+| `MAX_RESPONSE_BODY_BYTES` | 5,400,000 | contract |
 | `CONNECTION_MAX_AGE` | 5 min | contract |
 
 - **`USER_ACTIVITY_LOOKBACK_MS`.** An effect call is refused with `user_active`
@@ -1796,42 +2406,55 @@ two allowance values are used in
 
 The "Shared contract" block is the same text in deskhand-r-nkjj, crew-r-yqso
 and birbhomes-r-5elb. That block and the rest of each request are
-authoritative. This document departs from the request text in three places,
-and each departure is a numbered amendment.
+authoritative. This document departs from the request text in four places,
+and each departure is a numbered amendment. Points where it only makes the
+request text more exact are listed as clarifications in
+[section 17.5](#175-clarifications).
 
 - An amendment is **approved** when the owner has left a note on every
   affected request: deskhand-r-nkjj, crew-r-yqso, birbhomes-r-5elb and
   birbhomes-r-ttg5. deskhand, crew, birbhomes and forge share one owner.
 - Until an amendment is approved, deskhand follows the request text.
-- `docs/contract.md` v1.0 is not published until all three are approved.
-- This draft describes the contract with all three applied, so that Crew can
+- `docs/contract.md` v1.0 is not published until all four are approved.
+- This draft describes the contract with all four applied, so that Crew can
   build against it now. If the owner rejects one, the sections named below
   change before v1.0.
 
 | # | Amendment | Status |
 | --- | --- | --- |
-| 1 | Screenshot limits | Approved by the owner on 2026-11-12. |
+| 1 | Screenshot limits | Approved by the owner on 2026-11-12 with the figure 3,750,000 pixels. The figure is now 3,588,000: owner re-confirmation needed. |
 | 2 | `gated` state | Pending: deskhand-nxas. |
 | 3 | No node-IP allowlist inside deskhand | Pending: deskhand-nxas, and the owner's decision in deskhand-fxz0. |
+| 4 | The `lease` tool | Pending: deskhand-nxas. |
 
 ### 17.1 Amendment 1: screenshot limits
 
 - **Text it changes.** deskhand-r-nkjj, "Required behaviour", Screenshot:
   "downscaled by default to at most 1568 px on the long edge."
 - **The change.** By default a screenshot is downscaled to a long edge of at
-  most 2576 px and to at most 3,750,000 pixels. A caller may ask for a
+  most 2576 px and to at most 3,588,000 pixels. A caller may ask for a
   smaller long edge, down to 256 px. deskhand never returns an image over
   either limit ([section 7](#7-screenshot-sizing-and-encoding)).
 - **Rationale.** Callers use current models only. Those accept images up to
-  2576 px on the long edge and about 3.75 megapixels, and their providers
+  2576 px on the long edge and 4784 visual tokens, and their providers
   reject a larger image instead of shrinking it. A 1568 px default throws
   away detail that the model could use to place a click.
-- **Status.** Approved by the owner on 2026-11-12.
+- **The figure changed after approval.** The owner approved this amendment
+  with a pixel limit of 3,750,000. That number is the providers' "about 3.75
+  megapixels", which turned out to approximate the cap of 4784 visual
+  tokens and not to be a limit itself. At 3,750,000 pixels the default
+  screenshot of both Macs' built-in panels (2408 × 1556 and 2402 × 1560)
+  costs more than 4784 tokens and would be rejected. The limit is therefore
+  3,588,000 pixels (4784 × 750), which is stricter than the approved figure
+  and serves the same intent: the largest image a current model accepts.
+- **Status.** Approved by the owner on 2026-11-12 with the figure 3,750,000.
+  **Owner re-confirmation needed** for 3,588,000. The 2576 px long edge is
+  unchanged.
 
 | Request | What changes for it |
 | --- | --- |
-| deskhand-r-nkjj | The Screenshot item of "Required behaviour" reads 2576 px and 3,750,000 pixels in place of 1568 px. |
-| crew-r-yqso | "Images": Crew sizes its per-request image cap, and what it keeps out of checkpoints, for images of up to 2576 px and 5,000,000 bytes. |
+| deskhand-r-nkjj | The Screenshot item of "Required behaviour" reads 2576 px and 3,588,000 pixels in place of 1568 px. |
+| crew-r-yqso | "Images": Crew sizes its per-request image cap, and what it keeps out of checkpoints, for images of up to 2576 px and 3,750,000 bytes, which is 5,000,000 characters of base64. A whole response is at most 5,400,000 bytes. |
 | birbhomes-r-5elb | Nothing. |
 | birbhomes-r-ttg5 | Nothing. |
 
@@ -1899,51 +2522,120 @@ and each departure is a numbered amendment.
 | birbhomes-r-5elb | The pf anchor (item 4 of "What to do") is the only source filter, so its list of node addresses is the only one to maintain. |
 | birbhomes-r-ttg5 | "allowlist of node addresses" leaves the per-Mac configuration that birbhomes supplies to deskhand. |
 
-## 18. Open questions to verify against the spec before v1.0
+### 17.4 Amendment 4: the `lease` tool
 
-These are points where this draft states something about MCP `2026-07-28` (or
-a provider limit) that could not be read from the specification text when the
-draft was written. Each must be checked and this document corrected before
-v1.0.
+- **Text it changes.** The shared contract, "Tools": "`status`, `displays`,
+  `screenshot` (reads); `pointer`, `keyboard` (effects)." And "States":
+  "Every tool except `status` fails with the state's name unless the state
+  is `ok`."
+- **The change.** A sixth tool, `lease`, acquires, renews and releases the
+  lease ([section 5](#5-lease)). `status` no longer takes a `lease` argument
+  and is a pure read. `status` reports the lease only as seen from a
+  `holder_id` that the call names, as `held_by_caller` and an expiry, and no
+  result ever carries a `holder_id`. `lease` answers in every state: it
+  refuses `acquire` and `renew` in `gated`, `paused` and `disarmed` inside
+  its result, not as a tool error with the state's name, and it always
+  allows `release`.
+- **Rationale.** Earlier drafts carried lease operations on `status`, so that
+  five tools were enough. But the shared contract calls `status` a read, and
+  crew-r-yqso runs reads without a card. A read that can take the lease
+  away, and by releasing it abort an executing effect, is not a read. A
+  separate tool is an effect under the shared contract's own rule ("treats
+  any unknown tool as an effect"), so Crew gates it without a special case.
+  `status` also used to show the holder label to the whole principal, and
+  that label is the only thing that separates Crew's internal callers.
+- **Status.** Pending approval, tracked by deskhand-nxas. If the owner
+  rejects it, lease operations go back to an optional `lease` argument of
+  `status`, as in 0.9-draft, and sections 3.2, 5, 6.1 and 9.5 change back.
+  The shared contract names no lease operation, so one of the two forms is
+  needed either way.
 
-- **Q1.** Where a request body declares its protocol version (the field that
-  `MCP-Protocol-Version` must match), and whether it is mandatory.
-- **Q2.** The exact values of `resultType`. This draft uses `"complete"`.
-- **Q3.** The parameters and result members of `server/discover`. The names in
-  [section 3.1](#31-serverdiscover) are provisional.
-- **Q4.** The meaning of `-32022`. The plan records `-32020` and `-32022` as
-  codes of this revision and ties only `-32020` to header mismatch. This draft
-  assigns `-32022` to an unsupported protocol version and answers `400`.
-- **Q5.** Whether an absent `Mcp-Method` or `Mcp-Name` is `-32020` and an
-  absent `MCP-Protocol-Version` is `-32022`, as this draft says; whether
-  `Mcp-Name` must be absent on methods that name nothing; and how header
-  values are encoded.
-- **Q6.** Whether a server may always answer `application/json` and never
-  stream, and what `Accept` a client must then send.
-- **Q7.** Whether a sessionless server must accept any client notification,
-  and whether `202` is still the answer to one.
-- **Q8.** Whether `outputSchema` governs `structuredContent` when `isError` is
-  true. This draft is correct either way, because each output schema includes
-  the error shape.
-- **Q9.** The HTTP status that carries a JSON-RPC error other than `-32020`.
-- **Q10.** That the tool members `title`, `annotations.readOnlyHint`,
-  `destructiveHint`, `idempotentHint` and `openWorldHint`, and the image block
-  members `type`, `data` and `mimeType`, are spelled this way in this revision.
-- **Q11.** That `tools/list` may omit a cursor when everything fits one page,
-  and that JSON Schema 2020-12 is the dialect for tool schemas.
-- **Q12.** `MAX_LONG_EDGE` 2576 and `MAX_PIXELS` 3,750,000 against the
-  provider's computer-use documentation (required by the plan before v1.0).
-- **Q13.** Whether the provider's 5 MB image limit counts the encoded bytes or
-  the base64 text. If it counts base64, `MAX_IMAGE_BYTES` must drop to
-  3,750,000 and the response limit with it.
-- **Q14.** That a call to an unknown tool is `-32602` in this revision, as it
-  was in earlier ones. The plan only says it is a JSON-RPC error.
-- **Q15.** Whether a server must implement any method besides
-  `server/discover` and the tool methods (for example `ping`). This draft
-  answers `-32601` to everything else.
-- **Q16.** The wording of the transport's bind-to-localhost guidance. The plan
-  quotes it as "SHOULD bind localhost when running locally"; section 2.1
-  records the departure on that basis.
+| Request | What changes for it |
+| --- | --- |
+| deskhand-r-nkjj | The "Tools" list of the shared contract gains `lease`: six tools in place of five. The state rule reads "every tool except `status` and `lease`". |
+| crew-r-yqso | The same list. "Classification" is unchanged: `lease` is not one of the three reads, so it is an effect by Crew's unknown-tool rule. "Lease": Crew's executor acquires and renews with `lease`, never with `status`. |
+| birbhomes-r-5elb | The same list. Nothing in the network path changes. |
+| birbhomes-r-ttg5 | Nothing. |
+
+### 17.5 Clarifications
+
+These make the request text more exact without departing from it. They need
+no approval note, and they are listed so that nobody finds them by surprise.
+
+1. **"The latest frame" is per holder.** The shared contract refuses an
+   effect when "the frame is not the latest for that display". This document
+   judges "latest" per (principal, `holder_id`, `display_id`)
+   ([section 4.2](#42-frame_id), reason `not_latest` in
+   [section 8.3](#83-frame-staleness)). A screenshot taken under one
+   `holder_id` does not make another holder's frame stale. Only the lease
+   holder can post input, so only its frames matter for an effect.
+2. **A lost acknowledgement is looked up, not retried.** crew-r-yqso says
+   that a click or keystroke whose acknowledgement was lost "is recorded as
+   uncertain and never retried". `status` with `operation` lets Crew resolve
+   the uncertainty without sending the call again
+   ([section 12.5](#125-repeats-and-stored-results)).
+
+## 18. Verified against the specification on 2026-11-14
+
+The statements this document makes about MCP `2026-07-28` and about provider
+image limits were read from the published text on 2026-11-14. Earlier drafts
+marked them **(Q1)** to **(Q16)** as open; the markers are gone, and the
+answers are below.
+
+Sources. MCP pages are under
+`https://modelcontextprotocol.io/specification/2026-07-28/`, and provider
+pages under `https://platform.claude.com/docs/en/`.
+
+| Source | Page |
+| --- | --- |
+| S1 | `changelog` |
+| S3 | `basic/transports/streamable-http` |
+| S4 | `server/tools` |
+| S5 | `server/discover` |
+| S7 | `schema` |
+| S8 | `basic/index` |
+| S9 | `server/utilities/pagination` |
+| S10 | `computer-use-tool` (provider) |
+| S11 | `build-with-claude/vision` (provider) |
+| S12 | `server/utilities/caching` |
+
+| Was | Verified fact | Source | Where it is used |
+| --- | --- | --- | --- |
+| Q1 | `params._meta["io.modelcontextprotocol/protocolVersion"]` is a required string on every request and must match the `MCP-Protocol-Version` header, else `400`. | S7 | 2.3, 2.4, 3 |
+| Q2 | `resultType` is `"complete"` or `"input_required"` (or an extension string). | S7, S8 | 3 |
+| Q3 | `server/discover` takes only `_meta`. Its result has `supportedVersions`, `capabilities`, `_meta["io.modelcontextprotocol/serverInfo"]`, optional `instructions`, `ttlMs` and `cacheScope`. | S5, S7 | 3.1 |
+| Q4 | `-32022` is an unsupported protocol version. `-32020` is a header mismatch, or a required header that is missing or malformed. `-32021` is a missing required client capability. A server must not send `-32002` or `-32042`. | S7, S8 | 2.3, 9.4 |
+| Q5 | A missing `MCP-Protocol-Version`, `Mcp-Method` or required `Mcp-Name` is `400` with `-32020`. `Mcp-Name` is required on `tools/call`. Non-ASCII header values are sent as `=?base64?...?=`. Header names are case-insensitive and values case-sensitive. | S3 | 2.3 |
+| Q6 | A client must list both `application/json` and `text/event-stream` in `Accept`. The server chooses JSON or a stream for each request, so a server that only answers JSON conforms. | S3 | 2.1, 2.3 |
+| Q7 | An accepted notification is answered `202` with no body. This revision defines no notification from client to server over HTTP. A sessionless server ignores `Mcp-Session-Id`. | S1, S3 | 2.1, 2.4 |
+| Q9 | `-32020`, `-32021` and `-32022` are `400`. An unknown method is `404` with `-32601`. A missing required `_meta` member is `400` with `-32602`. A bad `Origin` is `403`. | S3, S7, S8 | 2.4, 9.4 |
+| Q10 | `title` is optional. The annotation defaults are `readOnlyHint` false, `destructiveHint` true, `idempotentHint` false, `openWorldHint` true. An image block is `{type: "image", data, mimeType}`. | S7 | 3.2, 3.3 |
+| Q11 | `nextCursor` is optional, and its absence means the end of the list. JSON Schema 2020-12 is the default dialect of `inputSchema` and `outputSchema`. | S4, S9 | 3.2 |
+| Q12 | The long edge limit is 2576 px. "About 3.75 megapixels" approximates a cap of 4784 visual tokens and is not a pixel cap. An image over the limit in a tool result is rejected, not downscaled. | S10 | 7, 17.1 |
+| Q13 | The image size limit counts the base64 text: 10 MB on the Claude API and 5 MB on Bedrock. | S11 | 2.5, 7 |
+| Q14 | A call to an unknown tool is JSON-RPC `-32602` with the message `Unknown tool: <name>`. | S4 | 2.4, 9.4 |
+| Q15 | `server/discover` is mandatory. `tools/list` is mandatory with the `tools` capability. `ping` was removed in this revision. | S1, S4, S5 | 3 |
+| Q16 | "Servers MUST validate the Origin header on all incoming connections to prevent DNS rebinding attacks." "When running locally, servers SHOULD bind only to localhost (127.0.0.1) rather than all network interfaces (0.0.0.0)." | S3 | 2.1, 2.3 |
+| new | Results of `server/discover` and `tools/list` must carry the caching hints `ttlMs` (an integer of at least 0) and `cacheScope` (`"public"` or `"private"`). | S12 | 3 |
+
+**Still open.** The specification does not state these points, so this
+document makes a choice and says so. None of them blocks an implementation.
+
+- **Whether `outputSchema` governs an error result (was Q8).** Not stated.
+  Each output schema here includes the tool's error shape, so
+  `structuredContent` conforms either way
+  ([section 3.2](#32-toolslist)).
+- **`Mcp-Name` on methods that name nothing (part of Q5).** Not stated.
+  deskhand ignores the header on `server/discover` and `tools/list`.
+- **The HTTP status of `-32700`, `-32600`, `-32603` and of `-32602` for an
+  unknown tool (part of Q9).** Not stated. This contract answers `400`,
+  `400`, `200` and `200` ([section 9.4](#94-json-rpc-errors)).
+- **How a provider counts visual tokens (part of Q12).** The provider
+  documentation gives the cap, not one formula that this document can rely
+  on. `MAX_PIXELS` is chosen to stay under the cap whether tokens are
+  counted by area or by 28 px patches
+  ([section 7](#7-screenshot-sizing-and-encoding)). Before v1.0 a default
+  screenshot from each Mac must be shown to be accepted by each engine.
 
 ## 19. Schema index
 
@@ -1958,23 +2650,33 @@ alone would accept a trailing newline.
 
 | File | Contents |
 | --- | --- |
-| `defs.json` | Shared definitions: `state`, `condition`, `error_code`, `holder_id`, `operation_id`, `frame_id`, `rect`, `point`, `frame_point`, `key`, `modifiers`, `measured`, `lease_view`, `effect_result`, `tool_error` and others. |
-| `tools/<tool>.input.json` | The `arguments` of each tool. |
-| `tools/<tool>.output.json` | The `structuredContent` of each tool: success or `tool_error`. |
+| `defs.json` | Shared definitions: `state`, `condition`, `error_code`, `holder_id`, `operation_id`, `frame_id`, `rect`, `point`, `frame_point`, `key`, `modifiers`, `app_ref`, `measured`, `lease_view`, `operation_view`, `effect_result`, `tool_error` and others. |
+| `tools/<tool>.input.json` | The `arguments` of each of the six tools: `status`, `displays`, `screenshot`, `pointer`, `keyboard`, `lease`. |
+| `tools/<tool>.output.json` | The `structuredContent` of each tool: its success shape, or `tool_error` limited to the codes that tool can return. |
 | `allowance.json` | The contents of the LAN-gate allowance file ([section 14](#14-allowance-file-format)). Self-contained, and not served by `tools/list`. |
 | `examples/<tool>.<input\|output>.<name>.json` | Instances that validate against the schema named by the first two parts. |
 | `examples/invalid/<tool>.<input\|output>.<name>.json` | Instances that MUST be rejected by that schema. |
 | `examples/allowance.<name>.json`, `examples/invalid/allowance.<name>.json` | Instances that validate against `allowance.json`, and instances that it MUST reject. |
-| `examples/wire/*.json` | Whole JSON-RPC messages. In `tools-call.<tool>.<name>.<request\|response>.json`, `params.arguments` and `result.structuredContent` validate against the tool's schemas. |
+| `examples/wire/*.json` | Whole JSON-RPC messages. Every request carries `params._meta["io.modelcontextprotocol/protocolVersion"]`. In `tools-call.<tool>.<name>.<request\|response>.json`, `params.arguments` and `result.structuredContent` validate against the tool's schemas. |
+
+Three rules of this document are checked by deskhand and cannot be stated in
+a schema: `ttl_ms` is absent on a `lease` `release` (input schemas stay
+flat), an image has at most 3,588,000 pixels (a schema cannot multiply), and
+a timestamp of 29 February falls in a leap year (the `date-time` format,
+which a validator MUST assert, catches it).
 
 ## Appendix A. Decisions made in this draft
 
 The plan did not settle these. They are listed so the owner and Crew can
-object before v1.0. Items 1 to 24 come from the wire surface (0.1-draft) and
-items 25 to 46 from the behavior sections (0.9-draft).
+object before v1.0. Items 1 to 24 come from the wire surface (0.1-draft),
+items 25 to 46 from the behavior sections (0.9-draft) and items 47 to 66 from
+the foundation review (0.10-draft). Items 1, 11, 12, 27 and 46 were changed
+by that review.
 
-1. Lease operations ride on `status` as an optional `lease` argument, and a
-   refused lease operation is reported in `lease_result`, not as a tool error.
+1. Lease operations are a sixth tool, `lease` (amendment 4). `status` is a
+   pure read with no `lease` argument. A refused lease operation is reported
+   in `lease_result`, not as a tool error. (Until 0.9-draft they rode on
+   `status`.)
 2. Lease operations are refused only in `gated`, `paused` and `disarmed`;
    `release` is allowed in every state; `renew` never acquires.
 3. Lease lifetime is chosen per call, 5 to 120 s, default 30 s.
@@ -1992,9 +2694,11 @@ items 25 to 46 from the behavior sections (0.9-draft).
 10. Patch constants 64 px, 16 of 255, 2%; `drag` checks its first and last
     point.
 11. `USER_ACTIVITY_LOOKBACK_MS` 3,000; `FRAME_MAX_AGE_MS` default 60,000;
-    `ACTIONS_PER_MINUTE` default 60, counting admitted calls only.
-12. `MAX_IMAGE_BYTES` is 5,000,000 (decimal) measured before base64; request
-    body 65,536 bytes; response body 7,000,000 bytes.
+    `ACTIONS_PER_MINUTE` default 60, counting admitted calls and the
+    refusals of item 55.
+12. `MAX_IMAGE_BYTES` is 3,750,000 (decimal) measured before base64, which
+    is 5,000,000 base64 characters; request body 65,536 bytes; response body
+    5,400,000 bytes.
 13. Endpoint path `/mcp`; TLS 1.3 and HTTP/1.1 only; JSON responses only; `421`
     for a wrong `Host`; `Host` carries the Service port.
 14. No input held between calls: no press or release actions; press-and-hold
@@ -2020,7 +2724,10 @@ items 25 to 46 from the behavior sections (0.9-draft).
     `displays` result therefore always has `asleep` `false` in v0.
 26. deskhand starts `disarmed`. Neither arming nor `paused` survives a
     restart, and `paused` ends only by arming.
-27. `gated` does not end arming.
+27. `gated` ends arming by default. The per-Mac setting `gated_ends_arming`
+    (default `true`) turns that off. **For the owner to confirm:** 0.9-draft
+    said the opposite, and the review argued that a laptop that left the LAN
+    should not resume driving by itself when it comes home.
 28. Leaving `ok` also stops read calls in flight: a screenshot that was not
     yet returned is discarded.
 29. An unreadable or uncertain signal makes its state hold. This widens the
@@ -2060,4 +2767,66 @@ items 25 to 46 from the behavior sections (0.9-draft).
     deskhand keeps running as `gated`. `SIGTERM` ends the process within 1 s,
     records the operation in flight as `aborted_by_restart` with an exact
     count, and sends that call no response.
-46. `contract_version` follows the document version and is `0.9-draft`.
+46. `contract_version` follows the document version and is `0.10-draft`. The
+    `status` output schema fixes it as a constant.
+47. `status` reports the lease only as `held_by_caller` plus its times, and
+    only for a `holder_id` that the call names. No result carries a
+    `holder_id`, and `{held_by_caller: false}` does not say whether the
+    lease is free.
+48. The `lease` result is `{lease_result, lease}`. A refused `acquire` with
+    `lease_held_by_other` carries the other lease's `expires_in_ms`. `lease`
+    has no `operation_id`, answers in every state and has only
+    `invalid_argument` and `internal_error` as tool errors.
+49. `ttl_ms` on a `release` is `invalid_argument`. The flat input schema
+    cannot state it.
+50. `status` with `operation` is a read-only record lookup. It reports a
+    call that is being admitted as `accepted` with 0 events, and returns
+    `status` and `events_posted` but not the stored result.
+51. One admission section per Mac, entered by an atomic test-and-set and
+    held until the final record write. A call that finds it held gets
+    `operation_in_progress`, `operation_id_conflict` or `busy` at once,
+    before the record lookup, so a replay can get `busy` while another
+    effect runs.
+52. `operation_in_progress` and `operation_id_conflict` carry `operation`
+    as `accepted` with 0 events for a first call that is still being
+    admitted.
+53. The last look: state, deadline, activity and app policy are checked
+    again immediately before the first event, and a patch check older than
+    `PATCH_CHECK_MAX_AGE_MS` (250 ms) ends the call with `stale_frame` and
+    0 events.
+54. App identity is (bundle identifier, team identifier). Apple's own
+    software has no team identifier and needs an allowlist entry that says
+    so. An unidentifiable app, a point with no window and an unreadable
+    keyboard focus are `denied_app`. deskhand's own bundle is always denied.
+55. `denied_app` and `denied_shortcut` refusals before admission count
+    toward the action ceiling. The ceiling is one counter per Mac over a
+    sliding 60 s window.
+56. `keyboard` checks the owner of keyboard focus and reports it as
+    `measured.target_app`, which was `null` for `keyboard` until 0.9-draft.
+57. `measured.window_title` is `null` on every `denied_app` and for every
+    app on the capture exclusion list.
+58. A drag is checked along its whole path at steps of 8 frame pixels,
+    checks the next point before each move, and reports its last point in
+    `measured.drag_end`. `denied_app` carries `details.point_index` when a
+    point caused it.
+59. The default denied shortcut list of [section 6.9](#69-app-policy), the
+    superset rule, and that a bare key can be denied.
+60. Arming, extending arming and leaving `paused` are not accepted from
+    posted input, while an operation executes, or within 3 s of deskhand's
+    last posted event.
+61. The client certificate needs the `clientAuth` extended key usage and
+    the subject configured for the Mac. The principal's key is the RFC 4514
+    string of the DER-encoded subject.
+62. The operation digest is HMAC-SHA-256 with a per-install key. A lost key
+    turns repeats of old operations into `operation_id_conflict`.
+63. Duplicate member names and invalid Unicode are refused: `-32700`
+    outside `params.arguments`, `invalid_argument` inside.
+64. deskhand retries a failed bind at least every 5 s and does not exit.
+65. Action log entries: the fields of
+    [section 12.10](#1210-action-log-entries), with `principal`,
+    `holder_id`, kind and action added to the list in deskhand-r-nkjj. A
+    refused effect call is logged once, best effort.
+66. `server/discover` and `tools/list` send `ttlMs` 300,000 and `cacheScope`
+    `private`. `server/discover` sends no `instructions`. A notification is
+    answered `202` only after the version header checks. A timestamp that is
+    not a real UTC instant, including a leap second, is invalid.

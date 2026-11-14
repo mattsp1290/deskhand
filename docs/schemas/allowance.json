@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deskhand.invalid/schemas/allowance.json",
   "title": "deskhand LAN-gate allowance file",
-  "description": "Contents of the allowance file that the LAN gate (birbhomes-r-ttg5) publishes and deskhand reads (docs/contract.md section 14, 0.9-draft). The $id is an identifier, not a location. This schema checks the shape only. deskhand also checks that mac names this Mac, that expires_at is later than not_before, the clock, and the file's owner, mode and directory. Self-contained on purpose, so the publisher can validate against it without the other deskhand schemas.",
+  "description": "Contents of the allowance file that the LAN gate (birbhomes-r-ttg5) publishes and deskhand reads (docs/contract.md section 14, 0.10-draft). The $id is an identifier, not a location. This schema checks the shape and that each timestamp is a possible one. deskhand also checks that mac names this Mac, that expires_at is later than not_before, the clock, and the file's owner, mode and directory. Self-contained on purpose, so the publisher can validate against it without the other deskhand schemas.",
   "$comment": "The patterns follow the rule of defs.json: an anchored pattern plus a not-pattern over the forbidden characters, so that a trailing newline is rejected in every regex engine. $defs.timestamp is a copy of defs.json#/$defs/timestamp and must stay identical to it.",
   "type": "object",
   "properties": {
@@ -31,12 +31,12 @@
   "additionalProperties": false,
   "$defs": {
     "timestamp": {
-      "description": "UTC RFC 3339 timestamp with a literal Z offset and at most 9 fraction digits.",
+      "description": "UTC RFC 3339 timestamp with a literal Z offset and at most 9 fraction digits. It must be a real UTC instant. The pattern rejects an impossible month, day, hour, minute or second, including a leap second (:60). 29 February of a year that is not a leap year passes the pattern, so a validator must also assert the date-time format; deskhand rejects it either way.",
       "type": "string",
       "format": "date-time",
       "minLength": 20,
       "maxLength": 30,
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "pattern": "^[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|[12][0-9]))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$",
       "not": { "pattern": "[^0-9TZ:.-]" }
     }
   }

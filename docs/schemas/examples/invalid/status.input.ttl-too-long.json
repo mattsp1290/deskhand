@@ -1,7 +1,0 @@
-{
-  "lease": {
-    "op": "acquire",
-    "holder_id": "crew:inst-7f3a:desk-lunus",
-    "ttl_ms": 600000
-  }
-}

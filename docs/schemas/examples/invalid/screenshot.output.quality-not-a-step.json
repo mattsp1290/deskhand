@@ -14,11 +14,11 @@
     "height": 2234
   },
   "output_pixel_size": {
-    "width": 2408,
-    "height": 1556
+    "width": 2355,
+    "height": 1522
   },
   "point_pixel_scale": 2,
-  "downscale": 0.6969268274967688,
+  "downscale": 0.6817070194446376,
   "format": "jpeg",
   "mime_type": "image/jpeg",
   "jpeg_quality": 80,

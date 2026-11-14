@@ -1,13 +1,13 @@
 {
   "code": "out_of_frame",
-  "message": "Point 0 (2408, 778) is outside the 2408 x 1556 frame.",
+  "message": "Point 0 (2355, 778) is outside the 2355 x 1522 frame.",
   "state": "ok",
   "operation_id": "call_01HZX3M9Q3",
   "details": {
     "point_index": 0,
     "output_pixel_size": {
-      "width": 2408,
-      "height": 1556
+      "width": 2355,
+      "height": 1522
     }
   }
 }

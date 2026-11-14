@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.9-draft",
+  "contract_version": "0.10-draft",
   "mcp_protocol_version": "2026-07-28",
   "server_version": "0.1.0",
   "mac": "lunus-macbook-pro",
@@ -14,8 +14,8 @@
   "limits": {
     "max_long_edge": 2576,
     "min_long_edge": 256,
-    "max_pixels": 3750000,
-    "max_image_bytes": 5000000,
+    "max_pixels": 3588000,
+    "max_image_bytes": 3750000,
     "frame_max_age_ms": 60000,
     "user_activity_lookback_ms": 3000,
     "actions_per_minute": 60,

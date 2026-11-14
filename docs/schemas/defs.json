@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deskhand.invalid/schemas/defs.json",
   "title": "deskhand shared definitions",
-  "description": "Shared definitions for the deskhand wire contract (docs/contract.md, 0.9-draft). The $id is an identifier, not a location. Tool schemas reference these with ../defs.json#/$defs/NAME; tools/list serves each tool schema with these definitions copied into its own $defs.",
+  "description": "Shared definitions for the deskhand wire contract (docs/contract.md, 0.10-draft). The $id is an identifier, not a location. Tool schemas reference these with ../defs.json#/$defs/NAME; tools/list serves each tool schema with these definitions copied into its own $defs.",
   "$comment": "Every string with a restricted alphabet carries both an anchored pattern and a not-pattern over the forbidden characters. In ECMA-262 the anchored pattern is enough, but in engines where $ also matches before a final line terminator (Python re, and ICU as used by NSRegularExpression) it would accept a trailing newline. The not-pattern closes that gap in every engine.",
   "$defs": {
     "state": {
@@ -115,12 +115,12 @@
       "not": { "pattern": "[^0-9a-f]" }
     },
     "timestamp": {
-      "description": "UTC RFC 3339 timestamp with a literal Z offset and at most 9 fraction digits.",
+      "description": "UTC RFC 3339 timestamp with a literal Z offset and at most 9 fraction digits. It must be a real UTC instant. The pattern rejects an impossible month, day, hour, minute or second, including a leap second (:60). 29 February of a year that is not a leap year passes the pattern, so a validator must also assert the date-time format; deskhand rejects it either way.",
       "type": "string",
       "format": "date-time",
       "minLength": 20,
       "maxLength": 30,
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "pattern": "^[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|[12][0-9]))T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?Z$",
       "not": { "pattern": "[^0-9TZ:.-]" }
     },
     "display_id": {
@@ -220,7 +220,7 @@
       "not": { "pattern": "[^A-Za-z0-9._-]" }
     },
     "permitted_apps": {
-      "description": "Optional caller-side narrowing of the per-Mac app policy. When present, the measured frontmost app, and for pointer calls the app that owns the topmost window under the target (for drag, under the first and the last point of path), must be in this list as well as on the Mac's own allowlist. It can never widen the Mac's policy.",
+      "description": "Optional caller-side narrowing of the per-Mac app policy. When present, every app the app-policy check measures (the frontmost app; for pointer the owner of the topmost window under each checked point; for keyboard the app that owns keyboard focus) must have its bundle identifier in this list as well as being allowed by the Mac's own policy. It can never widen the Mac's policy.",
       "type": "array",
       "items": { "$ref": "#/$defs/bundle_id" },
       "minItems": 1,
@@ -228,38 +228,55 @@
       "uniqueItems": true
     },
     "app_ref": {
-      "description": "An application as measured by deskhand.",
+      "description": "An application as measured by deskhand. Its identity for the app policy is the pair (bundle_id, team_id). When deskhand cannot determine the app at all, bundle_id and team_id are null and name is the empty string; the app policy never allows such an app.",
       "type": "object",
       "properties": {
         "bundle_id": {
-          "description": "Null when the process has no bundle identifier.",
+          "description": "Null when the process has no bundle identifier or it could not be read. An app with a null bundle_id is never allowed.",
           "type": ["string", "null"]
         },
         "team_id": {
-          "description": "Code-signing team identifier, or null when unsigned or unavailable.",
+          "description": "Code-signing team identifier. Null when the code has none: software signed by Apple as part of macOS, and unsigned or ad-hoc signed code. The app policy tells those cases apart; the wire does not.",
           "type": ["string", "null"]
         },
         "name": { "type": "string" }
       },
       "required": ["bundle_id", "team_id", "name"]
     },
+    "identified_app": {
+      "description": "An app_ref whose bundle identifier is known. Every app on a successful effect result is one, because the app policy refuses an app it cannot identify.",
+      "allOf": [
+        { "$ref": "#/$defs/app_ref" },
+        { "properties": { "bundle_id": { "type": "string", "minLength": 1 } } }
+      ]
+    },
     "measured": {
-      "description": "Facts deskhand measured at the app-policy check immediately before the first event of an effect call. On a denied_app that aborts a call part-way, the facts measured at the check that failed.",
+      "description": "Facts deskhand measured at the app-policy check immediately before the first event of an effect call. On denied_app, the facts measured at the check that failed.",
       "type": "object",
       "properties": {
         "frontmost_app": { "$ref": "#/$defs/app_ref" },
         "target_app": {
-          "description": "pointer: the app that owns the topmost window under the first target point. keyboard: null.",
+          "description": "pointer: the app that owns the topmost window under the first target point. keyboard: the app that owns keyboard focus. On denied_app: the app at the point or focus check that failed. Null only on an error, when the check that failed came before deskhand measured it.",
           "anyOf": [{ "$ref": "#/$defs/app_ref" }, { "type": "null" }]
         },
         "window_title": {
-          "description": "pointer: title of the topmost window under the first target point. keyboard: title of the frontmost app's focused window. Null when there is no window or the title is unavailable. Truncated to 512 characters.",
+          "description": "pointer: title of the topmost window under the first target point. keyboard: title of the focused window of the app that owns keyboard focus. Null when there is no title, on every denied_app, and whenever the app is on the Mac's capture exclusion list. Cut to 512 Unicode scalar values.",
           "type": ["string", "null"],
           "maxLength": 512
         },
         "global_point": {
-          "description": "pointer: the global point the first target mapped to. keyboard: null.",
+          "description": "pointer: the global point the first target mapped to; on denied_app, the point whose check failed. keyboard: null.",
           "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }]
+        },
+        "drag_end": {
+          "description": "pointer drag only: the same three facts for the last point of path, measured at the same check, before the button goes down.",
+          "type": "object",
+          "properties": {
+            "target_app": { "$ref": "#/$defs/app_ref" },
+            "window_title": { "type": ["string", "null"], "maxLength": 512 },
+            "global_point": { "$ref": "#/$defs/point" }
+          },
+          "required": ["target_app", "window_title", "global_point"]
         },
         "measured_at": { "$ref": "#/$defs/timestamp" }
       },
@@ -310,12 +327,12 @@
       ]
     },
     "lease_view": {
-      "description": "The live lease as visible to the caller.",
+      "description": "The lease as seen from the (principal, holder_id) that the call names. It never carries a holder_id: a caller learns whether the holder it named holds the lease, and nothing about any other holder.",
       "type": "object",
       "properties": {
-        "holder_id": {
-          "description": "The holder label. Null when the lease is held under a different principal.",
-          "anyOf": [{ "$ref": "#/$defs/holder_id" }, { "type": "null" }]
+        "held_by_caller": {
+          "description": "True exactly when the named (principal, holder_id) holds the live lease.",
+          "type": "boolean"
         },
         "acquired_at": { "$ref": "#/$defs/timestamp" },
         "expires_at": { "$ref": "#/$defs/timestamp" },
@@ -325,7 +342,21 @@
           "minimum": 0
         }
       },
-      "required": ["holder_id", "acquired_at", "expires_at", "expires_in_ms"]
+      "required": ["held_by_caller"],
+      "if": {
+        "properties": { "held_by_caller": { "const": true } },
+        "required": ["held_by_caller"]
+      },
+      "then": { "required": ["acquired_at", "expires_at", "expires_in_ms"] },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["acquired_at"] },
+            { "required": ["expires_at"] },
+            { "required": ["expires_in_ms"] }
+          ]
+        }
+      }
     },
     "effect_result": {
       "description": "structuredContent of a successful pointer or keyboard call.",
@@ -339,7 +370,18 @@
           "type": "boolean"
         },
         "frame_id": { "$ref": "#/$defs/frame_id" },
-        "measured": { "$ref": "#/$defs/measured" },
+        "measured": {
+          "description": "On a success the frontmost app and the target app are both identified, because the app policy refuses anything else.",
+          "allOf": [
+            { "$ref": "#/$defs/measured" },
+            {
+              "properties": {
+                "frontmost_app": { "$ref": "#/$defs/identified_app" },
+                "target_app": { "$ref": "#/$defs/identified_app" }
+              }
+            }
+          ]
+        },
         "completed_at": { "$ref": "#/$defs/timestamp" }
       },
       "required": [
@@ -368,7 +410,7 @@
         },
         "operation_id": { "$ref": "#/$defs/operation_id" },
         "operation": {
-          "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists. Absent means no input was ever posted for this operation_id.",
+          "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists, and on operation_in_progress or operation_id_conflict for a call that is still being admitted (status accepted, events_posted 0). Absent means no input was ever posted for this operation_id.",
           "$ref": "#/$defs/operation_view"
         },
         "replayed": {
@@ -390,7 +432,11 @@
               "description": "JSON Pointer (RFC 6901) into arguments naming the offending value.",
               "type": "string"
             },
-            "point_index": { "type": "integer", "minimum": 0 },
+            "point_index": {
+              "description": "Index into the pointer action's points: 0 for move, click and scroll; an index into path for drag.",
+              "type": "integer",
+              "minimum": 0
+            },
             "output_pixel_size": { "$ref": "#/$defs/pixel_size" },
             "image_bytes": { "type": "integer", "minimum": 0 },
             "max_image_bytes": { "type": "integer", "minimum": 0 },
@@ -486,7 +532,12 @@
           },
           "then": {
             "required": ["details", "measured"],
-            "properties": { "details": { "required": ["denied_by"] } }
+            "properties": {
+              "details": { "required": ["denied_by"] },
+              "measured": {
+                "properties": { "window_title": { "const": null } }
+              }
+            }
           }
         },
         {
@@ -515,6 +566,117 @@
             "required": ["details"],
             "properties": { "details": { "required": ["expires_in_ms"] } }
           }
+        },
+        {
+          "$comment": "Only the codes of contract section 9.2 carry details.",
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "invalid_argument",
+                  "stale_frame",
+                  "out_of_frame",
+                  "image_too_large",
+                  "user_active",
+                  "denied_app",
+                  "denied_shortcut",
+                  "lease_held_by_other"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "else": { "not": { "required": ["details"] } }
+        },
+        {
+          "$comment": "These four codes always describe an operation that another call started.",
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "operation_in_progress",
+                  "operation_id_conflict",
+                  "interrupted",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": { "required": ["operation_id", "operation"] }
+        },
+        {
+          "if": {
+            "properties": { "code": { "enum": ["interrupted", "cancelled"] } },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["replayed"],
+            "properties": { "replayed": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "gated" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "gated" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "paused" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "paused" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "disarmed" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "disarmed" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "not_console" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "not_console" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "locked" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "locked" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "display_asleep" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "display_asleep" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "permission_missing" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "permission_missing" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "permission_stale" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "permission_stale" } } }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "secure_input" } },
+            "required": ["code"]
+          },
+          "then": { "properties": { "state": { "const": "secure_input" } } }
         }
       ]
     }
