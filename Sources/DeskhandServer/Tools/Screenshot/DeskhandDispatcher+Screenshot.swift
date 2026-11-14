@@ -54,11 +54,19 @@ extension DeskhandDispatcher {
         // Nobody is left to receive the image, so no frame is minted for it.
         guard !Task.isCancelled else { throw internalError("The caller closed the connection.") }
         guard image.size == expected, image.pixels.size == expected.output, !image.bytes.isEmpty,
+            image.encoding.format == request.format,
             let geometry = FrameGeometry(
                 captureRect: area.captureRect, outputPixelSize: expected.output, displayBounds: area.display.bounds)
         else {
             try refuseUnlessOK()
             throw internalError("The platform's capture does not match the request.")
+        }
+        // The capturer applies the limit as it encodes; it is checked again here because an image
+        // over it must never reach the caller, whatever the platform did (contract 7).
+        guard image.bytes.count <= request.maxImageBytes else {
+            try refuseUnlessOK()
+            throw ToolError(
+                .imageTooLarge(imageBytes: image.bytes.count), message: Self.imageTooLargeMessage, state: start.state)
         }
 
         let capture = FrameCapture(

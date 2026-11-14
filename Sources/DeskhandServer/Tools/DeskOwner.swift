@@ -84,12 +84,16 @@ public final class DeskOwner: StateSource, FrameSource {
     /// the effects require, all under one lock. The app's state owner calls it from
     /// ``WatchdogStateOwner/reduceNow(allowanceChanged:)``, then forwards ``Reduction/interruptions``
     /// to the executor and calls ``Watchdog/refreshState()``.
+    ///
+    /// `signals` is read under the lock, so reductions apply in the order their readings were
+    /// taken: a reduction that read the signals before a newer one cannot apply after it and
+    /// reopen a state the newer one closed. It must not call back into this owner.
     @discardableResult
-    public func reduce(signals: StateSignals, command: ArmingCommand? = nil) -> Reduction {
+    public func reduce(signals: @autoclosure () -> StateSignals, command: ArmingCommand? = nil) -> Reduction {
         world.withLock { world in
             let reading = clock()
             let (report, effects) = StateReducer.reduce(
-                previous: world.report, signals: signals, command: command, configuration: stateConfiguration,
+                previous: world.report, signals: signals(), command: command, configuration: stateConfiguration,
                 now: reading)
             world.report = report
             var ends: [LeaseEnd] = []

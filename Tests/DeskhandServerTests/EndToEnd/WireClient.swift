@@ -10,9 +10,13 @@ import Testing
 struct WireResponse {
     let outcome: Outcome
     let mcp: MCPTestResponse?
+    /// The `tools/call` that got this answer, when it was sent through ``WireSession/call(_:_:)`` or
+    /// ``DeskhandStack/call(_:_:as:token:)``.
+    var sent: (tool: String, arguments: JSONObject?)?
 
-    init(_ outcome: Outcome) {
+    init(_ outcome: Outcome, sent: (tool: String, arguments: JSONObject?)? = nil) {
         self.outcome = outcome
+        self.sent = sent
         mcp = outcome.response.map { MCPTestResponse(HandlerResponse(status: $0.status, body: $0.body)) }
     }
 
@@ -30,7 +34,9 @@ struct WireSession {
     let token: String
 
     mutating func call(_ tool: String, _ arguments: JSONObject? = nil) async -> WireResponse {
-        await send(WireRequest.tool(tool, arguments, token: token))
+        var response = await send(WireRequest.tool(tool, arguments, token: token))
+        response.sent = (tool, arguments)
+        return response
     }
 
     mutating func send(_ request: TestRequest) async -> WireResponse {
@@ -51,7 +57,9 @@ extension DeskhandStack {
         _ tool: String, _ arguments: JSONObject? = nil, as client: TestPKI.Client = .valid,
         token: String = CredentialDirectory.firstToken
     ) async throws -> WireResponse {
-        try await send(WireRequest.tool(tool, arguments, token: token), as: client)
+        var response = try await send(WireRequest.tool(tool, arguments, token: token), as: client)
+        response.sent = (tool, arguments)
+        return response
     }
 
     func send(_ request: TestRequest, as client: TestPKI.Client? = .valid) async throws -> WireResponse {
@@ -208,11 +216,26 @@ enum ContractShape {
             broken.append("no operation_id or operation")
         }
         if ["interrupted", "cancelled"].contains(code), !replayed { broken.append("not replayed") }
-        if ["denied_app", "log_unavailable"].contains(code), content["measured"] == nil {
-            broken.append("no measured")
-        }
         if code == "denied_app", content["measured"]?["window_title"] != .null {
             broken.append("a window title on denied_app")
+        }
+        if code == "denied_app", content["measured"]?["drag_end"] != nil { broken.append("drag_end on denied_app") }
+        // `replayed` is there exactly on the result of an admitted call, which always has a record.
+        let admitted = content["replayed"] != nil
+        if admitted, content["operation"] == nil { broken.append("replayed without operation") }
+        let measuredRequired = ["denied_app", "log_unavailable"].contains(code) || (admitted && code != "interrupted")
+        if measuredRequired != (content["measured"] != nil) {
+            broken.append(measuredRequired ? "no measured" : "measured on a call that was not admitted")
+        }
+        if let sent = response.sent {
+            let effect = ["pointer", "keyboard"].contains(sent.tool)
+            let operationID = sent.arguments?["operation_id"]
+            if effect, let operationID, content["operation_id"] != operationID {
+                broken.append("operation_id is not echoed")
+            }
+            if !effect, content["operation_id"] != nil || content["operation"] != nil || admitted {
+                broken.append("operation members on \(sent.tool)")
+            }
         }
         return broken
     }

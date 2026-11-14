@@ -109,6 +109,8 @@ final class FakeCapturer: ScreenCapturer {
         var pointer: GlobalPoint? = GlobalPoint(x: 100, y: 50)
         /// Overrides the size the platform reports, to model a capture that disagrees with the request.
         var reportedSize: ScreenshotSize?
+        /// Overrides the encoding the platform reports, to model a capture in a format not asked for.
+        var reportedEncoding: ImageEncoding?
         var during: (@Sendable () async -> Void)?
     }
 
@@ -134,7 +136,7 @@ final class FakeCapturer: ScreenCapturer {
         }
         let output = size.output
         let pixels = FramePixels(size: output, rgb: Array(repeating: 90, count: output.width * output.height * 3))!
-        let encoding: ImageEncoding = request.format == .png ? .png : .jpeg(.q85)
+        let encoding: ImageEncoding = behavior.reportedEncoding ?? (request.format == .png ? .png : .jpeg(.q85))
         return CapturedImage(
             bytes: Array(repeating: 0xAB, count: behavior.imageBytes), encoding: encoding, size: size, pixels: pixels,
             pointerLocation: behavior.pointer)
@@ -149,6 +151,8 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
         var frontmost = ToolFixture.textEdit
         /// Read on every later identity read; models the front app changing during a capture.
         var nextFrontmost: [ObservedApp] = []
+        /// The app whose window is under every pointer target; the frontmost app when `nil`.
+        var underTarget: ObservedApp?
         var idleMs: Int? = 60_000
         var posted: [InputEvent] = []
         /// What ``postRelease(_:)`` let up, in order.
@@ -185,7 +189,8 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
     func keyboardFocus() -> ObservedWindow { ObservedWindow(owner: read(\.frontmost), title: "notes.txt") }
 
     func windows(at points: [GlobalPoint]) -> [ObservedWindow] {
-        points.map { _ in ObservedWindow(owner: read(\.frontmost), title: "notes.txt") }
+        let owner = read { $0.underTarget ?? $0.frontmost }
+        return points.map { _ in ObservedWindow(owner: owner, title: "notes.txt") }
     }
 
     func idleMilliseconds() -> Int? { read(\.idleMs) }
