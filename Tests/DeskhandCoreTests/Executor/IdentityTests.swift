@@ -41,6 +41,120 @@ struct IdentityTests {
         #expect(mac.ledgerOnDisk.isEmpty)
     }
 
+    @Test("typing aborts when another allowed app comes to the front and takes keyboard focus with it")
+    func appSwitchWhileTyping() async throws {
+        let mac = FakeMac {
+            $0.afterPost[2] = { world, _ in
+                world.frontmost = ExecutorFixture.notes
+                world.focus = ObservedWindow(owner: ExecutorFixture.notes, title: "list")
+            }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(try harness.keyboard(["type": "type", "text": "hello"]))
+
+        #expect(answer.code == .deniedApp)
+        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 2))
+        #expect(answer.details == ["denied_by": "policy"])
+        #expect(measured(answer)?["frontmost_app"]?["bundle_id"] == "com.apple.Notes")
+        #expect(mac.posted.count == 2)
+        #expect(mac.released == [.key(ExecutorFixture.carrier)])
+        #expect(mac.ledgerOnDisk.isEmpty)
+    }
+
+    @Test("a click on a background window of an allowed app completes when that app comes to the front")
+    func clickActivatesBackgroundWindow() async throws {
+        let mac = FakeMac {
+            $0.frontmost = ExecutorFixture.notes
+            $0.afterPost[2] = { world, _ in world.frontmost = ExecutorFixture.textEdit }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 20, "y": 30]))
+
+        let result = try #require(answer.result)
+        #expect(result.eventsPosted == 3)
+        #expect(result.measured.frontmostApp.bundleID == "com.apple.Notes")
+        #expect(result.measured.targetApp?.bundleID == "com.apple.TextEdit")
+        #expect(mac.posted.count == 3)
+        #expect(mac.ledgerOnDisk.isEmpty)
+        #expect(try await harness.status() == .found(OperationView(status: .completed, eventsPosted: 3)))
+    }
+
+    @Test("a click aborts when the front switches to an allowed app that does not own the clicked window")
+    func clickActivatesAnotherApp() async throws {
+        let preview = ExecutorFixture.app("com.apple.Preview", "Preview")
+        let mac = FakeMac {
+            $0.policy.allowed.insert(AllowedApp(bundleID: BundleID("com.apple.Preview")!, signer: .apple))
+            $0.frontmost = ExecutorFixture.notes
+            $0.afterPost[2] = { world, _ in world.frontmost = preview }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 20, "y": 30]))
+
+        #expect(answer.code == .deniedApp)
+        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 2))
+        #expect(answer.details == ["denied_by": "policy"])
+        #expect(measured(answer)?["frontmost_app"]?["bundle_id"] == "com.apple.Preview")
+        #expect(mac.released == [.button(.left)])
+        #expect(mac.ledgerOnDisk.isEmpty)
+    }
+
+    @Test("a switch to the clicked window's app before the button goes down aborts the click")
+    func switchToWindowOwnerBeforePress() async throws {
+        let mac = FakeMac {
+            $0.frontmost = ExecutorFixture.notes
+            $0.afterPost[1] = { world, _ in world.frontmost = ExecutorFixture.textEdit }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(try harness.pointer(["type": "click", "x": 20, "y": 30]))
+
+        #expect(answer.code == .deniedApp)
+        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 1))
+        #expect(mac.posted == [.pointerMove(to: GlobalPoint(x: 20.5, y: 30.5), dragging: nil)])
+    }
+
+    @Test("a drag from a background window keeps going when its app comes to the front over another window")
+    func dragActivatesBackgroundWindowLate() async throws {
+        let notesWindow = ObservedWindow(owner: ExecutorFixture.notes, title: "list")
+        // Activation lands only once the pointer is already over the Notes window.
+        let activate: FakeMac.Change = { world, _ in
+            guard case .posted(.pointerMove(let point, _))? = world.trace.last, point.x >= 100 else { return }
+            world.frontmost = ExecutorFixture.textEdit
+        }
+        let mac = FakeMac {
+            $0.frontmost = ExecutorFixture.notes
+            $0.windows = { point in point.x >= 100 ? notesWindow : IdentityTests.textEditWindow }
+            for index in 3...200 { $0.afterPost[index] = activate }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(
+            try harness.pointer([
+                "type": "drag", "path": [["x": 10, "y": 50], ["x": 200, "y": 50]], "duration_ms": 100,
+            ]))
+
+        let result = try #require(answer.result)
+        #expect(mac.read(\.frontmost) == ExecutorFixture.textEdit)
+        #expect(result.measured.frontmostApp.bundleID == "com.apple.Notes")
+        #expect(result.measured.dragEnd?.targetApp.bundleID == "com.apple.Notes")
+        #expect(result.eventsPosted == mac.posted.count)
+        #expect(mac.ledgerOnDisk.isEmpty)
+    }
+
+    @Test("after the front followed a click, a switch back to the app it left aborts")
+    func switchBackAfterActivation() async throws {
+        let mac = FakeMac {
+            $0.frontmost = ExecutorFixture.notes
+            $0.afterPost[2] = { world, _ in world.frontmost = ExecutorFixture.textEdit }
+            $0.afterPost[3] = { world, _ in world.frontmost = ExecutorFixture.notes }
+        }
+        let harness = try Harness(mac: mac)
+        let answer = await harness.executor.perform(
+            try harness.pointer(["type": "click", "x": 20, "y": 30, "count": 2]))
+
+        #expect(answer.code == .deniedApp)
+        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 3))
+        #expect(measured(answer)?["frontmost_app"]?["bundle_id"] == "com.apple.Notes")
+    }
+
     @Test("a change of keyboard focus to another allowed app aborts typing")
     func focusSwitch() async throws {
         let mac = FakeMac {

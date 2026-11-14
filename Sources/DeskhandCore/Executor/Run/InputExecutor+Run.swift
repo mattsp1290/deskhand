@@ -39,6 +39,15 @@ struct Execution: Sendable {
     var claim: SectionClaim { SectionClaim(key: call.key, digest: call.digest) }
 }
 
+/// What one check before an event, or at a poll while input is held, found.
+private struct Look {
+    /// The first cause in the order of contract 9.5, or `nil` when the event may be posted.
+    let stop: ToolErrorReason?
+    let reading: ClockReading
+    /// ``AppCheck/pointOwner`` as the policy decides on it, when the app check ran.
+    let pointOwner: AppIdentity?
+}
+
 /// How an executing operation ends (contract 12.2, 12.4).
 enum Ending: Sendable {
     case completed
@@ -83,8 +92,8 @@ extension InputExecutor {
             }
             if press?.isNew == true { execution.pressed.append(input) }
         }
-        let (stop, reading) = execution.hasStarted ? check(planned.target, execution) : lastLook(&execution)
-        if let stop {
+        let look = execution.hasStarted ? check(planned.target, &execution) : lastLook(&execution)
+        if let stop = look.stop {
             if let press, press.isNew {
                 try? ledger.withdraw(press)
                 if !ledger.pending().contains(press.input) { execution.pressed.removeAll { $0 == press.input } }
@@ -98,9 +107,12 @@ extension InputExecutor {
         }
         execution.eventsPosted += 1
         section = .executing(execution.claim, execution.ticket, eventsPosted: execution.eventsPosted)
-        execution.lastPostedAt = reading.wall
-        seams.observer.didPostEvent(at: reading.monotonic)
-        if planned.startsHold { execution.holdAnchor = reading.monotonic }
+        execution.lastPostedAt = look.reading.wall
+        seams.observer.didPostEvent(at: look.reading.monotonic)
+        if planned.startsHold { execution.holdAnchor = look.reading.monotonic }
+        if case .buttonDown = planned.event, let owner = look.pointOwner {
+            execution.binding?.didPostButtonDown(over: owner)
+        }
         if let cleared = planned.clears {
             do throws(HeldInputLedgerError) {
                 try ledger.didRelease(cleared)
@@ -116,7 +128,7 @@ extension InputExecutor {
     /// The last look (contract 12.3 step 5): the checks before the first event, which also take the
     /// facts `measured` reports, even when a check fails, and bind the identities the rest of the
     /// operation must keep.
-    private func lastLook(_ execution: inout Execution) -> (ToolErrorReason?, ClockReading) {
+    private func lastLook(_ execution: inout Execution) -> Look {
         let snapshot = seams.state.snapshot()
         let check = AppCheck.run(
             .lastLook, action: execution.action, permittedApps: execution.call.arguments.permittedApps, binding: nil,
@@ -132,23 +144,27 @@ extension InputExecutor {
         if stop == nil, !execution.call.connection.isOpen { stop = .cancelled }
         stop = Self.first(stop, interruptionCause(for: execution))
         if stop == nil { execution.binding = check.binding }
-        return (stop, snapshot.reading)
+        return Look(stop: stop, reading: snapshot.reading, pointOwner: check.pointOwner?.policyIdentity)
     }
 
     /// The checks before every later event and at every poll while input is held (contract 12.3
-    /// step 6, 12.4), stopping at the first cause in the order of contract 9.5.
-    private func check(_ target: CheckTarget, _ execution: Execution) -> (ToolErrorReason?, ClockReading) {
+    /// step 6, 12.4), stopping at the first cause in the order of contract 9.5. A frontmost switch
+    /// that the binding accepted is followed from here on.
+    private func check(_ target: CheckTarget, _ execution: inout Execution) -> Look {
         let snapshot = seams.state.snapshot()
         var stop = standingCause(of: execution, snapshot)
+        var appCheck: AppCheck?
         if stop == nil {
-            stop =
-                AppCheck.run(
-                    .event(target), action: execution.action, permittedApps: execution.call.arguments.permittedApps,
-                    binding: execution.binding, snapshot: snapshot, identity: seams.identity
-                ).denial
+            let check = AppCheck.run(
+                .event(target), action: execution.action, permittedApps: execution.call.arguments.permittedApps,
+                binding: execution.binding, snapshot: snapshot, identity: seams.identity)
+            stop = check.denial
+            appCheck = check
         }
         if stop == nil, !execution.call.connection.isOpen { stop = .cancelled }
-        return (Self.first(stop, interruptionCause(for: execution)), snapshot.reading)
+        stop = Self.first(stop, interruptionCause(for: execution))
+        if stop == nil, let appCheck { execution.binding?.follow(frontmost: appCheck.frontmost.policyIdentity) }
+        return Look(stop: stop, reading: snapshot.reading, pointOwner: appCheck?.pointOwner?.policyIdentity)
     }
 
     /// The state, the lease and the person at the Mac. The deadline is in the first two: the
@@ -188,7 +204,7 @@ extension InputExecutor {
                 of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
             if deadline > now { wait = min(wait, now.duration(to: deadline)) }
             await seams.timer.sleep(for: wait)
-            if let stop = check(target, execution).0 { return .stopped(stop) }
+            if let stop = check(target, &execution).stop { return .stopped(stop) }
         }
     }
 
