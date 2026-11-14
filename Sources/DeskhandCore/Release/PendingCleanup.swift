@@ -22,18 +22,24 @@ struct PendingCleanup {
         reset()
         guard !pressed.isEmpty else { return nil }
         let outcome = post(pressed, from: &ledger, through: handler, poster: poster, authorization: authorization)
-        settle(pending: ledger.pending(), context: context, at: instant)
+        settle(owed: !ledger.pending().isEmpty || !ledger.isAvailable, context: context, at: instant)
         return outcome
     }
 
     /// Every entry the ledger holds, newest first: releases that had to wait or failed, and restart
-    /// cleanup (contract 12.7 item 5, 12.9 step 5). A ledger that a failed write left unavailable is
-    /// read again first. An entry whose release already went out is only cleared.
+    /// cleanup (contract 12.7 item 5, 12.9 step 5). A ledger that could not be read, or that a
+    /// failed write left unavailable, is read again first. An entry whose release already went out
+    /// is only cleared. `nil` when the ledger holds no entry, or could not be read and knows none.
+    /// The caller then records the attempt with ``settle(owed:context:at:)``.
     mutating func releaseOwed(
         from ledger: inout HeldInputLedger, through handler: any ReleaseHandler, poster: ReleaseOnlyPoster,
-        authorization: () -> CleanupAuthorization, context: CleanupContext, at instant: ContinuousClock.Instant
-    ) -> CleanupOutcome {
+        authorization: () -> CleanupAuthorization
+    ) -> CleanupOutcome? {
         if !ledger.isAvailable { try? ledger.reload() }
+        guard !ledger.pending().isEmpty else {
+            postedUncleared = []
+            return nil
+        }
         postedUncleared.formIntersection(ledger.pending())
         var clearFailure: HeldInputLedgerError?
         for input in ledger.pending().reversed() where postedUncleared.contains(input) {
@@ -49,7 +55,6 @@ struct PendingCleanup {
         if !unposted.isEmpty {
             outcome = post(unposted, from: &ledger, through: handler, poster: poster, authorization: authorization)
         }
-        settle(pending: ledger.pending(), context: context, at: instant)
         switch outcome {
         case .deferred, .postFailed: return outcome
         case .complete, .clearFailed: return clearFailure.map(CleanupOutcome.clearFailed) ?? outcome
@@ -73,11 +78,14 @@ struct PendingCleanup {
         return outcome
     }
 
-    private mutating func settle(pending: [HeldInput], context: CleanupContext, at instant: ContinuousClock.Instant) {
-        if pending.isEmpty {
-            reset()
-        } else {
+    /// Records an attempt at `instant`. While something is still `owed` the next one is due a
+    /// second later, or at once when the context changes; otherwise the next time something is
+    /// owed it is tried at once.
+    mutating func settle(owed: Bool, context: CleanupContext, at instant: ContinuousClock.Instant) {
+        if owed {
             schedule.didAttempt(at: instant, context: context)
+        } else {
+            reset()
         }
     }
 }

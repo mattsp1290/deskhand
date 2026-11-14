@@ -12,9 +12,11 @@
 ///    retries of ``InputExecutor/retryCleanup(now:)`` post them once cleanup is authorized.
 ///
 /// A store that cannot be loaded (a corrupt journal, an unreadable ledger, a file or directory with
-/// the wrong owner or mode) fails closed: the executor refuses every effect with `internal_error`
-/// until ``InputExecutor/reloadUnavailableStores()`` reads it, `status` still answers, and the
-/// report says why. The file is left as it is, never taken for an empty one.
+/// the wrong owner or mode) fails closed: the executor refuses every effect with `internal_error`,
+/// and reports `cleanup_pending` while the ledger is unread, until a read succeeds. Each retry of
+/// ``InputExecutor/retryCleanup(now:)``, at least once a second, reads it again, and then posts
+/// what it owes; ``InputExecutor/reloadUnavailableStores()`` does so at once. `status` still
+/// answers, and the report says why. The file is left as it is, never taken for an empty one.
 ///
 /// Every step converges when repeated: the restart rules leave a final record alone, and a ledger
 /// entry is cleared only after its release went out. Recovering again, also after a crash part-way

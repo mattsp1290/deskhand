@@ -88,12 +88,13 @@ public actor InputExecutor {
     var logAttempts = ActionLogAttempts()
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
-    /// ledger as the previous run left it: any entry is owed a release.
+    /// ledger as the previous run left it: any entry is owed a release, and a ledger that could not
+    /// be read may hold some.
     public init(
         configuration: Configuration = Configuration(), seams: Seams, ledger: consuming sending HeldInputLedger,
         now: Timestamp
     ) {
-        let owesReleases = !ledger.pending().isEmpty
+        let owesReleases = !ledger.pending().isEmpty || !ledger.isAvailable
         self.seams = seams
         waitLimit = WaitLimit(duration: configuration.waitLimit, timer: seams.waitTimer)
         ceiling = ActionCeiling(actionsPerMinute: configuration.actionsPerMinute)
@@ -109,8 +110,12 @@ public actor InputExecutor {
     /// Whether a call is being admitted or is executing.
     public var isInSection: Bool { !section.isIdle }
 
-    /// `cleanup_pending` (contract 11.2): the ledger holds entries and no operation executes.
-    public var owesReleases: Bool { section.isIdle && !ledger.pending().isEmpty }
+    /// `cleanup_pending` (contract 11.2): no operation executes, and the ledger holds entries or
+    /// cannot be read, in which case it may hold some.
+    public var owesReleases: Bool { section.isIdle && ledgerOwes }
+
+    /// The ledger holds entries, or cannot be read and so may hold some.
+    var ledgerOwes: Bool { !ledger.pending().isEmpty || !ledger.isAvailable }
 
     /// Stops the call in the admission section with `interruption` at its next check: before its
     /// next event, or within one activity poll while it waits (contract 13). A call that has not
@@ -138,12 +143,17 @@ public actor InputExecutor {
     @discardableResult
     public func reloadUnavailableStores() -> Bool {
         guard section.isIdle else { return storesAvailable }
-        if !(store?.isAvailable ?? false) {
-            store = try? seams.operationStore.load(now: seams.state.snapshot().reading.wall)
-        }
+        reloadUnavailableRecords(now: seams.state.snapshot().reading.wall)
         if !ledger.isAvailable { try? ledger.reload() }
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
+        seams.observer.cleanupPendingDidChange(ledgerOwes)
         return storesAvailable
+    }
+
+    /// Loads the record file again when it could not be loaded or a failed write left it
+    /// unavailable. Only while no call is in the admission section.
+    func reloadUnavailableRecords(now: Timestamp) {
+        guard !(store?.isAvailable ?? false) else { return }
+        store = try? seams.operationStore.load(now: now)
     }
 
     /// The record's view for the `operation` member of a refusal at steps 1 to 4 (contract 9.5), with
@@ -173,7 +183,7 @@ public actor InputExecutor {
         section = .idle
         interruptions = PendingInterruptions()
         if wasExecuting { seams.observer.executionDidChange(executing: false) }
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
+        seams.observer.cleanupPendingDidChange(ledgerOwes)
     }
 
     /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``. The
