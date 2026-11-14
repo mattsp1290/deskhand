@@ -16,18 +16,52 @@ public struct StoppedOperation: Hashable, Sendable {
 }
 
 /// What ``InputExecutor/stop()`` did (contract 15.2 steps 2 to 4).
-public struct ExecutorStop: Hashable, Sendable {
+public struct ExecutorStop: Hashable, Sendable, CustomStringConvertible {
     /// `nil` when no call had been admitted: the section was empty, or its call was still before
     /// admission and was dropped with no record.
     public let operation: StoppedOperation?
-    /// What the ledger still holds, newest last: releases that were not authorized, or could not
-    /// be posted. The next start reports `cleanup_pending` and posts them once cleanup is
-    /// authorized (contract 12.9 step 5).
-    public let heldInput: [HeldInput]
+    /// What the ledger still holds once the stop posted what it could.
+    public let heldInput: HeldInputAtStop
 
-    public init(operation: StoppedOperation?, heldInput: [HeldInput]) {
+    public init(operation: StoppedOperation?, heldInput: HeldInputAtStop) {
         self.operation = operation
         self.heldInput = heldInput
+    }
+
+    public var description: String {
+        guard let operation else { return "no operation stopped; \(heldInput)" }
+        let outcome =
+            switch operation.outcome {
+            case .failedBeforeExecution: "failed_before_execution"
+            case .abortedByRestart(let posted): "aborted_by_restart after \(posted) events"
+            default: "\(operation.outcome)"
+            }
+        let record = operation.recorded ? "" : ", record not written"
+        return "operation \(operation.key) \(outcome)\(record); \(heldInput)"
+    }
+}
+
+/// What the ledger holds after a stop.
+public enum HeldInputAtStop: Hashable, Sendable, CustomStringConvertible {
+    /// Read: releases that were not authorized or could not be posted, newest last, which may
+    /// still be down; empty when nothing is owed. The next start reports `cleanup_pending` and
+    /// posts them once cleanup is authorized (contract 12.9 step 5).
+    case known([HeldInput])
+    /// The ledger could not be read, so input may still be down: the file keeps what it holds, and
+    /// the next start reads it again and refuses every effect until it can (contract 12.3, 12.9).
+    case unknown
+
+    /// Whether input may still be down.
+    public var mayBeHeld: Bool {
+        if case .known(let held) = self { !held.isEmpty } else { true }
+    }
+
+    public var description: String {
+        switch self {
+        case .known(let held) where held.isEmpty: "no input held"
+        case .known(let held): "input held: " + held.map(\.description).joined(separator: ", ")
+        case .unknown: "held input unknown: the ledger could not be read, so input may be held"
+        }
     }
 }
 
@@ -64,7 +98,8 @@ extension InputExecutor {
     /// `failed_before_execution`; an executing one releases what it holds, if cleanup is
     /// authorized, and ends `aborted_by_restart` with the exact count. Either way its record is
     /// written durably before this returns. Releases still owed from earlier operations are then
-    /// posted, if cleanup is authorized; otherwise they stay in the ledger.
+    /// posted, if cleanup is authorized; otherwise they stay in the ledger. A ledger that cannot
+    /// be read even now is reported as ``HeldInputAtStop/unknown``, never as holding nothing.
     ///
     /// Returns once no call is in the admission section, without waiting for the action log:
     /// ``awaitStopEntries()`` waits for that. A call still before admission can wait on the action
@@ -75,7 +110,8 @@ extension InputExecutor {
         beginStop()
         await reach(.sectionLeft)
         _ = releaseOwedInput()
-        return ExecutorStop(operation: stoppedOperation, heldInput: ledger.pending())
+        let held: HeldInputAtStop = ledger.isAvailable ? .known(ledger.pending()) : .unknown
+        return ExecutorStop(operation: stoppedOperation, heldInput: held)
     }
 
     /// Step 4's action log entries, after ``stop()``: returns once the stopped operation's outcome

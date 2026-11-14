@@ -27,15 +27,15 @@ struct StopEndToEndTests {
                 }
             }
             let held = Task { try await first.call("keyboard", arguments) }
-            await entered.wait()
+            try #require(try await bounded { await entered.wait() })
             let host = StackStopHost()
             let stopping = Task { await first.cleanStop(host: host).stop() }
-            while !(await first.executor.isStopping) { await Task.yield() }
+            while !(await first.executor.isStopping), !Task.isCancelled { await Task.yield() }
             proceed.open()
 
-            let answer = try await held.value
+            let answer = try #require(try await bounded { try await held.value })
             #expect(answer.outcome.response == nil, "the stopped call was answered: \(answer.outcome)")
-            report = await stopping.value
+            report = try #require(try await bounded { await stopping.value })
             #expect(host.steps.filter { $0 != .stopAccepting } == [.dropLease, .log, .close, .exit(0)])
             #expect(host.report == report)
 
@@ -63,7 +63,7 @@ struct StopEndToEndTests {
                 == ExecutorStop(
                     operation: StoppedOperation(
                         key: operation, outcome: .abortedByRestart(eventsPosted: 1), recorded: true),
-                    heldInput: []))
+                    heldInput: .known([])))
         #expect(report.outcomeLogged == true)
         #expect(report.leaseDropped)
         #expect(first.desk.released == [key])

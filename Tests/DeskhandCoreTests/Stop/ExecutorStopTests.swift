@@ -1,4 +1,5 @@
 import DeskhandCore
+import Foundation
 import Synchronization
 import Testing
 
@@ -18,12 +19,22 @@ final class StopStarter: Sendable {
             return true
         }
         guard started else { return }
-        while !(await executor.isStopping) { await Task.yield() }
+        while !(await executor.isStopping), !Task.isCancelled { await Task.yield() }
     }
 
+    /// `nil` before ``start()``, or once the calling task is cancelled.
     var stop: ExecutorStop? {
-        get async { await task.withLock { $0 }?.value }
+        get async {
+            guard let task = task.withLock({ $0 }) else { return nil }
+            return await finished(task)
+        }
     }
+}
+
+/// `body`'s answer, or `nil` once the calling task is cancelled, as at the end of its test's time
+/// limit: a stop that never returns fails its test instead of hanging the run.
+func bounded<T: Sendable>(_ body: @escaping @Sendable () async -> T) async -> T? {
+    await finished(Task { await body() })
 }
 
 /// The executor's part of a process stop (contract 15.2): the call in flight ends with the restart
@@ -46,19 +57,20 @@ struct ExecutorStopTests {
     func stopDuringHold() async throws {
         let mac = FakeMac()
         let harness = try Harness(mac: mac)
-        let starter = StopStarter(harness.executor)
+        let executor = harness.executor
+        let starter = StopStarter(executor)
         mac.change { $0.onSleep = { await starter.start() } }
         let call = try harness.keyboard(Self.shiftK)
 
-        let answer = await harness.executor.perform(call)
+        let answer = try #require(await bounded { await executor.perform(call) })
 
         #expect(answer.structuredContent == nil)
         let stop = try #require(await starter.stop)
         let key = call.key
         #expect(
             stop.operation == StoppedOperation(key: key, outcome: .abortedByRestart(eventsPosted: 2), recorded: true))
-        #expect(await harness.executor.awaitStopEntries() == true)
-        #expect(stop.heldInput.isEmpty)
+        #expect(await bounded { await executor.awaitStopEntries() } == true)
+        #expect(stop.heldInput == .known([]))
         #expect(mac.released == [.named(.k), .modifierKey(.shift)])
         #expect(mac.ledgerOnDisk.isEmpty)
         #expect(mac.read(\.sleeps).count == 1)
@@ -81,20 +93,22 @@ struct ExecutorStopTests {
     func stopWhileLockedDefers() async throws {
         let mac = FakeMac()
         let harness = try Harness(mac: mac)
-        let starter = StopStarter(harness.executor)
+        let executor = harness.executor
+        let starter = StopStarter(executor)
         mac.change {
             $0.onSleep = {
                 Self.lock(mac)
                 await starter.start()
             }
         }
+        let call = try harness.keyboard(Self.shiftK)
 
-        _ = await harness.executor.perform(try harness.keyboard(Self.shiftK))
+        _ = try #require(await bounded { await executor.perform(call) })
 
         let stop = try #require(await starter.stop)
         #expect(stop.operation?.outcome == .abortedByRestart(eventsPosted: 2))
         #expect(stop.operation?.recorded == true)
-        #expect(stop.heldInput == [.modifierKey(.shift), .named(.k)])
+        #expect(stop.heldInput == .known([.modifierKey(.shift), .named(.k)]))
         #expect(mac.released.isEmpty)
         #expect(mac.ledgerOnDisk == [.modifierKey(.shift), .named(.k)])
         #expect(try await harness.status() == .found(OperationView(status: .abortedByRestart, eventsPosted: 2)))
@@ -106,16 +120,17 @@ struct ExecutorStopTests {
     @Test("a call admitted but not yet executing ends failed_before_execution with nothing posted")
     func stopBeforeExecution() async throws {
         let harness = try Harness()
-        let starter = StopStarter(harness.executor)
+        let executor = harness.executor
+        let starter = StopStarter(executor)
         await harness.onLog(.intent) { await starter.start() }
         let call = try harness.keyboard(["type": "type", "text": "hi"])
 
-        let answer = await harness.executor.perform(call)
+        let answer = try #require(await bounded { await executor.perform(call) })
 
         #expect(answer.structuredContent == nil)
         let stop = try #require(await starter.stop)
         #expect(stop.operation == StoppedOperation(key: call.key, outcome: .failedBeforeExecution, recorded: true))
-        #expect(await harness.executor.awaitStopEntries() == true)
+        #expect(await bounded { await executor.awaitStopEntries() } == true)
         #expect(harness.mac.posted.isEmpty)
         let entries = await harness.logEntries
         #expect(entries.map(\.kind) == [.intent, .outcome])
@@ -131,11 +146,13 @@ struct ExecutorStopTests {
     @Test("an idle stop returns at once, and every later call is dropped with no record")
     func idleStopDropsLaterCalls() async throws {
         let harness = try Harness()
+        let executor = harness.executor
 
-        let stop = await harness.executor.stop()
+        let stop = await bounded { await executor.stop() }
 
-        #expect(stop == ExecutorStop(operation: nil, heldInput: []))
-        let answer = await harness.executor.perform(try harness.keyboard(["type": "type", "text": "x"]))
+        #expect(stop == ExecutorStop(operation: nil, heldInput: .known([])))
+        let call = try harness.keyboard(["type": "type", "text": "x"])
+        let answer = try #require(await bounded { await executor.perform(call) })
         #expect(answer.structuredContent == nil)
         #expect(harness.mac.posted.isEmpty)
         #expect(await harness.logEntries.isEmpty)
@@ -153,10 +170,11 @@ struct ExecutorStopTests {
         #expect(aborted.code == .locked)
         #expect(mac.ledgerOnDisk == [.modifierKey(.shift), .named(.k)])
         mac.change { $0.report = ExecutorFixture.okReport }
+        let executor = harness.executor
 
-        let stop = await harness.executor.stop()
+        let stop = await bounded { await executor.stop() }
 
-        #expect(stop == ExecutorStop(operation: nil, heldInput: []))
+        #expect(stop == ExecutorStop(operation: nil, heldInput: .known([])))
         #expect(mac.released == [.named(.k), .modifierKey(.shift)])
         #expect(mac.ledgerOnDisk.isEmpty)
     }
@@ -188,9 +206,10 @@ struct ExecutorStopTests {
         let executor = harness.executor
         let entries = Task { await executor.awaitStopEntries() }
         await gate.open()
-        #expect(await entries.value == true)
+        #expect(await finished(entries) == true)
         #expect(await harness.logEntries.map(\.kind) == [.intent, .outcome])
-        #expect(await performing.value.structuredContent == nil)
+        let answer = try #require(await finished(performing))
+        #expect(answer.structuredContent == nil)
     }
 
     @Test(
@@ -210,7 +229,7 @@ struct ExecutorStopTests {
         #expect(await harness.logEntries.isEmpty)
 
         let executor = harness.executor
-        #expect(await executor.stop() == ExecutorStop(operation: nil, heldInput: []))
+        #expect(await bounded { await executor.stop() } == ExecutorStop(operation: nil, heldInput: .known([])))
         let settled = Mutex(false)
         let entries = Task {
             let logged = await executor.awaitStopEntries()
@@ -223,12 +242,14 @@ struct ExecutorStopTests {
         #expect(!settled.withLock { $0 }, "the entries settled while the refusal entry was still held back")
 
         await gate.open()
-        #expect(await entries.value == nil)
+        let logged = try #require(await finished(entries), "the entries never settled")
+        #expect(logged == nil)
         let written = await harness.logEntries
         #expect(written.map(\.kind) == [.intent, .refusal])
         guard case .refusal(let refusal)? = written.last else { return }
         #expect(refusal.code == .logUnavailable)
-        #expect(await executor.awaitStopEntries() == nil)
+        let again = try #require(await bounded { await executor.awaitStopEntries() }, "the entries never settled")
+        #expect(again == nil)
         #expect(await harness.logEntries.count == 2, "the held refusal entry was written twice")
         #expect(harness.mac.posted.isEmpty)
     }
@@ -237,8 +258,8 @@ struct ExecutorStopTests {
     func secondStopIsHarmless() async throws {
         let mac = FakeMac()
         let harness = try Harness(mac: mac)
-        let starter = StopStarter(harness.executor)
         let executor = harness.executor
+        let starter = StopStarter(executor)
         let second = Mutex<Task<ExecutorStop, Never>?>(nil)
         mac.change {
             $0.onSleep = {
@@ -247,13 +268,53 @@ struct ExecutorStopTests {
             }
         }
 
-        _ = await harness.executor.perform(try harness.keyboard(Self.shiftK))
+        let call = try harness.keyboard(Self.shiftK)
+        _ = try #require(await bounded { await executor.perform(call) })
 
         let first = try #require(await starter.stop)
-        let again = try #require(await second.withLock { $0 }?.value)
+        let secondTask = try #require(second.withLock { $0 })
+        let again = try #require(await finished(secondTask))
         #expect(again == first)
-        #expect(await harness.executor.stop() == first)
+        #expect(await bounded { await executor.stop() } == first)
         #expect(mac.released == [.named(.k), .modifierKey(.shift)])
         #expect(await harness.logEntries.map(\.kind) == [.intent, .outcome])
+    }
+
+    @Test("a stop while the ledger cannot be read reports the held input as unknown, not as nothing held")
+    func stopWithUnreadableLedger() async throws {
+        try await RecoveryRig.with { rig in
+            try rig.leaveInLedger(UnreadableStoreTests.left)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rig.ledgerPath)
+            let executor = await rig.start().executor
+            rig.makeReady()
+
+            let stop = try #require(await bounded { await executor.stop() })
+
+            #expect(stop == ExecutorStop(operation: nil, heldInput: .unknown))
+            #expect(stop.heldInput.mayBeHeld)
+            #expect(rig.mac.released.isEmpty)
+            let report = CleanStopReport(executor: stop, outcomeLogged: nil, leaseDropped: true, elapsed: .zero)
+            #expect(report.description.contains("held input unknown"), "\(report)")
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rig.ledgerPath)
+            #expect(try rig.ledgerOnDisk() == UnreadableStoreTests.left)
+        }
+    }
+
+    @Test("a stop once the ledger can be read again releases what it holds and reports nothing held")
+    func stopAfterTheLedgerIsRepaired() async throws {
+        try await RecoveryRig.with { rig in
+            try rig.leaveInLedger(UnreadableStoreTests.left)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rig.ledgerPath)
+            let executor = await rig.start().executor
+            rig.makeReady()
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rig.ledgerPath)
+
+            let stop = try #require(await bounded { await executor.stop() })
+
+            #expect(stop == ExecutorStop(operation: nil, heldInput: .known([])))
+            #expect(!stop.heldInput.mayBeHeld)
+            #expect(rig.mac.released == UnreadableStoreTests.left.reversed())
+            #expect(try rig.ledgerOnDisk().isEmpty)
+        }
     }
 }

@@ -23,10 +23,12 @@ public protocol CleanStopHost: Sendable {
     func stopAcceptingCalls() async
 
     /// Drops the lease and every frame, so nothing answered before the exit names them; the next
-    /// start begins with neither (contract 12.9 step 3, 15.2).
+    /// start begins with neither (contract 12.9 step 3, 15.2). Runs once the executor's stop has
+    /// returned, and not at all when it has not by the deadline.
     func dropLeaseAndFrames() async
 
-    /// Step 4's log of the stop itself. Must not wait: it runs once the deadline has passed too.
+    /// Step 4's log of the stop itself, whose ``CleanStopReport/description`` is the line to log.
+    /// Must not wait: it runs once the deadline has passed too.
     func logStop(_ report: CleanStopReport)
 
     /// Step 5: lets read calls in flight finish, then closes every connection.
@@ -34,7 +36,7 @@ public protocol CleanStopHost: Sendable {
 }
 
 /// What a process stop did, for its log entry.
-public struct CleanStopReport: Hashable, Sendable {
+public struct CleanStopReport: Hashable, Sendable, CustomStringConvertible {
     /// `nil` when the executor had not answered by the deadline: a call before admission was still
     /// waiting on the action log, a frame check or a patch recapture. Whatever reached the disk is
     /// what the next start recovers (contract 12.9).
@@ -42,7 +44,8 @@ public struct CleanStopReport: Hashable, Sendable {
     /// Whether the stopped operation's outcome entry was committed to the action log. `nil` when
     /// the stop ended no operation, or its entries were not settled by the deadline.
     public let outcomeLogged: Bool?
-    /// The lease and the frames were dropped before the deadline.
+    /// The lease and the frames were dropped before the deadline. Never while ``executor`` is
+    /// `nil`, since the drop follows the executor's stop.
     public let leaseDropped: Bool
     /// From the signal to the log of the stop.
     public let elapsed: Duration
@@ -53,6 +56,21 @@ public struct CleanStopReport: Hashable, Sendable {
         self.leaseDropped = leaseDropped
         self.elapsed = elapsed
     }
+
+    public var description: String {
+        let executor =
+            self.executor?.description
+            ?? "the executor did not answer by the deadline, so held input is unknown and may be held"
+        let entry =
+            switch outcomeLogged {
+            case true?: "outcome entry committed"
+            case false?: "outcome entry not committed"
+            case nil: "no outcome entry settled"
+            }
+        let lease = leaseDropped ? "lease and frames dropped" : "lease and frames not dropped"
+        let milliseconds = Int((elapsed / .milliseconds(1)).rounded())
+        return "clean stop after \(milliseconds) ms; \(executor); \(entry); \(lease)"
+    }
 }
 
 /// The process stop of contract 15.2, which `SIGTERM` starts: it marks the executor stopping, stops
@@ -61,9 +79,10 @@ public struct CleanStopReport: Hashable, Sendable {
 /// exits with status 0.
 ///
 /// Every wait races one deadline, ``margin`` short of `DEADLINE_BOUND_MS` after the signal, and the
-/// exit follows it whatever is still waiting, so the process is gone within the bound. A step that
-/// hangs costs only its own wait: the executor's stop does not wait for the listener, nor the drop
-/// of the lease for the executor.
+/// exit follows it whatever is still waiting, so the process is gone within the bound. The
+/// executor's stop does not wait for the listener's step 1. The drop of the lease and the frames
+/// follows the executor's stop: an executor that has not answered by the deadline leaves them in
+/// memory, where they go with the exit, and the report says the lease was not dropped.
 ///
 /// The stop runs once. A second ``stop(signalledAt:)``, as from a second `SIGTERM`, waits for the
 /// first and changes nothing.
