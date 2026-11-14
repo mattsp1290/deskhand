@@ -17,13 +17,19 @@ import Testing
         "action": ["type": "type", "text": "hello"],
     ]
 
-    static let effect = EffectResult(
-        operationID: OperationID("call_01HZX3M9Q3")!, frameID: FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!,
-        eventsPosted: 1, replayed: false,
-        measured: Measured(
-            frontmostApp: AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit"), targetApp: nil,
-            windowTitle: nil, globalPoint: nil, measuredAt: Timestamp(millisecondsSinceEpoch: 1_794_668_539_730)),
-        completedAt: Timestamp(millisecondsSinceEpoch: 1_794_668_539_781))
+    static let textEdit = AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit")
+    static let effect = effect(at: GlobalPoint(x: 1204, y: 778))
+
+    static func effect(at point: GlobalPoint) -> EffectResult {
+        let measured = Measured(
+            frontmostApp: textEdit, targetApp: textEdit, windowTitle: nil, globalPoint: point,
+            measuredAt: Timestamp(millisecondsSinceEpoch: 1_794_668_539_730))
+        return EffectResult(
+            operationID: OperationID("call_01HZX3M9Q3")!, frameID: FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!,
+            eventsPosted: 1, replayed: false,
+            measured: SuccessMeasured(pointer: measured, action: .move(FramePoint(x: 1204, y: 778)))!,
+            completedAt: Timestamp(millisecondsSinceEpoch: 1_794_668_539_781))
+    }
 
     struct Routing: Sendable, CustomTestStringConvertible {
         let tool: String
@@ -176,10 +182,7 @@ import Testing
     }
 
     @Test func unencodableResultBecomesTheDispatchersInternalError() async {
-        var effect = Self.effect
-        effect.measured = Measured(
-            frontmostApp: .undetermined, targetApp: nil, windowTitle: nil, globalPoint: GlobalPoint(x: .nan, y: 0),
-            measuredAt: Timestamp(millisecondsSinceEpoch: 0))
+        let effect = Self.effect(at: GlobalPoint(x: .nan, y: 0))
         let dispatcher = FakeDispatcher(.effect(effect))
         let response = await MCPTest.handle(.tool("pointer", Self.pointerArguments), dispatcher: dispatcher)
         #expect(response.status == .ok)

@@ -25,7 +25,7 @@ enum ToolSchemaSources {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "$id": "https://deskhand.invalid/schemas/defs.json",
           "title": "deskhand shared definitions",
-          "description": "Shared definitions for the deskhand wire contract (docs/contract.md, 0.10-draft). The $id is an identifier, not a location. Tool schemas reference these with ../defs.json#/$defs/NAME; tools/list serves each tool schema with these definitions copied into its own $defs.",
+          "description": "Shared definitions for the deskhand wire contract (docs/contract.md, 0.11-draft). The $id is an identifier, not a location. Tool schemas reference these with ../defs.json#/$defs/NAME; tools/list serves each tool schema with these definitions copied into its own $defs.",
           "$comment": "Every string with a restricted alphabet carries both an anchored pattern and a not-pattern over the forbidden characters. In ECMA-262 the anchored pattern is enough, but in engines where $ also matches before a final line terminator (Python re, and ICU as used by NSRegularExpression) it would accept a trailing newline. The not-pattern closes that gap in every engine.",
           "$defs": {
             "state": {
@@ -274,7 +274,7 @@ enum ToolSchemaSources {
               ]
             },
             "measured": {
-              "description": "Facts deskhand measured at the app-policy check immediately before the first event of an effect call. On denied_app, the facts measured at the check that failed.",
+              "description": "Facts deskhand measured at an app-policy check. On the result of an admitted call other than denied_app: at the last look, the check immediately before the first event (docs/contract.md section 12.3 step 5). On log_unavailable: at the check before admission (section 9.5 step 14). On denied_app: at the check that failed.",
               "type": "object",
               "properties": {
                 "frontmost_app": { "$ref": "#/$defs/app_ref" },
@@ -292,7 +292,7 @@ enum ToolSchemaSources {
                   "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }]
                 },
                 "drag_end": {
-                  "description": "pointer drag only: the same three facts for the last point of path, measured at the same check, before the button goes down.",
+                  "description": "pointer drag only: the same three facts for the last point of path, measured at the same check, before the button goes down. Present whenever measured is present for a drag, except on denied_app, where measured describes only the check that failed. window_title follows the same rules as measured.window_title.",
                   "type": "object",
                   "properties": {
                     "target_app": { "$ref": "#/$defs/app_ref" },
@@ -366,6 +366,7 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["held_by_caller"],
+              "not": { "required": ["holder_id"] },
               "if": {
                 "properties": { "held_by_caller": { "const": true } },
                 "required": ["held_by_caller"]
@@ -394,13 +395,18 @@ enum ToolSchemaSources {
                 },
                 "frame_id": { "$ref": "#/$defs/frame_id" },
                 "measured": {
-                  "description": "On a success the frontmost app and the target app are both identified, because the app policy refuses anything else.",
+                  "description": "On a success the frontmost app, the target app and the app at the end of a drag are all identified, because the app policy refuses anything else.",
                   "allOf": [
                     { "$ref": "#/$defs/measured" },
                     {
                       "properties": {
                         "frontmost_app": { "$ref": "#/$defs/identified_app" },
-                        "target_app": { "$ref": "#/$defs/identified_app" }
+                        "target_app": { "$ref": "#/$defs/identified_app" },
+                        "drag_end": {
+                          "properties": {
+                            "target_app": { "$ref": "#/$defs/identified_app" }
+                          }
+                        }
                       }
                     }
                   ]
@@ -428,7 +434,11 @@ enum ToolSchemaSources {
                   "type": "string"
                 },
                 "state": {
-                  "description": "The highest-precedence state at the moment the error was produced.",
+                  "description": "The highest-precedence state at the moment the error was produced. On a replay this is the state stored with the result, not the state now; current_state carries the state now.",
+                  "$ref": "#/$defs/state"
+                },
+                "current_state": {
+                  "description": "The highest-precedence state at the moment this response was produced. Present exactly when replayed is true.",
                   "$ref": "#/$defs/state"
                 },
                 "operation_id": { "$ref": "#/$defs/operation_id" },
@@ -558,7 +568,8 @@ enum ToolSchemaSources {
                     "properties": {
                       "details": { "required": ["denied_by"] },
                       "measured": {
-                        "properties": { "window_title": { "const": null } }
+                        "properties": { "window_title": { "const": null } },
+                        "not": { "required": ["drag_end"] }
                       }
                     }
                   }
@@ -639,6 +650,16 @@ enum ToolSchemaSources {
                   }
                 },
                 {
+                  "$comment": "A replayed error keeps the state it was stored with and adds the state now.",
+                  "if": {
+                    "properties": { "replayed": { "const": true } },
+                    "required": ["replayed"]
+                  },
+                  "then": { "required": ["current_state"] },
+                  "else": { "not": { "required": ["current_state"] } }
+                },
+                {
+                  "$comment": "When code is the name of a state, state is that state. On a replay state is the stored state, so the rule holds there too.",
                   "if": {
                     "properties": { "code": { "const": "gated" } },
                     "required": ["code"]
@@ -1001,7 +1022,10 @@ enum ToolSchemaSources {
                 "lease": { "$ref": "../defs.json#/$defs/lease_view" }
               },
               "required": ["lease_result", "lease"],
-              "not": { "required": ["code"] },
+              "not": {
+                "$comment": "No result carries a holder_id.",
+                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+              },
               "if": {
                 "properties": {
                   "lease_result": {
@@ -1186,7 +1210,7 @@ enum ToolSchemaSources {
               "additionalProperties": false
             },
             "pointer_drag": {
-              "description": "Press the button at the first point, move through each later point in order, release at the last. A path of two identical points is a press-and-hold of duration_ms.",
+              "description": "Press the button at the first point, move through each later point in order, release at the last. A path of two identical points is a press-and-hold of duration_ms. duration_ms is a minimum for any other path.",
               "type": "object",
               "properties": {
                 "type": { "const": "drag" },
@@ -1205,7 +1229,7 @@ enum ToolSchemaSources {
                   "default": []
                 },
                 "duration_ms": {
-                  "description": "Time from button down to button up, spread evenly along the path.",
+                  "description": "The least time from button down to button up, spread evenly along the path. A long path takes longer, because the pointer moves at most 8 frame pixels per event and each move is checked first.",
                   "type": "integer",
                   "minimum": 50,
                   "maximum": 5000,
@@ -1559,8 +1583,8 @@ enum ToolSchemaSources {
               "type": "object",
               "properties": {
                 "contract_version": {
-                  "description": "Version of docs/contract.md this build implements. These schemas describe 0.10-draft.",
-                  "const": "0.10-draft"
+                  "description": "Version of docs/contract.md this build implements. These schemas describe 0.11-draft.",
+                  "const": "0.11-draft"
                 },
                 "mcp_protocol_version": { "const": "2026-07-28" },
                 "server_version": { "type": "string" },
@@ -1627,8 +1651,12 @@ enum ToolSchemaSources {
                 "limits"
               ],
               "not": {
-                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
-                "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
+                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result. No result carries a holder_id.",
+                "anyOf": [
+                  { "required": ["code"] },
+                  { "required": ["lease_result"] },
+                  { "required": ["holder_id"] }
+                ]
               },
               "allOf": [
                 {

@@ -62,13 +62,12 @@ import Testing
         }
     }
 
-    @Test func jsonRPCErrorsCarryTheirHTTPStatus() {
-        #expect(JSONRPCErrorCode.parseError.rawValue == -32_700 && JSONRPCErrorCode.parseError.httpStatus == 400)
-        #expect(
-            JSONRPCErrorCode.headerMismatch.rawValue == -32_020 && JSONRPCErrorCode.headerMismatch.httpStatus == 400)
+    @Test func jsonRPCErrorCodesAreTheContractNumbers() {
+        #expect(JSONRPCErrorCode.parseError.rawValue == -32_700)
+        #expect(JSONRPCErrorCode.methodNotFound.rawValue == -32_601)
+        #expect(JSONRPCErrorCode.invalidParams.rawValue == -32_602)
+        #expect(JSONRPCErrorCode.headerMismatch.rawValue == -32_020)
         #expect(JSONRPCErrorCode.unsupportedProtocolVersion.rawValue == -32_022)
-        #expect(JSONRPCErrorCode.methodNotFound.httpStatus == 200)
-        #expect(JSONRPCErrorCode.invalidParams.httpStatus == 200)
     }
 
     @Test func timestampsAreUTCWithOptionalMilliseconds() {

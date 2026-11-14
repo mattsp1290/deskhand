@@ -26,9 +26,12 @@ private enum WireResults {
 
     static let pointerClick = EffectResult(
         operationID: OperationID("call_01HZX3M9Q3")!, frameID: frame, eventsPosted: 3, replayed: false,
-        measured: Measured(
-            frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt",
-            globalPoint: GlobalPoint(x: 883.8114649681529, y: 571.3432982917215), measuredAt: at(1_794_668_539_730)),
+        measured: SuccessMeasured(
+            pointer: Measured(
+                frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt",
+                globalPoint: GlobalPoint(x: 883.8114649681529, y: 571.3432982917215),
+                measuredAt: at(1_794_668_539_730)),
+            action: .move(FramePoint(x: 1204, y: 778)))!,
         completedAt: at(1_794_668_539_781))
 
     static let staleFrame = ToolError(

@@ -29,7 +29,8 @@ public enum ToolErrorCode: String, CaseIterable, Sendable {
     case internalError = "internal_error"
 }
 
-/// The numeric codes of JSON-RPC errors (contract 9.4): the request never reached a tool.
+/// The numeric codes of JSON-RPC errors (contract 9.4): the request never reached a tool. The HTTP
+/// status is not a property of the code (`-32602` is 400 or 200 by cause), so the server picks it.
 public enum JSONRPCErrorCode: Int, CaseIterable, Sendable {
     case parseError = -32_700
     case invalidRequest = -32_600
@@ -38,14 +39,6 @@ public enum JSONRPCErrorCode: Int, CaseIterable, Sendable {
     case internalError = -32_603
     case headerMismatch = -32_020
     case unsupportedProtocolVersion = -32_022
-
-    /// The HTTP status that carries the error.
-    public var httpStatus: Int {
-        switch self {
-        case .parseError, .invalidRequest, .headerMismatch, .unsupportedProtocolVersion: 400
-        case .methodNotFound, .invalidParams, .internalError: 200
-        }
-    }
 
     public var defaultMessage: String {
         switch self {
