@@ -2,6 +2,8 @@
     import Darwin
 #elseif canImport(Glibc)
     import Glibc
+#elseif canImport(Musl)
+    import Musl
 #endif
 
 /// What `fstat` said about an opened directory or file.
@@ -50,13 +52,30 @@ public protocol AllowanceFileProbe: Sendable {
 /// Opens the directory with `O_NOFOLLOW | O_DIRECTORY`, the file with `openat` and `O_NOFOLLOW`
 /// relative to it, and `fstat`s each descriptor, so every check is of the object opened and
 /// nothing is looked up by path twice (D15).
+///
+/// Reading a file by name needs only search permission on its directory, and contract 14.1 asks
+/// the publisher for nothing more, so the directory is opened for search where the platform can:
+/// a root-owned `0711` directory works. Elsewhere it is opened for reading, and a directory that
+/// deskhand's user cannot read fails with a log line that says so.
 public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
     public init() {}
 
+    #if canImport(Darwin)
+        /// `O_SEARCH` includes `O_DIRECTORY`.
+        private static let directoryOpen = O_SEARCH | O_NOFOLLOW | O_CLOEXEC
+        /// The permission deskhand's user needs on the allowance directory.
+        static let directoryAccess = "search"
+    #elseif canImport(Glibc)
+        // `O_PATH`, which Swift's Glibc module exports only under its internal name.
+        private static let directoryOpen = __O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        static let directoryAccess = "search"
+    #else
+        private static let directoryOpen = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        static let directoryAccess = "read and search"
+    #endif
+
     public func probe(directory: String, name: String, maxBytes: Int) -> AllowanceProbe {
-        let directoryDescriptor = directory.withCString {
-            open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        }
+        let directoryDescriptor = directory.withCString { open($0, Self.directoryOpen) }
         guard directoryDescriptor >= 0 else { return .directoryFailed(Self.openError(errno)) }
         defer { _ = close(directoryDescriptor) }
         let directoryStatus: AllowanceFileStatus
@@ -123,10 +142,15 @@ public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
     }
 }
 
+/// `read(2)`, which ``POSIXAllowanceFileProbe`` hides behind its own `read`.
 private func systemRead(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
-    #if canImport(Darwin)
-        Darwin.read(descriptor, buffer, count)
-    #else
-        Glibc.read(descriptor, buffer, count)
-    #endif
+    read(descriptor, buffer, count)
+}
+
+/// The log line for a directory that cannot be opened, naming the permission it needs when that
+/// is the reason.
+func allowanceDirectoryFailure(errno code: Int32) -> String {
+    let base = "the allowance directory cannot be opened (errno \(code))"
+    guard code == EACCES else { return base }
+    return base + ": deskhand's user needs \(POSIXAllowanceFileProbe.directoryAccess) permission on it"
 }

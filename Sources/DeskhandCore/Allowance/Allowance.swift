@@ -88,7 +88,7 @@ public enum AllowanceInvalidReason: Error, Hashable, Sendable, CustomStringConve
     public var description: String {
         switch self {
         case .directorySymbolicLink: "the allowance directory is a symbolic link"
-        case .directoryUnreadable(let errno): "the allowance directory cannot be opened (errno \(errno))"
+        case .directoryUnreadable(let errno): allowanceDirectoryFailure(errno: errno)
         case .directoryNotADirectory: "the allowance directory is not a directory"
         case .directoryNotRootOwned(let owner): "the allowance directory is owned by uid \(owner), not root"
         case .directoryWritableByGroupOrOthers(let permissions):
