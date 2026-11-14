@@ -49,7 +49,7 @@ public struct ListenerConfiguration: Sendable {
     public var clientCertificates: ClientCertificatePolicy
     public var maxRequestHeaderBytes = ContractConstants.maxRequestHeaderBytes
     public var maxRequestBodyBytes = ContractConstants.maxRequestBodyBytes
-    /// D2 lowers this to about 5,400,000 once the core constant is updated; the listener follows
+    /// `MAX_RESPONSE_BODY_BYTES` (contract 2.5); the listener follows
     /// ``ContractConstants/maxResponseBodyBytes`` rather than keeping a second copy.
     public var maxResponseBodyBytes = ContractConstants.maxResponseBodyBytes
     /// `CONNECTION_MAX_AGE` (contract 2.1).
@@ -66,14 +66,15 @@ public struct ListenerConfiguration: Sendable {
         self.clientCertificates = clientCertificates
     }
 
-    /// `expectedClientSubject` is D11's per-Mac client subject, which ``DeskhandConfig`` does not
-    /// carry yet.
-    public init(config: DeskhandConfig, expectedClientSubject: String) {
+    /// The client certificate must carry D11's per-Mac subject, `credentials.client_subject`.
+    public init(config: DeskhandConfig) {
         self.init(
             bindHost: config.listen.address.description,
             bindPort: config.listen.port,
             hosts: HostAllowlist(config.service),
-            clientCertificates: ClientCertificatePolicy(expectedSubject: expectedClientSubject)
+            clientCertificates: ClientCertificatePolicy(
+                expectedSubject: config.credentials.clientSubject.certificateSubject
+            )
         )
     }
 }

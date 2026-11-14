@@ -208,8 +208,11 @@ struct TestConnection {
         return .closed
     }
 
+    /// Reads the response even when the write fails: the listener deliberately answers some
+    /// requests (a misdirected `Host`, an oversize `Content-Length`) before the body arrives and
+    /// then closes, so the client's write can lose the race to that close.
     mutating func roundTrip(_ request: TestRequest) async -> Outcome {
-        guard await send(request) else { return .closed }
+        _ = await send(request)
         return await next()
     }
 }
