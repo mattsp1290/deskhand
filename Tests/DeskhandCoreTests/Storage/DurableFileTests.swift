@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// Contract 12.1 and 12.7: owner-only files, refused when anything else is found at the path.
-@Suite struct DurableFileTests {
+@Suite(.timeLimit(.minutes(1))) struct DurableFileTests {
     private func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
     @Test func replacesAtomicallyWithAnOwnerOnlyFile() throws {
@@ -188,7 +188,7 @@ import Testing
 
 /// B3: `F_FULLFSYNC` falls back to `fsync` only where the file system does not support it. Every
 /// other flush error reaches the caller, because the bytes may not be on stable storage.
-@Suite struct DurableFileFlushTests {
+@Suite(.timeLimit(.minutes(1))) struct DurableFileFlushTests {
     private func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
     @Test(arguments: [ENOTSUP, EINVAL])

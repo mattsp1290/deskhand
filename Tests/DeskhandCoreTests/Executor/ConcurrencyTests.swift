@@ -4,7 +4,7 @@ import Testing
 
 /// The admission section (contract 9.5): one call inside at a time, arrivals answered at once, and a
 /// repeated `operation_id` performed once however close together the calls arrive.
-@Suite("Executor: the admission section")
+@Suite("Executor: the admission section", .timeLimit(.minutes(1)))
 struct ConcurrencyTests {
     @Test("while a call is being admitted: same key in progress or conflict, any other busy")
     func duringAdmission() async throws {
@@ -33,8 +33,8 @@ struct ConcurrencyTests {
         #expect(try await harness.status() == .found(accepted))
 
         await gate.open()
-        let answer = await first.value
-        #expect(answer.result?.eventsPosted == 3)
+        let answer = await finished(first)
+        #expect(answer?.result?.eventsPosted == 3)
         guard case .replayed = await executor.perform(call) else {
             Issue.record("a repeat after the first call ended is not its replay")
             return

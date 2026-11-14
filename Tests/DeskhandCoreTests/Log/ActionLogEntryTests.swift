@@ -2,7 +2,7 @@ import DeskhandCore
 import DeskhandTestSupport
 import Testing
 
-@Suite struct ActionLogEntryTests {
+@Suite(.timeLimit(.minutes(1))) struct ActionLogEntryTests {
     @Test func intentIsOneCanonicalLine() throws {
         let intent = try LogSamples.intent(keyboard: ["type": "press", "key": "q", "modifiers": ["command", "shift"]])
         let expected =

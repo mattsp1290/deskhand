@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct AllowanceCacheTests {
+@Suite(.timeLimit(.minutes(1))) struct AllowanceCacheTests {
     let start = ContinuousClock.now
 
     func cache(_ probe: FakeAllowanceProbe) -> AllowanceCache {

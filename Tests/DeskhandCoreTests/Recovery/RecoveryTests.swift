@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// A start after a crash or a stop, on real files (contract 10.1, 11.2, 12.7 to 12.9).
-@Suite("Recovery: restart")
+@Suite("Recovery: restart", .timeLimit(.minutes(1)))
 struct RecoveryTests {
     static let accepted = Sample.key("op-accepted")
     static let executing = Sample.key("op-executing")
@@ -244,12 +244,35 @@ struct RecoveryTests {
             } else {
                 let view = try await executor.operationStatus(for: Self.executing)
                 #expect(view == .found(OperationView(status: .abortedByRestart, eventsPosted: 3)))
-                guard case .nothingOwed = started.report.cleanup else {
+                guard case .ledgerUnreadable = started.report.cleanup else {
                     Issue.record("cleanup ran on a ledger that was not read: \(started.report)")
                     return
                 }
                 #expect(rig.mac.released.isEmpty)
+                // What the ledger holds is not known, so input may still be down.
+                #expect(rig.mac.read(\.cleanupPending).last == true)
+                #expect(!rig.mac.read(\.cleanupPending).contains(false))
+                #expect(await executor.owesReleases)
             }
+        }
+    }
+
+    @Test("an unfinished record that left the retention window is dropped at start, not reported restarted")
+    func restartPrunesOldRecords() async throws {
+        try await RecoveryRig.with { rig in
+            let old = Sample.key("op-old")
+            let retention = Int64(ContractConstants.defaultOperationRetentionMs)
+            let admittedAt = rig.mac.reading.wall
+            let store = try OperationStore(storage: FileOperationStorage(path: rig.journalPath), now: admittedAt)
+            let ticket = try Sample.admit(store, old, at: admittedAt)
+            try store.markExecuting(ticket)
+            try store.recordProgress(ticket, eventsPosted: 2)
+            _ = try Sample.admit(store, Self.accepted, at: admittedAt.adding(milliseconds: retention - 1000))
+            rig.mac.advance(byMilliseconds: retention)
+            let started = await rig.start()
+            #expect(started.report.operationRecords.restarted == [Self.accepted: .failedBeforeExecution])
+            #expect(started.report.operationRecords.count(of: .abortedByRestart) == 0)
+            #expect(try await started.executor.operationStatus(for: old) == .notFound)
         }
     }
 

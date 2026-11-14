@@ -4,7 +4,7 @@ import Testing
 /// An abort's releases through the executor (contract 10.3 step 2, 11.2, 12.4, 12.8): released at
 /// once when cleanup is authorized, otherwise deferred with `cleanup_pending` until a retry posts
 /// them.
-@Suite("Release: aborts and deferred releases")
+@Suite("Release: aborts and deferred releases", .timeLimit(.minutes(1)))
 struct AbortReleaseTests {
     @Test(
         "an abort mid-chord releases the chord newest first when cleanup is authorized",

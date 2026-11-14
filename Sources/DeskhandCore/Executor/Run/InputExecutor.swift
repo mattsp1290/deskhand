@@ -45,6 +45,8 @@ public actor InputExecutor {
         public var keyCodes: any KeyCodeMapper
         public var log: any ActionLogClient
         public var timer: any ExecutionTimer
+        /// Measures ``Configuration/waitLimit``.
+        public var waitTimer: any WaitLimitTimer
         public var releases: any ReleaseHandler
         public var observer: any ExecutorObserver
         public var operationStore: any OperationStoreLoader
@@ -53,8 +55,8 @@ public actor InputExecutor {
             state: any StateSource, frames: any FrameSource, patches: any TargetPatchVerifier,
             identity: any IdentityMeasurer, activity: any UserActivitySource, poster: any EventPoster,
             keyCodes: any KeyCodeMapper, log: any ActionLogClient, timer: any ExecutionTimer = TaskSleepTimer(),
-            releases: any ReleaseHandler = HeldInputReleaser(), observer: any ExecutorObserver,
-            operationStore: any OperationStoreLoader
+            waitTimer: any WaitLimitTimer = TaskSleepTimer(), releases: any ReleaseHandler = HeldInputReleaser(),
+            observer: any ExecutorObserver, operationStore: any OperationStoreLoader
         ) {
             self.state = state
             self.frames = frames
@@ -65,6 +67,7 @@ public actor InputExecutor {
             self.keyCodes = keyCodes
             self.log = log
             self.timer = timer
+            self.waitTimer = waitTimer
             self.releases = releases
             self.observer = observer
             self.operationStore = operationStore
@@ -72,7 +75,7 @@ public actor InputExecutor {
     }
 
     let seams: Seams
-    let waitLimit: Duration
+    let waitLimit: WaitLimit
     var ceiling: ActionCeiling
     /// `nil` when it could not be loaded, or after it refused a final write without marking itself
     /// unavailable; every effect is then `internal_error` until it is loaded again (contract 12.3).
@@ -99,14 +102,15 @@ public actor InputExecutor {
     var refusalsHeld = 0
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
-    /// ledger as the previous run left it: any entry is owed a release.
+    /// ledger as the previous run left it: any entry is owed a release, and a ledger that could not
+    /// be read may hold some.
     public init(
         configuration: Configuration = Configuration(), seams: Seams, ledger: consuming sending HeldInputLedger,
         now: Timestamp
     ) {
-        let owesReleases = !ledger.pending().isEmpty
+        let owesReleases = !ledger.pending().isEmpty || !ledger.isAvailable
         self.seams = seams
-        waitLimit = configuration.waitLimit
+        waitLimit = WaitLimit(duration: configuration.waitLimit, timer: seams.waitTimer)
         ceiling = ActionCeiling(actionsPerMinute: configuration.actionsPerMinute)
         store = try? seams.operationStore.load(now: now)
         self.ledger = ledger
@@ -120,8 +124,12 @@ public actor InputExecutor {
     /// Whether a call is being admitted or is executing.
     public var isInSection: Bool { !section.isIdle }
 
-    /// `cleanup_pending` (contract 11.2): the ledger holds entries and no operation executes.
-    public var owesReleases: Bool { section.isIdle && !ledger.pending().isEmpty }
+    /// `cleanup_pending` (contract 11.2): no operation executes, and the ledger holds entries or
+    /// cannot be read, in which case it may hold some.
+    public var owesReleases: Bool { section.isIdle && ledgerOwes }
+
+    /// The ledger holds entries, or cannot be read and so may hold some.
+    var ledgerOwes: Bool { !ledger.pending().isEmpty || !ledger.isAvailable }
 
     /// Stops the call in the admission section with `interruption` at its next check: before its
     /// next event, or within one activity poll while it waits (contract 13). A call that has not
@@ -156,12 +164,17 @@ public actor InputExecutor {
     @discardableResult
     public func reloadUnavailableStores() -> Bool {
         guard section.isIdle else { return storesAvailable }
-        if !(store?.isAvailable ?? false) {
-            store = try? seams.operationStore.load(now: seams.state.snapshot().reading.wall)
-        }
+        reloadUnavailableRecords(now: seams.state.snapshot().reading.wall)
         if !ledger.isAvailable { try? ledger.reload() }
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
+        seams.observer.cleanupPendingDidChange(ledgerOwes)
         return storesAvailable
+    }
+
+    /// Loads the record file again when it could not be loaded or a failed write left it
+    /// unavailable. Only while no call is in the admission section.
+    func reloadUnavailableRecords(now: Timestamp) {
+        guard !(store?.isAvailable ?? false) else { return }
+        store = try? seams.operationStore.load(now: now)
     }
 
     /// The record's view for the `operation` member of a refusal at steps 1 to 4 (contract 9.5), with
@@ -191,7 +204,7 @@ public actor InputExecutor {
         section = .idle
         interruptions = PendingInterruptions()
         if wasExecuting { seams.observer.executionDidChange(executing: false) }
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
+        seams.observer.cleanupPendingDidChange(ledgerOwes)
         resumeStopWaiters()
     }
 

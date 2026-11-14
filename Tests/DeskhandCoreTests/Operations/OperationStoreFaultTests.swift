@@ -3,7 +3,7 @@ import Testing
 
 /// Cuts a run at every write boundary, by a write error or by a crash, then restarts on whatever
 /// survived and checks the recovered records against what the run was told (contract 12.3, 12.9).
-@Suite struct OperationStoreFaultTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationStoreFaultTests {
     /// What the executor was told, and what it did, for one operation.
     struct Truth {
         var admitAttempted = false

@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct JSONParserTests {
+@Suite(.timeLimit(.minutes(1))) struct JSONParserTests {
     @Test func parsesEveryValueKind() throws {
         let parsed = try JSONValue(parsing: #" {"a": [1, 2.5, -3e2, true, false, null, "x"], "b": {}} "#)
         #expect(parsed == ["a": [1, 2.5, -300, true, false, nil, "x"], "b": [:]])

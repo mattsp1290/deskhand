@@ -4,7 +4,7 @@ import Testing
 /// Transitions the clock makes on its own, arming running out and the allowance expiring, are
 /// reduced even when the next reduction comes after the input that would hide them (contract 10.1,
 /// 10.4, 13.1, 14.5; review finding 1 of both re-reviews).
-@Suite struct ClockTransitionTests {
+@Suite(.timeLimit(.minutes(1))) struct ClockTransitionTests {
     private typealias F = StateFixture
 
     private static func leavingOK(_ state: BlockingState) -> [TransitionEffect] {

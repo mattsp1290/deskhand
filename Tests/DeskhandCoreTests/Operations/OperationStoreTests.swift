@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct OperationLifecycleTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationLifecycleTests {
     enum Step: CustomStringConvertible {
         case execute
         case progress(Int)
@@ -114,7 +114,7 @@ import Testing
     }
 }
 
-@Suite struct OperationRepeatTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationRepeatTests {
     /// Builds a record of `status` for `key` on `disk` and returns a store loaded afterwards.
     static func store(with status: OperationStatus, key: OperationKey, disk: FakeDisk) throws -> OperationStore {
         let store = try Sample.store(disk)
@@ -185,7 +185,7 @@ import Testing
     }
 }
 
-@Suite struct OperationReplayTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationReplayTests {
     @Test func storesTheResultItReturnsAndReplaysIt() throws {
         let store = try Sample.store(FakeDisk())
         let key = Sample.key("call_01HZX3M9R1")
@@ -345,7 +345,7 @@ import Testing
     }
 }
 
-@Suite struct OperationRetentionTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationRetentionTests {
     static let configuration = OperationStore.Configuration(retentionMs: Int(Sample.day), maxRecordsPerPrincipal: 3)
 
     @Test func keepsARecordForTheWholeWindowFromAdmission() throws {
@@ -435,7 +435,7 @@ import Testing
     }
 }
 
-@Suite struct OperationRestartTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationRestartTests {
     @Test func appliesTheRestartRulesDurably() throws {
         let disk = FakeDisk()
         let store = try Sample.store(disk)
@@ -502,7 +502,7 @@ import Testing
     }
 }
 
-@Suite struct OperationJournalLoadTests {
+@Suite(.timeLimit(.minutes(1))) struct OperationJournalLoadTests {
     static func journal() throws -> FakeDisk {
         let disk = FakeDisk()
         let store = try Sample.store(disk)

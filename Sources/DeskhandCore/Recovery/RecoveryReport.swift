@@ -46,7 +46,8 @@ public enum HeldInputLedgerRecovery: Sendable, CustomStringConvertible {
     /// What the previous run left, in press order. Each entry may still be down and is owed a
     /// release.
     case loaded(left: [HeldInput])
-    /// Not read: every effect call is refused with `internal_error` until a reload reads it.
+    /// Not read: every effect call is refused with `internal_error`, and `cleanup_pending` holds,
+    /// until a retry reads it.
     case unavailable(HeldInputLedgerError)
 
     public var description: String {
@@ -62,6 +63,7 @@ extension OwedRelease {
         switch self {
         case .nothingOwed: "nothing owed"
         case .operationInSection: "an operation is in the admission section"
+        case .ledgerUnreadable: "the held-input ledger could not be read, so nothing was released"
         case .attempted(.complete): "every release posted"
         case .attempted(.deferred(let blockers)):
             "deferred while \(blockers.map(\.rawValue).sorted().joined(separator: ", "))"

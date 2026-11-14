@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct TargetPatchTests {
+@Suite(.timeLimit(.minutes(1))) struct TargetPatchTests {
     typealias F = FrameFixtures
 
     /// Two frame pixels per point, origin left of and above the main display.
@@ -111,7 +111,7 @@ import Testing
     }
 }
 
-@Suite struct TargetPatchCheckTests {
+@Suite(.timeLimit(.minutes(1))) struct TargetPatchCheckTests {
     typealias F = FrameFixtures
 
     actor RecordingVerifier: TargetPatchVerifier {

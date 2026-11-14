@@ -2,7 +2,7 @@ import DeskhandCore
 import Testing
 
 /// Holds and the times an operation reports (contract 6.4, 6.5, 6.7, 10.4, 13).
-@Suite("Executor: holds and posting times")
+@Suite("Executor: holds and posting times", .timeLimit(.minutes(1)))
 struct HoldTests {
     static func isKeyDown(_ event: InputEvent) -> Bool { if case .keyDown = event { true } else { false } }
     static func isKeyUp(_ event: InputEvent) -> Bool { if case .keyUp = event { true } else { false } }

@@ -4,7 +4,7 @@ import Testing
 
 /// The ledger on a real ``DurableFile`` (A1): the same owner, mode, link and flush rules as the
 /// operation records.
-@Suite struct FileHeldInputStoreTests {
+@Suite(.timeLimit(.minutes(1))) struct FileHeldInputStoreTests {
     @Test func replacesAtomicallyWithOwnerOnlyPermissions() throws {
         try withTemporaryDirectory { directory in
             let path = directory + "/held-input.json"

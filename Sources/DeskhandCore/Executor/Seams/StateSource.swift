@@ -116,8 +116,8 @@ public protocol ExecutorObserver: Sendable {
     /// An append to the action log succeeded or failed: `log_unavailable` (contract 11.3).
     func actionLogDidAppend(succeeded: Bool)
 
-    /// The ledger holds entries while no operation executes, or no longer does: `cleanup_pending`
-    /// (contract 11.2).
+    /// The ledger holds entries, or cannot be read and so may hold some, while no operation
+    /// executes; or no longer does: `cleanup_pending` (contract 11.2).
     func cleanupPendingDidChange(_ pending: Bool)
 }
 

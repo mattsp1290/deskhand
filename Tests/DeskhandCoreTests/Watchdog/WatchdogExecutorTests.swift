@@ -4,7 +4,7 @@ import Testing
 
 /// The real executor built with the watchdog's activity source, and the watchdog driving its
 /// cleanup retries (contract 11.2, 13.2).
-@Suite("Watchdog: with the executor")
+@Suite("Watchdog: with the executor", .timeLimit(.minutes(1)))
 struct WatchdogExecutorTests {
     static let typing: JSONValue = ["type": "type", "text": "hello world"]
     static let drag: JSONValue = [
@@ -103,16 +103,25 @@ struct WatchdogExecutorTests {
         let mac = FakeMac()
         try mac.leaveInLedger(RestartCleanupTests.leftOver)
         mac.setState([.locked])
-        let watch = try ExecutorWatch(
-            .personOnly, mac: mac, configuration: .init(allowanceReadInterval: .seconds(600)))
-        let retry = mac.reading.monotonic.advanced(by: CleanupRetrySchedule.interval)
-        #expect(await watch.watchdog.evaluate() == retry)
+        let watch = try ExecutorWatch(.personOnly, mac: mac)
+        _ = await watch.watchdog.evaluate()
         #expect(mac.released.isEmpty)
 
-        mac.advance(byMilliseconds: 400)
-        #expect(await watch.watchdog.evaluate() == retry)
-        mac.advance(byMilliseconds: 600)
-        #expect(await watch.watchdog.evaluate() == retry.advanced(by: CleanupRetrySchedule.interval))
+        // A change of the blocking conditions is tried at once, and puts the next retry off the
+        // grid of the periodic reads.
+        mac.advance(byMilliseconds: 300)
+        mac.setState([.locked, .secureInput])
+        var wakeup = await watch.watchdog.evaluate()
+        let retry = ExecutorFixture.t0.instant(afterMilliseconds: 1300)
+        #expect(await watch.executor.nextCleanupRetry(at: mac.reading) == retry)
+        var woke: [Int64] = []
+        while let next = wakeup, next <= retry, !Task.isCancelled {
+            mac.advance(byMilliseconds: WatchdogFixture.milliseconds(since: mac.reading.monotonic, to: next))
+            woke.append(WatchdogFixture.milliseconds(since: ExecutorFixture.t0.monotonic, to: next))
+            wakeup = await watch.watchdog.evaluate()
+        }
+        #expect(woke == [500, 1000, 1300])
+        #expect(await watch.executor.nextCleanupRetry(at: mac.reading) == retry.advanced(by: .seconds(1)))
         #expect(mac.released.isEmpty)
 
         mac.advance(byMilliseconds: 10)
@@ -120,7 +129,31 @@ struct WatchdogExecutorTests {
         await watch.watchdog.refreshState()
         #expect(mac.released == RestartCleanupTests.leftOver.reversed())
         #expect(await watch.executor.nextCleanupRetry(at: mac.reading) == nil)
-        #expect(await watch.watchdog.evaluate() == ExecutorFixture.t0.instant(afterMilliseconds: 30_000))
+    }
+
+    @Test("the executor counts as executing only once the call is admitted, not while it is being admitted")
+    func executingIsAdmitted() async throws {
+        let gate = Gate()
+        let harness = try Harness(frames: FakeFrames(gate: gate))
+        let executor = harness.executor
+        let call = try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300])
+        let checks = Box<[Bool]>()
+        harness.mac.change {
+            $0.onSleep = {
+                let inSection = await executor.isInSection
+                let executing = await executor.isExecuting
+                checks.set([inSection, executing])
+            }
+        }
+        let task = Task { await executor.perform(call) }
+        var arrivals = gate.arrived.makeAsyncIterator()
+        _ = await arrivals.next()
+        #expect(await executor.isInSection)
+        #expect(await executor.isExecuting == false)
+        await gate.open()
+        #expect(await finished(task)?.result != nil)
+        #expect(checks.value == [true, true])
+        #expect(await executor.isExecuting == false)
     }
 
     @Test("the end of an earlier lease, forwarded first, does not hide the person from a call under a later one")
@@ -218,7 +251,7 @@ final class StaleLeaseOwner: WatchdogStateOwner {
 
 struct WatchdogFakeFault: Error {}
 
-@Suite("Watchdog: polling the allowance file")
+@Suite("Watchdog: polling the allowance file", .timeLimit(.minutes(1)))
 struct PollingFileChangeSourceTests {
     @Test("a change of the file or of its directory is reported at the next poll")
     func pollsSignatures() async {

@@ -3,7 +3,7 @@ import Testing
 
 /// The app policy before admission, at the last look and before every event (contract 6.7, 6.9,
 /// 12.3, 12.4), and the identities bound at the last look (bean bhwb).
-@Suite("Executor: app identity")
+@Suite("Executor: app identity", .timeLimit(.minutes(1)))
 struct IdentityTests {
     static let textEditWindow = ObservedWindow(owner: ExecutorFixture.textEdit, title: "notes.txt")
 

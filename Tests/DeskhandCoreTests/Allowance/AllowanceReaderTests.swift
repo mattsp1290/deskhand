@@ -1,7 +1,7 @@
 import DeskhandCore
 import Testing
 
-@Suite struct AllowanceReaderTests {
+@Suite(.timeLimit(.minutes(1))) struct AllowanceReaderTests {
     typealias Status = AllowanceFileStatus
 
     @Test func aValidAllowanceIsValidUntilItsExpiry() {

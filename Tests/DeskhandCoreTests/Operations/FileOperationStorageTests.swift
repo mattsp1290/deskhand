@@ -2,7 +2,7 @@ import DeskhandCore
 import Foundation
 import Testing
 
-@Suite struct FileOperationStorageTests {
+@Suite(.timeLimit(.minutes(1))) struct FileOperationStorageTests {
     /// A fresh directory per test; removed when the test's closure returns.
     static func withDirectory(_ body: (String) throws -> Void) throws {
         let directory = FileManager.default.temporaryDirectory

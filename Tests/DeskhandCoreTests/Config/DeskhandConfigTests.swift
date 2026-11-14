@@ -2,7 +2,7 @@ import DeskhandCore
 import Foundation
 import Testing
 
-@Suite struct DeskhandConfigTests {
+@Suite(.timeLimit(.minutes(1))) struct DeskhandConfigTests {
     private static func issues(_ document: JSONValue) -> [ConfigIssue] {
         do {
             _ = try DeskhandConfig(json: document)

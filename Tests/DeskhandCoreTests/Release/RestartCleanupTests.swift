@@ -3,7 +3,7 @@ import Testing
 
 /// Cleanup from the ledger across restarts, crashes and a disk that refuses writes (contract 12.3,
 /// 12.7 items 5 and 6, 12.9 step 5).
-@Suite("Release: restart cleanup and ledger faults")
+@Suite("Release: restart cleanup and ledger faults", .timeLimit(.minutes(1)))
 struct RestartCleanupTests {
     static let leftOver: [HeldInput] = [.modifierKey(.command), .modifierKey(.shift), .button(.left), .named(.a)]
 
