@@ -5,8 +5,9 @@ enum AdmissionResult: Sendable {
     /// A same-digest repeat of a final record, answered while the state is `ok`.
     case replay(OperationReplay, state: DeskhandState)
     case refused(Refusal)
-    /// The connection closed after the intent entry: no record, nothing posted.
-    case dropped
+    /// The connection closed after the intent entry: no record, nothing posted. The refusal is the
+    /// `cancelled` entry that pairs with the intent, with the frame digest and frontmost app it named.
+    case dropped(Refusal)
 }
 
 extension InputExecutor {
@@ -47,9 +48,9 @@ extension InputExecutor {
         case .refused(let refusal):
             leaveSection()
             return await refuse(call, refusal)
-        case .dropped:
+        case .dropped(let refusal):
             leaveSection()
-            await logRefusal(refusalEntry(call, Refusal(.cancelled), at: seams.state.snapshot()))
+            await logRefusal(refusalEntry(call, refusal, at: seams.state.snapshot()))
             return .dropped
         }
     }
@@ -129,10 +130,15 @@ extension InputExecutor {
             use = .keyboard(frontmostApp: app.isCertain ? app.appRef : nil)
         }
         let live: LiveFrame
-        switch await seams.frames.check(call.arguments.frameID, in: call.scope, for: use, now: snapshot.reading.wall) {
-        case .stale(let reason, let sha256):
+        let frames = seams.frames
+        let (frameID, scope, now) = (call.arguments.frameID, call.scope, snapshot.reading.wall)
+        switch await awaitBounded(within: waitLimit, { await frames.check(frameID, in: scope, for: use, now: now) }) {
+        case .stale(let reason, let sha256)?:
             return .refused(Refusal(.staleFrame(reason), frontmostApp: frontmost, frameSHA256: sha256))
-        case .valid(let checked): live = checked
+        case .valid(let checked)?: live = checked
+        case nil:
+            return .refused(
+                Refusal(.internalError, message: "The frame could not be checked in time.", frontmostApp: frontmost))
         }
         func refused(_ reason: ToolErrorReason) -> AdmissionResult {
             .refused(Refusal(reason, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
@@ -168,9 +174,13 @@ extension InputExecutor {
             // Read before the recapture, so the age measured at the last look is never less than
             // the capture's (contract 8.4).
             let beforeCapture = seams.state.snapshot().reading.monotonic
-            if let stale = await TargetPatchCheck.run(pointer.action, on: live, verifier: seams.patches) {
-                return refused(.staleFrame(stale))
+            let patches = seams.patches
+            let verdict = await awaitBounded(within: waitLimit) {
+                await TargetPatchCheck.run(pointer.action, on: live, verifier: patches)
             }
+            // A recapture that did not answer in time verified nothing: fail closed.
+            guard let verdict else { return refused(.staleFrame(.pixelsChanged(pointIndex: 0))) }
+            if let stale = verdict { return refused(.staleFrame(stale)) }
             patchCheckedAt = beforeCapture
         }
 
@@ -190,22 +200,32 @@ extension InputExecutor {
             holderID: call.arguments.holderID, operationID: call.arguments.operationID,
             frameID: call.arguments.frameID, frameSHA256: live.frame.sha256, frontmostApp: measured.frontmostApp,
             action: call.arguments.loggedAction)
-        let receipt: IntentReceipt
-        do {
-            receipt = try await seams.log.commitIntent(intent)
-        } catch {
+        let log = seams.log
+        let committed = await awaitBounded(within: waitLimit) { () async -> IntentReceipt? in
+            do throws(ActionLogFailure) {
+                return try await log.commitIntent(intent)
+            } catch {
+                return nil
+            }
+        }
+        guard let receipt = committed ?? nil else {
             seams.observer.actionLogDidAppend(succeeded: false)
             return refused(.logUnavailable(measured: measured))
         }
         seams.observer.actionLogDidAppend(succeeded: true)
 
-        guard call.connection.isOpen else { return .dropped }
+        guard call.connection.isOpen else {
+            return .dropped(Refusal(.cancelled, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
+        }
         snapshot = seams.state.snapshot()
         let admission: OperationAdmission
         do {
             admission = try store.admit(receipt, digest: call.digest, now: snapshot.reading.wall)
         } catch {
-            return .refused(Refusal(.internalError, message: storeFault.message, frontmostApp: frontmost))
+            return .refused(
+                Refusal(
+                    .internalError, message: storeFault.message, frontmostApp: frontmost,
+                    frameSHA256: live.frame.sha256))
         }
         switch admission {
         case .new(let ticket):
@@ -214,8 +234,14 @@ extension InputExecutor {
                 Execution(
                     call: call, ticket: ticket, receipt: receipt, plan: plan, action: action, lease: lease,
                     patchCheckedAt: patchCheckedAt, admissionMeasured: measured))
-        case .conflict(let view): return .refused(Refusal(.operationIDConflict, operation: view))
-        case .inProgress(let view): return .refused(Refusal(.operationInProgress, operation: view))
+        case .conflict(let view):
+            return .refused(
+                Refusal(
+                    .operationIDConflict, operation: view, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
+        case .inProgress(let view):
+            return .refused(
+                Refusal(
+                    .operationInProgress, operation: view, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
         case .replay(let replay): return .replay(replay, state: .ok)
         case .capacity: return refused(.operationCapacity)
         }

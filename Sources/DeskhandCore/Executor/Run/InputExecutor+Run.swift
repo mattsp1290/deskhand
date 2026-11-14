@@ -12,6 +12,10 @@ struct Execution: Sendable {
     let patchCheckedAt: ContinuousClock.Instant?
     /// Step 14's facts, reported by an operation that ended before its last look (contract 6.7).
     let admissionMeasured: Measured
+    /// `press`: the key and the code step 2 resolved it to under the layout then active. A layout
+    /// switched since would post a key other than the one named and checked against the denied
+    /// shortcuts (contract 6.5), so every check before a down event resolves it again.
+    let pressedKey: (key: Key, code: PostedKeyCode)?
     var lastLookMeasured: Measured?
     var binding: IdentityBinding?
     var eventsPosted = 0
@@ -32,6 +36,15 @@ struct Execution: Sendable {
         self.lease = lease
         self.patchCheckedAt = patchCheckedAt
         self.admissionMeasured = admissionMeasured
+        pressedKey = Self.pressedKey(of: call.arguments, plan: plan)
+    }
+
+    private static func pressedKey(of arguments: EffectCallArguments, plan: ActionPlan) -> (Key, PostedKeyCode)? {
+        guard case .keyboard(let keyboard) = arguments, case .press(let press) = keyboard.action else { return nil }
+        for planned in plan.events {
+            if case .keyDown(let code, text: nil) = planned.event { return (press.key, code) }
+        }
+        return nil
     }
 
     var hasStarted: Bool { lastLookMeasured != nil }
@@ -43,9 +56,15 @@ struct Execution: Sendable {
 private struct Look {
     /// The first cause in the order of contract 9.5, or `nil` when the event may be posted.
     let stop: ToolErrorReason?
-    let reading: ClockReading
-    /// ``AppCheck/pointOwner`` as the policy decides on it, when the app check ran.
+    /// The layout no longer gives the pressed key the code it was resolved to: a fault.
+    let layoutChanged: Bool
+    /// ``AppCheck/pointOwner`` as the policy decides on it.
     let pointOwner: AppIdentity?
+
+    var ending: Ending? {
+        if let stop { return .stopped(stop) }
+        return layoutChanged ? .fault("The keyboard layout changed after the key was resolved.") : nil
+    }
 }
 
 /// How an executing operation ends (contract 12.2, 12.4).
@@ -58,6 +77,11 @@ enum Ending: Sendable {
 }
 
 extension InputExecutor {
+    /// A hold polls once per `USER_ACTIVITY_POLL_MS`, once more to end, and once per move of the
+    /// deadline. These many polls beyond what its length needs mean the clock it is timed by does
+    /// not advance, and the hold ends as a fault about `DEADLINE_BOUND_MS` after it was due.
+    public static let holdPollSlack = ContractConstants.deadlineBoundMs / ContractConstants.userActivityPollMs
+
     /// Contract 12.3 steps 4 to 9 for an admitted call.
     func execute(_ admitted: Execution) async -> EffectAnswer {
         var execution = admitted
@@ -92,24 +116,27 @@ extension InputExecutor {
             }
             if press?.isNew == true { execution.pressed.append(input) }
         }
-        let look = execution.hasStarted ? check(planned.target, &execution) : lastLook(&execution)
-        if let stop = look.stop {
+        let look = look(at: planned.target, beforeDown: planned.event.press != nil, &execution)
+        if let ending = look.ending {
             if let press, press.isNew {
                 try? ledger.withdraw(press)
                 if !ledger.pending().contains(press.input) { execution.pressed.removeAll { $0 == press.input } }
             }
-            return .stopped(stop)
+            return ending
         }
         do {
             try seams.poster.post(planned.event)
         } catch {
             return .fault("An input event could not be posted.")
         }
+        // Read after the post: a hold, `completed_at` and the arming lookback run from the event,
+        // not from the checks before it (contract 6.4, 6.5, 6.7, 10.4).
+        let posted = seams.state.snapshot().reading
         execution.eventsPosted += 1
         section = .executing(execution.claim, execution.ticket, eventsPosted: execution.eventsPosted)
-        execution.lastPostedAt = look.reading.wall
-        seams.observer.didPostEvent(at: look.reading.monotonic)
-        if planned.startsHold { execution.holdAnchor = look.reading.monotonic }
+        execution.lastPostedAt = posted.wall
+        seams.observer.didPostEvent(at: posted.monotonic)
+        if planned.startsHold { execution.holdAnchor = posted.monotonic }
         if case .buttonDown = planned.event, let owner = look.pointOwner {
             execution.binding?.didPostButtonDown(over: owner)
         }
@@ -125,46 +152,48 @@ extension InputExecutor {
         return nil
     }
 
-    /// The last look (contract 12.3 step 5): the checks before the first event, which also take the
-    /// facts `measured` reports, even when a check fails, and bind the identities the rest of the
-    /// operation must keep.
-    private func lastLook(_ execution: inout Execution) -> Look {
-        let snapshot = seams.state.snapshot()
+    /// The checks before an event and at every poll while input is held (contract 12.3 steps 5 and
+    /// 6, 12.4, 13), stopping at the first cause in the order of contract 9.5.
+    ///
+    /// The first of them is the last look, which also takes the facts `measured` reports, even
+    /// when a check fails, and binds the identities the rest of the operation must keep; a later
+    /// one follows a frontmost switch the binding accepted.
+    ///
+    /// The identities, and before a down event the key's code, are read first, because those reads
+    /// can wait on a busy app. The state, the lease and its deadline, the person at the Mac, the
+    /// connection and the watchdog's interruptions are read after them, so nothing slow lies
+    /// between those reads and the post: a kill switch used during an identity read stops the
+    /// event (contract 12.3 step 5, 13.3).
+    private func look(at target: CheckTarget, beforeDown: Bool, _ execution: inout Execution) -> Look {
+        let isLastLook = !execution.hasStarted
         let check = AppCheck.run(
-            .lastLook, action: execution.action, permittedApps: execution.call.arguments.permittedApps, binding: nil,
-            snapshot: snapshot, identity: seams.identity)
-        execution.lastLookMeasured = check.measured ?? execution.admissionMeasured
+            isLastLook ? .lastLook : .event(target), action: execution.action,
+            permittedApps: execution.call.arguments.permittedApps, binding: isLastLook ? nil : execution.binding,
+            snapshot: seams.state.snapshot(), identity: seams.identity)
+        if isLastLook { execution.lastLookMeasured = check.measured ?? execution.admissionMeasured }
+        var layoutChanged = false
+        if beforeDown, let pressed = execution.pressedKey {
+            layoutChanged = seams.keyCodes.code(for: pressed.key) != pressed.code
+        }
+
+        let snapshot = seams.state.snapshot()
         var stop = standingCause(of: execution, snapshot)
-        if stop == nil, let checkedAt = execution.patchCheckedAt,
+        if stop == nil, isLastLook, let checkedAt = execution.patchCheckedAt,
             checkedAt.duration(to: snapshot.reading.monotonic) > .milliseconds(ContractConstants.patchCheckMaxAgeMs)
         {
             stop = .staleFrame(.pixelsChanged(pointIndex: 0))
         }
         if stop == nil { stop = check.denial }
         if stop == nil, !execution.call.connection.isOpen { stop = .cancelled }
-        stop = Self.first(stop, interruptionCause(for: execution))
-        if stop == nil { execution.binding = check.binding }
-        return Look(stop: stop, reading: snapshot.reading, pointOwner: check.pointOwner?.policyIdentity)
-    }
-
-    /// The checks before every later event and at every poll while input is held (contract 12.3
-    /// step 6, 12.4), stopping at the first cause in the order of contract 9.5. A frontmost switch
-    /// that the binding accepted is followed from here on.
-    private func check(_ target: CheckTarget, _ execution: inout Execution) -> Look {
-        let snapshot = seams.state.snapshot()
-        var stop = standingCause(of: execution, snapshot)
-        var appCheck: AppCheck?
+        stop = .first(stop, interruptions.cause(under: execution.lease))
         if stop == nil {
-            let check = AppCheck.run(
-                .event(target), action: execution.action, permittedApps: execution.call.arguments.permittedApps,
-                binding: execution.binding, snapshot: snapshot, identity: seams.identity)
-            stop = check.denial
-            appCheck = check
+            if isLastLook {
+                execution.binding = check.binding
+            } else {
+                execution.binding?.follow(frontmost: check.frontmost.policyIdentity)
+            }
         }
-        if stop == nil, !execution.call.connection.isOpen { stop = .cancelled }
-        stop = Self.first(stop, interruptionCause(for: execution))
-        if stop == nil, let appCheck { execution.binding?.follow(frontmost: appCheck.frontmost.policyIdentity) }
-        return Look(stop: stop, reading: snapshot.reading, pointOwner: appCheck?.pointOwner?.policyIdentity)
+        return Look(stop: stop, layoutChanged: layoutChanged, pointOwner: check.pointOwner?.policyIdentity)
     }
 
     /// The state, the lease and the person at the Mac. The deadline is in the first two: the
@@ -176,18 +205,6 @@ extension InputExecutor {
         return activityCause()
     }
 
-    private func interruptionCause(for execution: Execution) -> ToolErrorReason? {
-        guard let interruption else { return nil }
-        if case .leaseEnded(let end) = interruption, end.lease.serial != execution.lease.serial { return nil }
-        return interruption.reason
-    }
-
-    private static func first(_ lhs: ToolErrorReason?, _ rhs: ToolErrorReason?) -> ToolErrorReason? {
-        guard let lhs else { return rhs }
-        guard let rhs else { return lhs }
-        return rhs.abortRank < lhs.abortRank ? rhs : lhs
-    }
-
     /// Waits with input held until `elapsed` after the hold's anchor, checking at least every
     /// `USER_ACTIVITY_POLL_MS` and waking for the deadline (contract 13.1, 13.2).
     private func hold(until elapsed: Duration, checking target: CheckTarget, _ execution: inout Execution) async
@@ -195,34 +212,52 @@ extension InputExecutor {
     {
         guard let anchor = execution.holdAnchor else { return nil }
         let end = anchor.advanced(by: elapsed)
+        let poll = Duration.milliseconds(ContractConstants.userActivityPollMs)
+        let maxPolls = Int((elapsed / poll).rounded(.up)) + Self.holdPollSlack
+        var polls = 0
         while true {
             let snapshot = seams.state.snapshot()
             let now = snapshot.reading.monotonic
             guard now < end else { return nil }
-            var wait = min(now.duration(to: end), .milliseconds(ContractConstants.userActivityPollMs))
+            guard polls < maxPolls else { return .fault("The clock did not advance while input was held.") }
+            polls += 1
+            var wait = min(now.duration(to: end), poll)
             let deadline = snapshot.report.effectDeadline(
                 of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
             if deadline > now { wait = min(wait, now.duration(to: deadline)) }
             await seams.timer.sleep(for: wait)
-            if let stop = check(target, &execution).stop { return .stopped(stop) }
+            if let ending = look(at: target, beforeDown: false, &execution).ending { return ending }
         }
     }
 
     /// Contract 12.4 steps 2 to 5, or 12.3 steps 7 to 9 for a completed operation: releases, the
     /// final record, leaving the section, the outcome entry and the answer.
+    ///
+    /// Every admitted call gets its outcome entry, also when its final record could not be
+    /// written: the entry then says `failed` with the count posted, which is what the caller is
+    /// answered, so the action log never holds an intent of posted input with no outcome.
     private func end(_ execution: inout Execution, _ ending: Ending) async -> EffectAnswer {
         releaseOperationInput(execution.pressed)
         let snapshot = seams.state.snapshot()
         let measured = execution.lastLookMeasured ?? execution.admissionMeasured
         let outcome = self.outcome(of: ending, execution, measured: measured, state: snapshot.state)
-        var recorded: OperationOutcome?
-        do throws(OperationStoreError) {
-            guard let store else { throw .unavailable }
-            recorded = try store.finish(execution.ticket, outcome, eventsPosted: execution.eventsPosted)
-        } catch {
-            recorded = nil
-        }
+        let recorded = finishRecord(execution, outcome)
         leaveSection()
+        let logged =
+            recorded.flatMap { ActionOutcome($0, eventsPosted: execution.eventsPosted) }
+            ?? .failed(eventsPosted: execution.eventsPosted)
+        let log = seams.log
+        let receipt = execution.receipt
+        let loggedMeasured = (recorded ?? outcome).measured
+        let now = seams.state.snapshot().reading.wall
+        await logAppend {
+            do throws(ActionLogFailure) {
+                try await log.commitOutcome(receipt, logged, measured: loggedMeasured, now: now)
+                return true
+            } catch {
+                return false
+            }
+        }
         guard let recorded else {
             let view = OperationView(status: .failed, eventsPosted: execution.eventsPosted)
             return .error(
@@ -231,18 +266,26 @@ extension InputExecutor {
                     state: snapshot.state, operationID: execution.call.arguments.operationID,
                     operation: .result(view), measured: measured))
         }
-        if let logged = ActionOutcome(recorded, eventsPosted: execution.eventsPosted) {
-            do {
-                try await seams.log.commitOutcome(
-                    execution.receipt, logged, measured: recorded.measured, now: seams.state.snapshot().reading.wall)
-                seams.observer.actionLogDidAppend(succeeded: true)
-            } catch {
-                seams.observer.actionLogDidAppend(succeeded: false)
-            }
-        }
         switch recorded {
         case .completed(let result): return .completed(result)
         case .aborted(let error, _), .failed(let error, _): return .error(error)
+        }
+    }
+
+    /// Contract 12.3 step 7: the final record, or `nil` when it could not be written.
+    ///
+    /// A store that refused the write without marking itself unavailable (a result it cannot
+    /// encode, which a second attempt with the same `measured` would refuse the same way) is
+    /// dropped. Every effect is then refused with `internal_error` until it is loaded again, and the
+    /// load applies the restart rules, so the record does not stay `executing` while the caller was
+    /// told `failed`.
+    private func finishRecord(_ execution: Execution, _ outcome: OperationOutcome) -> OperationOutcome? {
+        guard let store else { return nil }
+        do throws(OperationStoreError) {
+            return try store.finish(execution.ticket, outcome, eventsPosted: execution.eventsPosted)
+        } catch {
+            if store.isAvailable { self.store = nil }
+            return nil
         }
     }
 

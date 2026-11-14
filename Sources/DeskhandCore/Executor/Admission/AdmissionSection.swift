@@ -70,6 +70,13 @@ extension ToolErrorReason {
         }
     }
 
+    /// Of two causes found at one check, the one first in the order of contract 9.5.
+    static func first(_ lhs: ToolErrorReason?, _ rhs: ToolErrorReason?) -> ToolErrorReason? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        return rhs.abortRank < lhs.abortRank ? rhs : lhs
+    }
+
     /// The state an error with this reason reports: a state's name always reports that state
     /// (contract 9.2).
     func reportedState(otherwise current: DeskhandState) -> DeskhandState {

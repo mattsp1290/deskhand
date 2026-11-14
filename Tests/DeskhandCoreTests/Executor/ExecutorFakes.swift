@@ -85,7 +85,8 @@ enum MacTrace: Hashable, Sendable, CustomStringConvertible {
 
 /// A fake Mac behind every synchronous seam: the state owner, identity, the person, the poster, the
 /// layout, the clock and the ledger's disk. `afterPost[n]` changes the world right after the n-th
-/// posted event, so the check before the next one sees it.
+/// posted event, so the check before the next one sees it; `duringIdentityRead` changes it inside
+/// the next identity read, as a slow accessibility query that the world moves on during.
 final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPoster, KeyCodeMapper, ExecutionTimer,
     ExecutorObserver
 {
@@ -118,6 +119,18 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
         var patchVerdict = PatchVerdict.unchanged
         /// How long a patch recapture takes on the fake clock.
         var captureMs: Int64 = 0
+        /// Holds every patch recapture until it opens.
+        var patchGate: Gate?
+        /// Runs once, inside the next identity read.
+        var duringIdentityRead: Change?
+        /// The fake clock when each event and each release went out.
+        var postTimes: [ContinuousClock.Instant] = []
+        var releaseTimes: [ContinuousClock.Instant] = []
+        /// What the executor reported through `didPostEvent(at:)`.
+        var observedPosts: [ContinuousClock.Instant] = []
+        /// A state owner that hands out the reading of its last reduction: the snapshot's clock stays
+        /// here while time passes.
+        var frozenOffsetMs: Int64?
     }
 
     let world: Mutex<World>
@@ -158,15 +171,37 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
     func snapshot() -> DeskSnapshot {
         read {
             DeskSnapshot(
-                reading: ExecutorFixture.t0.advanced(byMilliseconds: $0.offsetMs), report: $0.report, lease: $0.lease,
-                policy: $0.policy)
+                reading: ExecutorFixture.t0.advanced(byMilliseconds: $0.frozenOffsetMs ?? $0.offsetMs),
+                report: $0.report, lease: $0.lease, policy: $0.policy)
         }
     }
 
     // IdentityMeasurer
-    func frontmostApp() -> ObservedApp { read(\.frontmost) }
-    func keyboardFocus() -> ObservedWindow { read(\.focus) }
-    func windows(at points: [GlobalPoint]) -> [ObservedWindow] { read { world in points.map(world.windows) } }
+    func frontmostApp() -> ObservedApp {
+        identityRead()
+        return read(\.frontmost)
+    }
+
+    func keyboardFocus() -> ObservedWindow {
+        identityRead()
+        return read(\.focus)
+    }
+
+    func windows(at points: [GlobalPoint]) -> [ObservedWindow] {
+        identityRead()
+        return read { world in points.map(world.windows) }
+    }
+
+    private func identityRead() {
+        let hook: Change? = world.withLock { world in
+            defer { world.duringIdentityRead = nil }
+            return world.duringIdentityRead
+        }
+        if let hook {
+            let now = reading
+            change { hook(&$0, now) }
+        }
+    }
 
     // UserActivitySource
     func idleMilliseconds() -> Int? { read(\.idleMs) }
@@ -177,6 +212,7 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
             let index = world.trace.count { if case .posted = $0 { true } else { false } } + 1
             if world.failPostAt == index { throw FakeFault() }
             world.trace.append(.posted(event))
+            world.postTimes.append(ExecutorFixture.t0.advanced(byMilliseconds: world.offsetMs).monotonic)
             return world.afterPost[index]
         }
         if let change {
@@ -189,6 +225,7 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
         try world.withLock { world in
             if world.failReleases { throw FakeFault() }
             world.trace.append(.released(input))
+            world.releaseTimes.append(ExecutorFixture.t0.advanced(byMilliseconds: world.offsetMs).monotonic)
         }
     }
 
@@ -215,7 +252,7 @@ final class FakeMac: StateSource, IdentityMeasurer, UserActivitySource, EventPos
 
     // ExecutorObserver
     func executionDidChange(executing: Bool) { change { $0.executionChanges.append(executing) } }
-    func didPostEvent(at instant: ContinuousClock.Instant) {}
+    func didPostEvent(at instant: ContinuousClock.Instant) { change { $0.observedPosts.append(instant) } }
     func actionLogDidAppend(succeeded: Bool) { change { $0.logAppends.append(succeeded) } }
     func cleanupPendingDidChange(_ pending: Bool) { change { $0.cleanupPending.append(pending) } }
 
@@ -305,6 +342,7 @@ struct FakePatches: TargetPatchVerifier {
     let mac: FakeMac
 
     func verify(_ frame: LiveFrame, patches: [TargetPatch]) async -> [PatchVerdict] {
+        await mac.read(\.patchGate)?.pass()
         let (verdict, captureMs) = mac.read { ($0.patchVerdict, $0.captureMs) }
         mac.advance(byMilliseconds: captureMs)
         return patches.map { _ in verdict }
@@ -373,29 +411,63 @@ final class FakeConnection: ConnectionLiveness {
     }
 }
 
-/// One executor on one fake Mac, with an in-memory action log that can be made to fail.
+/// An action log that runs a hook before it appends an entry of one kind, and that can refuse
+/// every append made from a cancelled task, as a client that honors cancellation would.
+actor HookedLog: ActionLogClient {
+    let memory = InMemoryActionLog()
+    private var hooks: [ActionLogEntryKind: @Sendable () async -> Void] = [:]
+    private var failsWhenCancelled = false
+
+    func on(_ kind: ActionLogEntryKind, _ hook: (@Sendable () async -> Void)?) { hooks[kind] = hook }
+
+    func failWhenCancelled() { failsWhenCancelled = true }
+
+    func append(_ line: ActionLogLine) async throws(ActionLogFailure) {
+        if let hook = hooks[line.entry.kind] { await hook() }
+        if failsWhenCancelled, Task.isCancelled { throw .connectionLost }
+        try await memory.append(line)
+    }
+}
+
+/// One executor on one fake Mac, with an in-memory action log that can be made to fail or wait.
+/// The fake Mac stands behind every synchronous seam unless a test puts another in its place.
 struct Harness {
+    struct Overrides: Sendable {
+        var state: (any StateSource)?
+        var identity: (any IdentityMeasurer)?
+        var activity: (any UserActivitySource)?
+        var poster: (any EventPoster)?
+        var ledgerStore: (any HeldInputStore & Sendable)?
+    }
+
     let mac: FakeMac
     let frames: FakeFrames
-    let log: FaultInjectingActionLog<InMemoryActionLog>
+    let log: FaultInjectingActionLog<HookedLog>
     let loader: FakeStoreLoader
     let executor: InputExecutor
 
     init(
         mac: FakeMac = FakeMac(), frames: FakeFrames? = nil, loader: FakeStoreLoader = FakeStoreLoader(),
-        actionsPerMinute: Int = 60
+        actionsPerMinute: Int = 60, waitLimit: Duration = InputExecutor.Configuration.defaultWaitLimit,
+        overrides: Overrides = Overrides()
     ) throws {
         self.mac = mac
         self.frames = frames ?? FakeFrames()
         self.loader = loader
-        log = FaultInjectingActionLog(wrapping: InMemoryActionLog())
+        log = FaultInjectingActionLog(wrapping: HookedLog())
         let seams = InputExecutor.Seams(
-            state: mac, frames: self.frames, patches: FakePatches(mac: mac), identity: mac,
-            activity: mac, poster: mac, keyCodes: mac, log: log, timer: mac, observer: mac, operationStore: loader)
-        let ledger = try HeldInputLedger(store: mac.ledgerStore)
+            state: overrides.state ?? mac, frames: self.frames, patches: FakePatches(mac: mac),
+            identity: overrides.identity ?? mac, activity: overrides.activity ?? mac, poster: overrides.poster ?? mac,
+            keyCodes: mac, log: log, timer: mac, observer: mac, operationStore: loader)
+        let ledger = try HeldInputLedger(store: overrides.ledgerStore ?? mac.ledgerStore)
         executor = InputExecutor(
-            configuration: .init(actionsPerMinute: actionsPerMinute), seams: seams, ledger: ledger,
-            now: mac.reading.wall)
+            configuration: .init(actionsPerMinute: actionsPerMinute, waitLimit: waitLimit), seams: seams,
+            ledger: ledger, now: mac.reading.wall)
+    }
+
+    /// Runs `hook` before the log appends each entry of `kind`; `nil` removes it.
+    func onLog(_ kind: ActionLogEntryKind, _ hook: (@Sendable () async -> Void)?) async {
+        await log.base.on(kind, hook)
     }
 
     var frameID: String { frames.frameID.rawValue }
@@ -438,7 +510,7 @@ struct Harness {
             connection: connection)
     }
 
-    var logEntries: [ActionLogEntry] { get async { await log.base.entries } }
+    var logEntries: [ActionLogEntry] { get async { await log.base.memory.entries } }
 
     func status(_ operation: String = "op-1") async throws -> StatusOperation {
         try await executor.operationStatus(
@@ -482,4 +554,94 @@ extension JSONValue {
 extension HeldInput {
     static func modifierKey(_ modifier: Modifier) -> HeldInput { .modifier(ExecutorFixture.modifierCodes[modifier]!) }
     static func named(_ key: Key) -> HeldInput { .key(ExecutorFixture.code(key)) }
+}
+
+/// The order in which the executor touched its synchronous seams.
+enum Touch: Hashable, Sendable {
+    case ledgerWrite, snapshot, activity, identity, post, release
+}
+
+/// Records every touch of the seams it stands in for, then passes it to the fake Mac.
+final class TouchRecorder: StateSource, IdentityMeasurer, UserActivitySource, EventPoster, HeldInputStore {
+    let mac: FakeMac
+    private let touches = Mutex<[Touch]>([])
+
+    init(_ mac: FakeMac) { self.mac = mac }
+
+    var all: [Touch] { touches.withLock { $0 } }
+
+    private func add(_ touch: Touch) { touches.withLock { $0.append(touch) } }
+
+    func snapshot() -> DeskSnapshot {
+        add(.snapshot)
+        return mac.snapshot()
+    }
+
+    func frontmostApp() -> ObservedApp {
+        add(.identity)
+        return mac.frontmostApp()
+    }
+
+    func keyboardFocus() -> ObservedWindow {
+        add(.identity)
+        return mac.keyboardFocus()
+    }
+
+    func windows(at points: [GlobalPoint]) -> [ObservedWindow] {
+        add(.identity)
+        return mac.windows(at: points)
+    }
+
+    func idleMilliseconds() -> Int? {
+        add(.activity)
+        return mac.idleMilliseconds()
+    }
+
+    func post(_ event: InputEvent) throws {
+        add(.post)
+        try mac.post(event)
+    }
+
+    func postRelease(_ input: HeldInput) throws {
+        add(.release)
+        try mac.postRelease(input)
+    }
+
+    func load() throws -> [UInt8]? { try mac.ledgerStore.load() }
+
+    func replace(with bytes: [UInt8]) throws {
+        add(.ledgerWrite)
+        try mac.ledgerStore.replace(with: bytes)
+    }
+
+    var overrides: Harness.Overrides {
+        Harness.Overrides(state: self, identity: self, activity: self, poster: self, ledgerStore: self)
+    }
+}
+
+/// Holds a reference to the task that runs a call, so a test can cancel it from inside a seam.
+final class TaskBox: Sendable {
+    private let task = Mutex<Task<EffectAnswer, Never>?>(nil)
+
+    func hold(_ task: Task<EffectAnswer, Never>) { self.task.withLock { $0 = task } }
+
+    func cancel() { task.withLock { $0 }?.cancel() }
+}
+
+extension FakeMac {
+    /// The fake clock from each event of `isDown` to the first later event of `isUp`.
+    func heldFor(from isDown: (InputEvent) -> Bool, to isUp: (InputEvent) -> Bool) -> Duration? {
+        let (events, times) = read { world in
+            (
+                world.trace.compactMap { entry -> InputEvent? in
+                    guard case .posted(let event) = entry else { return nil }
+                    return event
+                }, world.postTimes
+            )
+        }
+        guard let down = events.firstIndex(where: isDown),
+            let up = events.indices.first(where: { $0 > down && isUp(events[$0]) })
+        else { return nil }
+        return times[down].duration(to: times[up])
+    }
 }
