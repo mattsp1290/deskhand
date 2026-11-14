@@ -1,0 +1,175 @@
+import DeskhandCore
+import NIOCore
+import NIOHTTP1
+import NIOPosix
+import NIOSSL
+import Synchronization
+
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#endif
+
+/// What the listener reports for the log. Never carries a credential.
+public enum ListenerEvent: Hashable, Sendable {
+    case bound(SocketAddress)
+    /// D14: the configured address is on no interface (EADDRNOTAVAIL); binding is retried.
+    case bindUnavailable(retryIn: TimeAmount)
+    case clientCertificateRefused(ClientCertificateRefusal)
+    /// The handler produced a body over the response limit; the caller got `500` instead.
+    case responseTooLarge(byteCount: Int)
+}
+
+public enum ListenerError: Error, Hashable, Sendable {
+    /// ``DeskhandListener/stop()`` ran before the listener was bound.
+    case stopped
+}
+
+/// The HTTPS endpoint of contract section 2: TLS 1.3 with mutual authentication against the
+/// private CA, then checks 2 to 10 of the contract 2.4 table, then the ``RequestHandler``.
+///
+/// Each new connection takes the TLS context the ``ServerTLSContextHolder`` holds at accept time,
+/// so a credential reload reaches new connections while open ones keep theirs.
+public final class DeskhandListener: Sendable {
+    private struct State {
+        var server: (any Channel)?
+        var connections: [ObjectIdentifier: any Channel] = [:]
+        var stopped = false
+    }
+
+    private let configuration: ListenerConfiguration
+    private let tls: ServerTLSContextHolder
+    private let tokens: any TokenProvider
+    private let handler: any RequestHandler
+    private let group: any EventLoopGroup
+    private let events: @Sendable (ListenerEvent) -> Void
+    private let state = Mutex(State())
+
+    public init(
+        configuration: ListenerConfiguration,
+        tls: ServerTLSContextHolder,
+        tokens: any TokenProvider,
+        handler: any RequestHandler,
+        group: any EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+        events: @escaping @Sendable (ListenerEvent) -> Void = { _ in }
+    ) {
+        self.configuration = configuration
+        self.tls = tls
+        self.tokens = tokens
+        self.handler = handler
+        self.group = group
+        self.events = events
+    }
+
+    /// Binds and starts accepting, returning the bound address. While the address is on no
+    /// interface it retries every ``ListenerConfiguration/bindRetryInterval`` and never gives up
+    /// (D14); it stops retrying only when the calling task is cancelled or ``stop()`` runs. Any
+    /// other bind failure is thrown. Call it once per listener.
+    public func start() async throws -> SocketAddress {
+        let address = try SocketAddress(ipAddress: configuration.bindHost, port: configuration.bindPort)
+        let bootstrap = makeBootstrap()
+        while true {
+            try Task.checkCancellation()
+            guard !state.withLock({ $0.stopped }) else { throw ListenerError.stopped }
+            let server: any Channel
+            do {
+                server = try await bootstrap.bind(to: address).get()
+            } catch let error as IOError where error.errnoCode == EADDRNOTAVAIL {
+                events(.bindUnavailable(retryIn: configuration.bindRetryInterval))
+                try await Task.sleep(nanoseconds: UInt64(max(0, configuration.bindRetryInterval.nanoseconds)))
+                continue
+            }
+            let keep = state.withLock { state in
+                guard !state.stopped else { return false }
+                state.server = server
+                return true
+            }
+            guard keep else {
+                try? await server.close()
+                throw ListenerError.stopped
+            }
+            let bound = server.localAddress ?? address
+            events(.bound(bound))
+            return bound
+        }
+    }
+
+    /// Stops accepting and closes every open connection, which cancels any call in flight.
+    public func stop() async {
+        let (server, connections) = state.withLock { state in
+            state.stopped = true
+            defer {
+                state.server = nil
+                state.connections = [:]
+            }
+            return (state.server, Array(state.connections.values))
+        }
+        try? await server?.close()
+        for connection in connections { try? await connection.close() }
+    }
+
+    private func makeBootstrap() -> ServerBootstrap {
+        ServerBootstrap(group: group)
+            .serverChannelOption(.backlog, value: 64)
+            .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
+            .childChannelOption(.tcpOption(.tcp_nodelay), value: 1)
+            .childChannelInitializer { [self] channel in
+                channel.eventLoop.makeCompletedFuture {
+                    guard track(channel) else { throw ListenerError.stopped }
+                    try configurePipeline(channel)
+                }
+            }
+    }
+
+    private func track(_ channel: any Channel) -> Bool {
+        let id = ObjectIdentifier(channel)
+        let tracked = state.withLock { state in
+            guard !state.stopped else { return false }
+            state.connections[id] = channel
+            return true
+        }
+        if tracked {
+            channel.closeFuture.whenComplete { [self] _ in
+                _ = state.withLock { $0.connections.removeValue(forKey: id) }
+            }
+        }
+        return tracked
+    }
+
+    /// Runs on the new connection's event loop.
+    private func configurePipeline(_ channel: any Channel) throws {
+        let session = ConnectionSession()
+        let policy = configuration.clientCertificates
+        let events = self.events
+        let tlsHandler = NIOSSLServerHandler._makeSSLServerHandler(context: tls.current) { certificate, channel in
+            do {
+                session.principal = try policy.authenticate(leafDER: try certificate.toDERBytes())
+                return channel.eventLoop.makeSucceededVoidFuture()
+            } catch let refusal as ClientCertificateRefusal {
+                events(.clientCertificateRefused(refusal))
+                return channel.eventLoop.makeFailedFuture(refusal)
+            } catch {
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
+        var limits = NIOHTTPDecoderLimitConfiguration()
+        limits.maxHeaderFieldSize = configuration.maxRequestHeaderBytes
+        limits.maxHeaderListSize = configuration.maxRequestHeaderBytes
+        let pipeline = channel.pipeline.syncOperations
+        try pipeline.addHandler(tlsHandler)
+        try pipeline.addHandler(
+            ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes, limitConfiguration: limits))
+        )
+        try pipeline.addHandler(HTTPResponseEncoder())
+        try pipeline.addHandler(
+            ConnectionHandler(
+                configuration: configuration,
+                session: session,
+                tokens: tokens,
+                handler: handler,
+                events: events
+            )
+        )
+    }
+}
