@@ -1,0 +1,45 @@
+name: Docs
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Documentation checks. Schema validation for docs/schemas/** (deskhand-u5z8) belongs here as
+# another job alongside these.
+jobs:
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Ignores (including docs/prompts/**) come from .markdownlint-cli2.jsonc.
+      - uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
+        with:
+          globs: '**/*.md'
+
+  links:
+    name: Link check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Offline mode (lychee.toml): relative links and anchors only, so the job cannot flake on remote hosts.
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: --config lychee.toml './**/*.md'
+          failIfEmpty: false
+          jobSummary: false

@@ -1,0 +1,11 @@
+# Offline: only relative file links and fragments are checked, so CI never flakes on remote hosts.
+offline = true
+include_fragments = "anchor-only"
+no_progress = true
+
+# Generated planning prompts cite many external Apple/MCP URLs and are not maintained docs.
+exclude_path = [
+  "docs/prompts",
+  ".build",
+  ".swiftpm",
+]
