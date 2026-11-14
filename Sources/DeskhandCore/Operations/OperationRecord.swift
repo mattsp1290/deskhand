@@ -134,14 +134,20 @@ public struct OperationTicket: Hashable, Sendable {
     public let admittedAt: Timestamp
 }
 
-/// How an executed operation ended, as the executor reports it to ``OperationStore``.
+/// How an executed operation ended, as the executor reports it to ``OperationStore``. Every
+/// outcome carries `measured`, because the result of every admitted call does (contract 6.7): a
+/// success inside its result, an error beside it.
 public enum OperationOutcome: Hashable, Sendable {
     case completed(EffectResult)
     /// Stopped early for a cause in contract 12.4: a state's name, `user_active`, `denied_app`,
-    /// `lease_expired`, `lease_not_held` or `cancelled`.
-    case aborted(ToolError)
-    /// A fault inside deskhand: `internal_error`.
-    case failed(ToolError)
+    /// `stale_frame`, `lease_expired`, `lease_not_held` or `cancelled`.
+    ///
+    /// `measured` is what the last look took, also when the last look itself failed; an operation
+    /// that ended before it reports the check before admission. A `denied_app` keeps the facts its
+    /// reason carries, from the check that failed.
+    case aborted(ToolError, measured: Measured)
+    /// A fault inside deskhand: `internal_error`. `measured` as for ``aborted(_:measured:)``.
+    case failed(ToolError, measured: Measured)
 
     public var status: OperationStatus {
         switch self {
@@ -153,15 +159,25 @@ public enum OperationOutcome: Hashable, Sendable {
 
     public var isError: Bool { status != .completed }
 
-    public var structuredContent: JSONValue {
+    /// The `measured` member of the result, which is also where the outcome entry of the action log
+    /// takes its apps from.
+    public var measured: Measured {
         switch self {
-        case .completed(let result): result.jsonValue
-        case .aborted(let error), .failed(let error): error.jsonValue
+        case .completed(let result): result.measured
+        case .aborted(let error, let measured), .failed(let error, let measured): error.reason.measured ?? measured
         }
     }
 
-    /// The outcome as it is returned the first time: `operation_id`, the count and `replayed: false`
-    /// come from the record, so what is stored and what is sent cannot disagree with it.
+    public var structuredContent: JSONValue {
+        switch self {
+        case .completed(let result): result.jsonValue
+        case .aborted(let error, _), .failed(let error, _): error.jsonValue
+        }
+    }
+
+    /// The outcome as it is returned the first time: `operation_id`, the count, `replayed: false`
+    /// and, on an error, `measured` come from the record and the outcome, so what is stored and
+    /// what is sent cannot disagree with them.
     func stamped(for key: OperationKey, eventsPosted: Int) -> OperationOutcome {
         switch self {
         case .completed(var result):
@@ -169,10 +185,12 @@ public enum OperationOutcome: Hashable, Sendable {
             result.eventsPosted = eventsPosted
             result.replayed = false
             return .completed(result)
-        case .aborted(let error):
-            return .aborted(error.recording(key, OperationView(status: .aborted, eventsPosted: eventsPosted)))
-        case .failed(let error):
-            return .failed(error.recording(key, OperationView(status: .failed, eventsPosted: eventsPosted)))
+        case .aborted(let error, let measured):
+            let view = OperationView(status: .aborted, eventsPosted: eventsPosted)
+            return .aborted(error.recording(key, view, measured), measured: measured)
+        case .failed(let error, let measured):
+            let view = OperationView(status: .failed, eventsPosted: eventsPosted)
+            return .failed(error.recording(key, view, measured), measured: measured)
         }
     }
 
@@ -183,42 +201,70 @@ public enum OperationOutcome: Hashable, Sendable {
 }
 
 extension ToolError {
-    fileprivate func recording(_ key: OperationKey, _ view: OperationView) -> ToolError {
+    fileprivate func recording(_ key: OperationKey, _ view: OperationView, _ measured: Measured) -> ToolError {
         ToolError(
-            reason, message: message, state: state, operationID: key.operationID,
-            operation: .result(view), measured: measured)
+            reason, message: message, state: state, operationID: key.operationID, operation: .result(view),
+            measured: measured)
     }
 }
 
-/// The answer to a same-digest repeat of a finished operation (contract 4.3, 12.5). It posts
-/// nothing, and is only sent while the state is `ok` (Appendix A item 21).
+/// The answer to a same-digest repeat of a final record (contract 4.3, 12.5). It posts nothing,
+/// and is only sent while the state is `ok` (Appendix A item 21).
 public struct OperationReplay: Hashable, Sendable {
+    /// What the repeat is answered from.
+    public enum Answer: Hashable, Sendable {
+        /// The `structuredContent` stored when the operation ended.
+        case stored(OperationEnding)
+        /// A restart ended the operation, so nothing was stored (contract 12.9): the repeat gets
+        /// `interrupted` with the record's status, `failed_before_execution` or `aborted_by_restart`,
+        /// and its count.
+        case interrupted(OperationView)
+    }
+
     /// Always final.
     public let record: OperationRecord
+    public let answer: Answer
+
+    /// `nil` for a record that is still `accepted` or `executing`: a repeat of it is
+    /// `operation_in_progress`, never a replay.
+    init?(_ record: OperationRecord) {
+        switch record.phase {
+        case .ended(let ending, _): answer = .stored(ending)
+        case .failedBeforeExecution, .abortedByRestart: answer = .interrupted(record.view)
+        case .accepted, .executing: return nil
+        }
+        self.record = record
+    }
 
     /// Every replay but that of a `completed` record is an `isError` result.
     public var isError: Bool { record.phase.status != .completed }
 
-    /// What the repeat returns. A stored result comes back as it was stored with `replayed: true`;
-    /// on a stored error `state` is the state now (Appendix A item 37). A record that a restart
-    /// ended has no stored result and answers `interrupted` with its status instead.
-    public func structuredContent(state: DeskhandState) -> JSONValue {
-        switch record.phase {
-        case .ended(.completed(var result), _):
-            result["replayed"] = .bool(true)
+    /// What the repeat returns, given the state as the response is produced (contract 12.5).
+    ///
+    /// - A stored success comes back as it was stored, with `replayed: true` and nothing else
+    ///   changed.
+    /// - A stored error also keeps its `code`, `state`, `operation`, `measured` and `details`. It
+    ///   gains `replayed: true` and `current_state`, so a replayed `secure_input` abort still says
+    ///   `secure_input`, and the state now is beside it.
+    /// - `interrupted` has no stored result. It is built now, so its `state` and its
+    ///   `current_state` are both `currentState`.
+    public func structuredContent(currentState: DeskhandState) -> JSONValue {
+        switch answer {
+        case .stored(.completed(var result)):
+            result["replayed"] = true
             return .object(result)
-        case .ended(.aborted(var error), _), .ended(.failed(var error), _):
-            error["replayed"] = .bool(true)
-            error["state"] = .string(state.rawValue)
+        case .stored(.aborted(var error)), .stored(.failed(var error)):
+            error["replayed"] = true
+            error["current_state"] = .string(currentState.rawValue)
             return .object(error)
-        case .failedBeforeExecution, .abortedByRestart, .accepted, .executing:
+        case .interrupted(let view):
             let message =
-                record.phase.status == .failedBeforeExecution
+                view.status == .failedBeforeExecution
                 ? "deskhand stopped before this operation started. No input was posted."
                 : "deskhand stopped while this operation was executing. Input may have been posted."
             return ToolError(
-                .interrupted, message: message, state: state, operationID: record.key.operationID,
-                operation: .replayed(record.view, currentState: state)
+                .interrupted, message: message, state: currentState, operationID: record.key.operationID,
+                operation: .replayed(view, currentState: currentState)
             ).jsonValue
         }
     }
@@ -242,8 +288,8 @@ public enum OperationLookup: Hashable, Sendable {
         }
         if record.digest != digest {
             self = .conflict(record.view)
-        } else if record.phase.isFinal {
-            self = .replay(OperationReplay(record: record))
+        } else if let replay = OperationReplay(record) {
+            self = .replay(replay)
         } else {
             self = .inProgress(record.view)
         }

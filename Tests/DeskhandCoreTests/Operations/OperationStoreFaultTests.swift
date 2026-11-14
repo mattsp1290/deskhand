@@ -45,7 +45,7 @@ import Testing
         let store = try Sample.store(disk)
         let done = try Sample.admit(store, seededDone)
         try store.markExecuting(done)
-        try store.finish(done, Sample.completed(), eventsPosted: 3)
+        _ = try store.finish(done, Sample.completed(), eventsPosted: 3)
         let running = try Sample.admit(store, seededRunning)
         try store.markExecuting(running)
         try store.recordProgress(running, eventsPosted: 2)
@@ -69,7 +69,10 @@ import Testing
     /// `false` when a store call was refused and the run stops.
     private static func run(_ script: Script, on store: OperationStore, _ truth: inout Truth) -> Bool {
         truth.admitAttempted = true
-        guard case .new(let ticket)? = try? store.admit(script.key, digest: Sample.digest("a"), now: runAt) else {
+        guard
+            case .new(let ticket)? = try? store.admit(
+                Sample.receipt(script.key), digest: Sample.digest("a"), now: runAt)
+        else {
             expectLatched(store)
             return false
         }
@@ -105,7 +108,7 @@ import Testing
     /// is already unavailable, so this is refused too and nothing more reaches the file.
     static func giveUp(_ store: OperationStore, _ ticket: OperationTicket, posted: Int) {
         #expect(throws: OperationStoreError.unavailable) {
-            try store.finish(ticket, Sample.failed(), eventsPosted: posted)
+            _ = try store.finish(ticket, Sample.failed(), eventsPosted: posted)
         }
         expectLatched(store)
     }

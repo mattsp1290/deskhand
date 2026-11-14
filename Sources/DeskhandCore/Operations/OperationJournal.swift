@@ -11,7 +11,8 @@ enum OperationJournal {
     static let version = 1
     /// Every instant from the epoch that RFC 3339 can write, through 9999-12-31T23:59:59.999Z. A
     /// value outside it is damage, and would overflow the retention arithmetic.
-    static let admittedAtRange: ClosedRange<Int64> = 0...253_402_300_799_999
+    static let admittedAtRange = 0...253_402_300_799_999
+    static let countRange = 0...JSONValue.maxExactInteger
 
     /// The header and one `record` line per record: what ``OperationStorage/replace(with:)``
     /// writes at load and when the journal is compacted.
@@ -124,14 +125,11 @@ enum OperationJournal {
                     case .completed, .aborted, .failed: .ended(try fields.ending(status), eventsPosted: count)
                     }
                 guard let phase else { throw EntryError("\(status.rawValue) with \(count) events posted") }
-                let admittedAt = try fields.integer("admitted_at_ms")
-                guard OperationJournal.admittedAtRange.contains(admittedAt) else {
-                    throw EntryError("admitted_at_ms \(admittedAt) is out of range")
-                }
+                let admittedAt = try fields.integer("admitted_at_ms", in: OperationJournal.admittedAtRange)
                 self = .record(
                     OperationRecord(
                         key: key, digest: RequestDigest(sha256: sha256),
-                        admittedAt: Timestamp(millisecondsSinceEpoch: admittedAt), phase: phase))
+                        admittedAt: Timestamp(millisecondsSinceEpoch: Int64(admittedAt)), phase: phase))
             case "execute": self = .transition(key, .execute)
             case "progress": self = .transition(key, .progress(eventsPosted: try fields.count()))
             case "finish":
@@ -185,18 +183,14 @@ enum OperationJournal {
             return id
         }
 
-        func integer(_ name: String) throws(EntryError) -> Int64 {
-            guard case .number(let number) = object[name], let value = Int64(exactly: number) else {
-                throw EntryError("\(name) is not an integer")
+        func integer(_ name: String, in range: ClosedRange<Int>) throws(EntryError) -> Int {
+            guard let value = object[name]?.integer(in: range) else {
+                throw EntryError("\(name) is not an integer from \(range.lowerBound) to \(range.upperBound)")
             }
             return value
         }
 
-        func count() throws(EntryError) -> Int {
-            let value = try integer("events_posted")
-            guard value >= 0, let count = Int(exactly: value) else { throw EntryError("bad events_posted") }
-            return count
-        }
+        func count() throws(EntryError) -> Int { try integer("events_posted", in: OperationJournal.countRange) }
 
         func status() throws(EntryError) -> OperationStatus {
             guard let status = OperationStatus(rawValue: try string("status")) else { throw EntryError("bad status") }

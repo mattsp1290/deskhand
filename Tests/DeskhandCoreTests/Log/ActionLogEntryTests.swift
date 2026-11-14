@@ -209,13 +209,15 @@ import Testing
             frontmostApp: LogSamples.textEdit, targetApp: LogSamples.textEdit, windowTitle: nil, globalPoint: nil,
             measuredAt: LogSamples.time)
         let stale = OperationOutcome.aborted(
-            ToolError(.staleFrame(.pixelsChanged(pointIndex: 0)), message: "", state: .ok, measured: measured))
+            ToolError(.staleFrame(.pixelsChanged(pointIndex: 0)), message: "", state: .ok), measured: measured)
         #expect(ActionOutcome(stale, eventsPosted: 0) == .aborted(.staleFrame, eventsPosted: 0))
-        let paused = OperationOutcome.aborted(ToolError(.blocked(.paused), message: "", state: .paused))
+        let paused = OperationOutcome.aborted(
+            ToolError(.blocked(.paused), message: "", state: .paused), measured: measured)
         #expect(ActionOutcome(paused, eventsPosted: 4) == .aborted(.state(.paused), eventsPosted: 4))
-        let failed = OperationOutcome.failed(ToolError(.internalError, message: "", state: .ok))
+        let failed = OperationOutcome.failed(ToolError(.internalError, message: "", state: .ok), measured: measured)
         #expect(ActionOutcome(failed, eventsPosted: 2) == .failed(eventsPosted: 2))
-        #expect(ActionOutcome(.aborted(ToolError(.busy, message: "", state: .ok)), eventsPosted: 0) == nil)
+        let busy = OperationOutcome.aborted(ToolError(.busy, message: "", state: .ok), measured: measured)
+        #expect(ActionOutcome(busy, eventsPosted: 0) == nil)
         #expect(AbortCause(code: .staleFrame)?.code == .staleFrame)
         #expect(AbortCause(code: .rateLimited) == nil)
     }

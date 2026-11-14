@@ -90,7 +90,7 @@ import Testing
             let store = try OperationStore(
                 storage: FileOperationStorage(path: path, flusher: flusher), now: Sample.start)
             #expect(throws: OperationStoreError.writeFailed(.io(operation: "F_FULLFSYNC", errno: code))) {
-                try store.admit(Sample.key("op-1"), digest: Sample.digest("a"), now: Sample.start)
+                try store.admit(Sample.receipt(Sample.key("op-1")), digest: Sample.digest("a"), now: Sample.start)
             }
             #expect(flusher.calls == [.full, .full, .full])
             #expect(!store.isAvailable)
@@ -105,7 +105,7 @@ import Testing
                 storage: FileOperationStorage(path: path, flusher: flusher), now: Sample.start)
             let ticket = try Sample.admit(store, Sample.key("op-1"))
             try store.markExecuting(ticket)
-            try store.finish(ticket, Sample.completed(), eventsPosted: 2)
+            _ = try store.finish(ticket, Sample.completed(), eventsPosted: 2)
             #expect(flusher.calls.count { $0 == .plain } == flusher.calls.count { $0 == .full })
 
             let restarted = try OperationStore(storage: FileOperationStorage(path: path), now: Sample.start)
@@ -121,7 +121,7 @@ import Testing
             let store = try OperationStore(storage: FileOperationStorage(path: path), now: Sample.start)
             let done = try Sample.admit(store, Sample.key("done"))
             try store.markExecuting(done)
-            try store.finish(done, Sample.completed(), eventsPosted: 3)
+            _ = try store.finish(done, Sample.completed(), eventsPosted: 3)
             let running = try Sample.admit(store, Sample.key("running"))
             try store.markExecuting(running)
             try store.recordProgress(running, eventsPosted: 1)

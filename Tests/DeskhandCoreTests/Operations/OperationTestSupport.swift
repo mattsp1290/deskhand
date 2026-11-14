@@ -1,4 +1,6 @@
-import DeskhandCore
+// Testable for `IntentReceipt(intent:)` only: outside the module a receipt comes from an async
+// `commitIntent`, and the store's tests are synchronous by design (the store is).
+@testable import DeskhandCore
 
 /// A disk that outlives the stores built on it, so a test can stop one store mid-write, decide
 /// what survived, and load another the way a restarted deskhand would.
@@ -151,14 +153,27 @@ enum Sample {
                 completedAt: start.adding(milliseconds: 400)))
     }
 
+    /// The error itself carries no `measured`; the outcome's must reach the stored result.
     static func aborted(_ state: BlockingState = .paused) -> OperationOutcome {
         .aborted(
-            ToolError(
-                .blocked(state), message: "deskhand is \(state.rawValue).", state: state.state, measured: measured))
+            ToolError(.blocked(state), message: "deskhand is \(state.rawValue).", state: state.state),
+            measured: measured)
     }
 
     static func failed() -> OperationOutcome {
-        .failed(ToolError(.internalError, message: "The operation record could not be written.", state: .ok))
+        .failed(
+            ToolError(.internalError, message: "The operation record could not be written.", state: .ok),
+            measured: measured)
+    }
+
+    /// The receipt of a committed intent for `key`, which admission needs (contract 12.3 steps 2 and 3).
+    static func receipt(_ key: OperationKey) -> IntentReceipt {
+        IntentReceipt(
+            intent: ActionLogIntent(
+                time: start, nodeAddress: NodeAddress("10.0.0.21")!, principal: key.principal, holderID: key.holderID,
+                operationID: key.operationID, frameID: FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!,
+                frameSHA256: SHA256Hex(hashing: Array("fake image".utf8)), frontmostApp: textEdit,
+                action: .keyboard(.type(textLength: 3))))
     }
 
     static func store(
@@ -173,7 +188,7 @@ enum Sample {
     )
         throws -> OperationTicket
     {
-        guard case .new(let ticket) = try store.admit(key, digest: digest, now: now) else {
+        guard case .new(let ticket) = try store.admit(receipt(key), digest: digest, now: now) else {
             throw TestFailure("\(key) was not admitted")
         }
         return ticket

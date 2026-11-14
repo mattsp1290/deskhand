@@ -110,12 +110,17 @@ public final class OperationStore {
         try recordCount(for: principal, now: now) < configuration.maxRecordsPerPrincipal
     }
 
-    /// Creates the record as `accepted` (contract 12.3 step 3), or says why not. An existing record
-    /// is answered first, so a repeat is answered even at the cap. Call it once every refusal check
-    /// has passed and the intent entry is in the action log; nothing is created otherwise.
-    public func admit(_ key: OperationKey, digest: RequestDigest, now: Timestamp) throws(OperationStoreError)
+    /// Creates the record as `accepted` (contract 12.3 step 3), or says why not. The record is keyed
+    /// by the intent the receipt proves committed, so no record exists without its intent entry
+    /// (steps 2 and 3). An existing record is answered first, so a repeat is answered even at the
+    /// cap. Call it once every refusal check has passed and the caller's connection is still open;
+    /// nothing is created otherwise. When this does not answer ``OperationAdmission/new(_:)``, or
+    /// throws, the intent entry stands alone, and the call's refusal entry says why (contract 12.10).
+    public func admit(_ receipt: IntentReceipt, digest: RequestDigest, now: Timestamp) throws(OperationStoreError)
         -> OperationAdmission
     {
+        let intent = receipt.intent
+        let key = OperationKey(principal: intent.principal, holderID: intent.holderID, operationID: intent.operationID)
         switch try lookup(key, digest: digest, now: now) {
         case .conflict(let view): return .conflict(view)
         case .inProgress(let view): return .inProgress(view)
@@ -148,12 +153,12 @@ public final class OperationStore {
     }
 
     /// Records the final status, `events_posted` and the result, durably, before the response is
-    /// sent (contract 12.3 step 6). The store sets the result's `operation_id`, count and
-    /// `replayed: false`; send what this returns, so that a repeat gets the same result.
+    /// sent (contract 12.3 step 7). The store sets the result's `operation_id`, count and
+    /// `replayed: false`, and an error's `measured`; send what this returns, so that a repeat gets
+    /// the same result.
     ///
     /// From `accepted` only `aborted` or `failed` with no events is allowed: an operation that
     /// stopped before its first event.
-    @discardableResult
     public func finish(_ ticket: OperationTicket, _ outcome: OperationOutcome, eventsPosted: Int)
         throws(OperationStoreError) -> OperationOutcome
     {

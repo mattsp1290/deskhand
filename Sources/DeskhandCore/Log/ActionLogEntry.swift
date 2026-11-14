@@ -123,7 +123,7 @@ public enum ActionOutcome: Hashable, Sendable, JSONRepresentable {
         switch outcome {
         case .completed: self = .completed(eventsPosted: eventsPosted)
         case .failed: self = .failed(eventsPosted: eventsPosted)
-        case .aborted(let error):
+        case .aborted(let error, _):
             guard let cause = AbortCause(code: error.code) else { return nil }
             self = .aborted(cause, eventsPosted: eventsPosted)
         }

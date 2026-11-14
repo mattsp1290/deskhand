@@ -25,9 +25,9 @@ import Testing
             switch self {
             case .execute: try store.markExecuting(ticket)
             case .progress(let count): try store.recordProgress(ticket, eventsPosted: count)
-            case .complete(let count): try store.finish(ticket, Sample.completed(), eventsPosted: count)
-            case .abort(let count): try store.finish(ticket, Sample.aborted(), eventsPosted: count)
-            case .fail(let count): try store.finish(ticket, Sample.failed(), eventsPosted: count)
+            case .complete(let count): _ = try store.finish(ticket, Sample.completed(), eventsPosted: count)
+            case .abort(let count): _ = try store.finish(ticket, Sample.aborted(), eventsPosted: count)
+            case .fail(let count): _ = try store.finish(ticket, Sample.failed(), eventsPosted: count)
             case .interrupt(let count): try store.interrupt(ticket, eventsPosted: count)
             }
         }
@@ -126,13 +126,13 @@ import Testing
             try store.recordProgress(ticket, eventsPosted: 12)
         case .completed:
             try store.markExecuting(ticket)
-            try store.finish(ticket, Sample.completed(), eventsPosted: 66)
+            _ = try store.finish(ticket, Sample.completed(), eventsPosted: 66)
         case .aborted:
             try store.markExecuting(ticket)
-            try store.finish(ticket, Sample.aborted(), eventsPosted: 36)
+            _ = try store.finish(ticket, Sample.aborted(), eventsPosted: 36)
         case .failed:
             try store.markExecuting(ticket)
-            try store.finish(ticket, Sample.failed(), eventsPosted: 2)
+            _ = try store.finish(ticket, Sample.failed(), eventsPosted: 2)
         }
         let restarts = status == .failedBeforeExecution || status == .abortedByRestart
         return restarts ? try Sample.store(disk) : store
@@ -158,7 +158,7 @@ import Testing
             #expect(replay.record == record)
         }
 
-        let admission = try store.admit(key, digest: digest, now: Sample.start)
+        let admission = try store.admit(Sample.receipt(key), digest: digest, now: Sample.start)
         switch (lookup, admission) {
         case (.conflict(let a), .conflict(let b)), (.inProgress(let a), .inProgress(let b)): #expect(a == b)
         case (.replay(let a), .replay(let b)): #expect(a == b)
@@ -204,10 +204,13 @@ import Testing
         #expect(!replay.isError)
         var expected = result
         expected.replayed = true
-        #expect(replay.structuredContent(state: .ok) == expected.jsonValue)
+        #expect(replay.structuredContent(currentState: .ok) == expected.jsonValue)
+        #expect(replay.structuredContent(currentState: .ok)["current_state"] == nil, "a success gains no state")
     }
 
-    @Test func replaysAStoredErrorWithTheStateNow() throws {
+    /// Contract 12.5 (0.11): a replayed error keeps the `state` it was stored with and gains
+    /// `current_state`, so a state's code still carries that state.
+    @Test func replaysAStoredErrorWithItsStoredStateAndTheStateNow() throws {
         let store = try Sample.store(FakeDisk())
         let key = Sample.key("call_01HZX3M9Q5")
         let ticket = try Sample.admit(store, key)
@@ -216,6 +219,7 @@ import Testing
         let first = try #require(sent.structuredContent.objectValue)
         #expect(first["state"] == "paused")
         #expect(first["replayed"] == false)
+        #expect(first["current_state"] == nil)
         #expect(first["operation"] == ["status": "aborted", "events_posted": 5])
         #expect(first["operation_id"] == .string(key.operationID.rawValue))
 
@@ -225,8 +229,36 @@ import Testing
         #expect(replay.isError)
         var expected = first
         expected["replayed"] = true
-        expected["state"] = "ok"
-        #expect(replay.structuredContent(state: .ok) == .object(expected))
+        expected["current_state"] = "ok"
+        #expect(replay.structuredContent(currentState: .ok) == .object(expected))
+    }
+
+    /// The first result is `keyboard.output.error-secure-input-aborted.json` and its replay is
+    /// `keyboard.output.replayed-state-abort.json`, apart from the message, which may change.
+    @Test func replaysASecureInputAbortAsTheContractShowsIt() throws {
+        let store = try Sample.store(FakeDisk())
+        let key = Sample.key("call_01HZX3M9R1")
+        let ticket = try Sample.admit(store, key)
+        try store.markExecuting(ticket)
+        let textEdit = AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit")
+        let measured = Measured(
+            frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt", globalPoint: nil,
+            measuredAt: Timestamp(millisecondsSinceEpoch: 1_794_668_544_105))
+        let error = ToolError(
+            .blocked(.secureInput), message: "Secure input turned on while typing. The rest of the text was not typed.",
+            state: .secureInput)
+        let sent = try store.finish(ticket, .aborted(error, measured: measured), eventsPosted: 18)
+        #expect(
+            sent.structuredContent == (try Fixtures.json("examples/keyboard.output.error-secure-input-aborted.json")))
+
+        guard case .replay(let replay) = try store.lookup(key, digest: Sample.digest("a"), now: Sample.start) else {
+            throw TestFailure("no replay")
+        }
+        var example = try #require(Fixtures.json("examples/keyboard.output.replayed-state-abort.json").objectValue)
+        var content = try #require(replay.structuredContent(currentState: .ok).objectValue)
+        example["message"] = nil
+        content["message"] = nil
+        #expect(content == example)
     }
 
     @Test func answersARestartedRecordWithInterrupted() throws {
@@ -241,12 +273,17 @@ import Testing
         guard case .replay(let replay) = try restarted.lookup(key, digest: Sample.digest("a"), now: Sample.at(1000))
         else { throw TestFailure("no replay") }
         #expect(replay.isError)
+        #expect(replay.answer == .interrupted(OperationView(status: .abortedByRestart, eventsPosted: 12)))
         var example = try #require(Fixtures.json("examples/keyboard.output.error-interrupted.json").objectValue)
-        var content = try #require(replay.structuredContent(state: .ok).objectValue)
+        var content = try #require(replay.structuredContent(currentState: .ok).objectValue)
         #expect(content["message"]?.stringValue?.isEmpty == false)
         example["message"] = nil
         content["message"] = nil
         #expect(content == example)
+
+        // Built when the repeat arrives, so both states are the state at that moment.
+        let locked = replay.structuredContent(currentState: .locked)
+        #expect(locked["state"] == "locked" && locked["current_state"] == "locked")
     }
 
     @Test func answersAnAcceptedRecordAfterARestartWithFailedBeforeExecution() throws {
@@ -256,11 +293,55 @@ import Testing
         guard
             case .replay(let replay) = try Sample.store(disk).lookup(key, digest: Sample.digest("a"), now: Sample.start)
         else { throw TestFailure("no replay") }
-        let content = try #require(replay.structuredContent(state: .ok).objectValue)
+        #expect(replay.answer == .interrupted(OperationView(status: .failedBeforeExecution, eventsPosted: 0)))
+        let content = try #require(replay.structuredContent(currentState: .ok).objectValue)
         #expect(content["code"] == "interrupted")
         #expect(content["operation"] == ["status": "failed_before_execution", "events_posted": 0])
         #expect(content["replayed"] == true)
+        #expect(content["current_state"] == "ok")
         #expect(content["measured"] == nil)
+    }
+
+    /// B11: every admitted error carries `measured` (contract 6.7), whether or not the executor's
+    /// `ToolError` had one; a `denied_app` keeps the facts of the check that failed.
+    @Test func storesMeasuredOnEveryError() throws {
+        let store = try Sample.store(FakeDisk())
+        for (name, outcome) in [("aborted", Sample.aborted()), ("failed", Sample.failed())] {
+            let ticket = try Sample.admit(store, Sample.key(name))
+            try store.markExecuting(ticket)
+            let sent = try store.finish(ticket, outcome, eventsPosted: 1)
+            #expect(sent.structuredContent["measured"] == Sample.measured.jsonValue, "\(name)")
+            #expect(sent.measured == Sample.measured, "\(name)")
+            let stored = try store.record(for: Sample.key(name), now: Sample.start)
+            guard case .ended(let ending, _)? = stored?.phase else { throw TestFailure("\(name) not ended") }
+            #expect(ending.structuredContent["measured"] == Sample.measured.jsonValue, "\(name)")
+        }
+
+        let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
+        let failedCheck = Measured(
+            frontmostApp: Sample.textEdit, targetApp: preview, windowTitle: "scan.pdf",
+            globalPoint: GlobalPoint(x: 10, y: 20), measuredAt: Sample.at(30))
+        let denied = ToolError(
+            .deniedApp(.policy, measured: failedCheck, pointIndex: 2), message: "Preview is not allowed.", state: .ok)
+        let ticket = try Sample.admit(store, Sample.key("denied"))
+        try store.markExecuting(ticket)
+        let sent = try store.finish(ticket, .aborted(denied, measured: Sample.measured), eventsPosted: 4)
+        #expect(sent.structuredContent["measured"] == failedCheck.forDeniedApp.jsonValue)
+        #expect(sent.measured == failedCheck.forDeniedApp)
+    }
+
+    /// A14: the record is keyed by the intent the receipt proves committed.
+    @Test func admitsUnderTheKeyOfTheCommittedIntent() throws {
+        let store = try Sample.store(FakeDisk())
+        let key = Sample.key("op-1", holder: "crew-7", principal: Sample.otherPrincipal)
+        let receipt = Sample.receipt(key)
+        guard case .new(let ticket) = try store.admit(receipt, digest: Sample.digest("a"), now: Sample.start) else {
+            throw TestFailure("not admitted")
+        }
+        #expect(ticket.key == key)
+        #expect(try store.record(for: key, now: Sample.start)?.phase == .accepted)
+        #expect(try store.recordCount(for: Sample.otherPrincipal, now: Sample.start) == 1)
+        #expect(try store.recordCount(for: Sample.principal, now: Sample.start) == 0)
     }
 }
 
@@ -272,7 +353,7 @@ import Testing
         let key = Sample.key("op-1")
         let ticket = try Sample.admit(store, key)
         try store.markExecuting(ticket)
-        try store.finish(ticket, Sample.completed(), eventsPosted: 1)
+        _ = try store.finish(ticket, Sample.completed(), eventsPosted: 1)
 
         let lastMoment = Sample.at(Sample.day - 1)
         guard case .replay = try store.lookup(key, digest: Sample.digest("a"), now: lastMoment) else {
@@ -280,7 +361,7 @@ import Testing
         }
         let windowEnd = Sample.at(Sample.day)
         #expect(try store.lookup(key, digest: Sample.digest("a"), now: windowEnd) == .absent)
-        guard case .new = try store.admit(key, digest: Sample.digest("b"), now: windowEnd) else {
+        guard case .new = try store.admit(Sample.receipt(key), digest: Sample.digest("b"), now: windowEnd) else {
             throw TestFailure("an expired operation_id is not judged afresh")
         }
     }
@@ -303,9 +384,10 @@ import Testing
 
         #expect(try !store.hasCapacity(for: Sample.principal, now: now))
         #expect(
-            try store.admit(Sample.key("op-4", holder: "crew-3"), digest: Sample.digest("a"), now: now) == .capacity)
+            try store.admit(Sample.receipt(Sample.key("op-4", holder: "crew-3")), digest: Sample.digest("a"), now: now)
+                == .capacity)
         #expect(try store.recordCount(for: Sample.principal, now: now) == 3, "a refused call leaves no record")
-        guard case .inProgress = try store.admit(first, digest: Sample.digest("a"), now: now) else {
+        guard case .inProgress = try store.admit(Sample.receipt(first), digest: Sample.digest("a"), now: now) else {
             throw TestFailure("a repeat is not answered at the cap")
         }
         #expect(try store.hasCapacity(for: Sample.otherPrincipal, now: now))
@@ -318,14 +400,18 @@ import Testing
         for (index, name) in ["op-1", "op-2", "op-3"].enumerated() {
             let ticket = try Sample.admit(store, Sample.key(name), at: Sample.at(Int64(index) * Sample.hour))
             try store.markExecuting(ticket)
-            try store.finish(ticket, Sample.completed(), eventsPosted: 1)
+            _ = try store.finish(ticket, Sample.completed(), eventsPosted: 1)
         }
         let beforeExpiry = Sample.at(Sample.day - 1)
-        #expect(try store.admit(Sample.key("op-4"), digest: Sample.digest("a"), now: beforeExpiry) == .capacity)
+        #expect(
+            try store.admit(Sample.receipt(Sample.key("op-4")), digest: Sample.digest("a"), now: beforeExpiry)
+                == .capacity)
 
         let restarted = try Sample.store(disk, at: beforeExpiry, configuration: Self.configuration)
         #expect(try restarted.recordCount(for: Sample.principal, now: beforeExpiry) == 3, "the count carries over")
-        #expect(try restarted.admit(Sample.key("op-4"), digest: Sample.digest("a"), now: beforeExpiry) == .capacity)
+        #expect(
+            try restarted.admit(Sample.receipt(Sample.key("op-4")), digest: Sample.digest("a"), now: beforeExpiry)
+                == .capacity)
 
         _ = try Sample.admit(restarted, Sample.key("op-4"), at: Sample.at(Sample.day))
         #expect(try restarted.recordCount(for: Sample.principal, now: Sample.at(Sample.day)) == 3)
@@ -338,7 +424,7 @@ import Testing
         let store = try Sample.store(disk, configuration: Self.configuration)
         let ticket = try Sample.admit(store, Sample.key("op-1"))
         try store.markExecuting(ticket)
-        try store.finish(ticket, Sample.completed(), eventsPosted: 1)
+        _ = try store.finish(ticket, Sample.completed(), eventsPosted: 1)
         _ = try Sample.admit(store, Sample.key("op-2"), at: Sample.at(Sample.hour))
 
         let later = Sample.at(Sample.day + 1)
@@ -362,7 +448,7 @@ import Testing
         try store.recordProgress(running, eventsPosted: 7)
         let done = try Sample.admit(store, completed)
         try store.markExecuting(done)
-        try store.finish(done, Sample.completed(), eventsPosted: 3)
+        _ = try store.finish(done, Sample.completed(), eventsPosted: 3)
         let completedRecord = try store.record(for: completed, now: Sample.start)
 
         let restarted = try Sample.store(disk, at: Sample.at(1000))
@@ -405,7 +491,7 @@ import Testing
             let ticket = try Sample.admit(store, Sample.key("op-\(index)"))
             try store.markExecuting(ticket)
             for _ in 0..<5 { try store.recordProgress(ticket, eventsPosted: 0) }
-            try store.finish(ticket, Sample.completed(), eventsPosted: index)
+            _ = try store.finish(ticket, Sample.completed(), eventsPosted: index)
         }
         #expect(disk.lines.count < 1 + 8 * 10, "the journal was rewritten: \(disk.lines.count) lines")
         let restarted = try Sample.store(disk, configuration: configuration)
@@ -422,7 +508,7 @@ import Testing
         let store = try Sample.store(disk)
         let ticket = try Sample.admit(store, Sample.key("op-1"))
         try store.markExecuting(ticket)
-        try store.finish(ticket, Sample.completed(), eventsPosted: 4)
+        _ = try store.finish(ticket, Sample.completed(), eventsPosted: 4)
         return disk
     }
 
@@ -475,6 +561,24 @@ import Testing
         }
         #expect(line == 2)
         #expect(reason.contains("admitted_at_ms"))
+    }
+
+    /// Counts are read with the one integer rule of every reader.
+    @Test(arguments: ["1.5", "-1", "9007199254740992", "\"3\""])
+    func refusesACountThatIsNotACount(_ value: String) throws {
+        let disk = try Self.journal()
+        var lines = disk.lines
+        let finish = try #require(lines.firstIndex { $0.contains(#""entry":"finish""#) })
+        #expect(lines[finish].contains(#""events_posted":4"#))
+        lines[finish] = lines[finish].replacing(#""events_posted":4"#, with: #""events_posted":\#(value)"#)
+        disk.visible = Array((lines.joined(separator: "\n") + "\n").utf8)
+
+        let error = #expect(throws: OperationStoreLoadError.self) { try Sample.store(disk) }
+        guard case .corrupt(let line, let reason) = error else {
+            throw TestFailure("not corrupt: \(String(describing: error))")
+        }
+        #expect(line == finish + 1)
+        #expect(reason.contains("events_posted"))
     }
 
     @Test func acceptsTheEndsOfTheAdmissionRange() throws {
