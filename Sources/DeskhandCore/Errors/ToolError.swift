@@ -28,7 +28,9 @@ public enum ToolErrorReason: Hashable, Sendable {
     case staleFrame(StaleFrameReason)
     case outOfFrame(pointIndex: Int, outputPixelSize: PixelSize)
     case userActive(idleMs: Int)
-    case deniedApp(DeniedBy, measured: Measured)
+    /// `pointIndex` is `details.point_index`: the point of the action whose window owner caused the
+    /// refusal, `nil` when the frontmost app or keyboard focus did (contract 6.9).
+    case deniedApp(DeniedBy, measured: Measured, pointIndex: Int?)
     case deniedShortcut(shortcut: String)
     case rateLimited(retryAfterMs: Int)
     case leaseHeldByOther(expiresInMs: Int)
@@ -67,7 +69,9 @@ public enum ToolErrorReason: Hashable, Sendable {
 
     var measured: Measured? {
         switch self {
-        case .deniedApp(_, let measured), .logUnavailable(let measured): measured
+        // A title that the policy refused is never sent (contract 6.7).
+        case .deniedApp(_, let measured, _): measured.withoutWindowTitles
+        case .logUnavailable(let measured): measured
         default: nil
         }
     }
@@ -80,7 +84,10 @@ public enum ToolErrorReason: Hashable, Sendable {
         case .outOfFrame(let index, let size):
             return ["point_index": JSONValue(index), "output_pixel_size": size.jsonValue]
         case .userActive(let idle): return ["idle_ms": JSONValue(idle)]
-        case .deniedApp(let deniedBy, _): return ["denied_by": .string(deniedBy.rawValue)]
+        case .deniedApp(let deniedBy, _, let pointIndex):
+            var details: JSONObject = ["denied_by": .string(deniedBy.rawValue)]
+            details["point_index"] = pointIndex.map { JSONValue($0) }
+            return details
         case .deniedShortcut(let shortcut): return ["shortcut": .string(shortcut)]
         case .leaseHeldByOther(let expiresIn): return ["expires_in_ms": JSONValue(expiresIn)]
         case .invalidArgument(let pointer): return ["argument": .string(pointer.description)]

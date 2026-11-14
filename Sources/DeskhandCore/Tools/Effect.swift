@@ -55,10 +55,45 @@ public struct AppRef: Hashable, Sendable, JSONRepresentable {
         self.name = name
     }
 
+    /// The app as the policy identified it, with the name the platform reported. The one way from
+    /// a measured ``AppIdentity`` to what goes on the wire.
+    public init(_ identity: AppIdentity, name: String) {
+        self.init(bundleID: identity.bundleID?.rawValue, teamID: identity.signer.teamIdentifier, name: name)
+    }
+
+    /// An app deskhand could not determine at all (contract 6.3, 6.9).
+    public static let undetermined = AppRef(bundleID: nil, teamID: nil, name: "")
+
     public var jsonValue: JSONValue {
         [
             "bundle_id": bundleID.map(JSONValue.string) ?? .null, "team_id": teamID.map(JSONValue.string) ?? .null,
             "name": .string(name),
+        ]
+    }
+}
+
+/// A window title as it may go on the wire: at most 512 Unicode scalar values, which is what the
+/// schema's `maxLength` counts. A cut by grapheme clusters could exceed it.
+private func wireTitle(_ title: String?) -> String? {
+    title.map { String(String.UnicodeScalarView($0.unicodeScalars.prefix(Measured.maxWindowTitleLength))) }
+}
+
+/// `measured.drag_end`: the facts of a drag's last point, taken at the same check as the first.
+public struct DragEnd: Hashable, Sendable, JSONRepresentable {
+    public let targetApp: AppRef
+    public let windowTitle: String?
+    public let globalPoint: GlobalPoint
+
+    public init(targetApp: AppRef, windowTitle: String?, globalPoint: GlobalPoint) {
+        self.targetApp = targetApp
+        self.windowTitle = wireTitle(windowTitle)
+        self.globalPoint = globalPoint
+    }
+
+    public var jsonValue: JSONValue {
+        [
+            "target_app": targetApp.jsonValue, "window_title": windowTitle.map(JSONValue.string) ?? .null,
+            "global_point": globalPoint.jsonValue,
         ]
     }
 }
@@ -68,33 +103,45 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
     public static let maxWindowTitleLength = 512
 
     public let frontmostApp: AppRef
-    /// `pointer`: the app owning the topmost window under the first target. `keyboard`: `nil`.
+    /// `pointer`: the app owning the topmost window under the first target. `keyboard`: the app that
+    /// owns keyboard focus. `nil` only on an error whose check failed before it was measured.
     public let targetApp: AppRef?
-    /// At most 512 code points; longer titles are cut.
+    /// At most 512 Unicode scalar values; longer titles are cut.
     public let windowTitle: String?
     /// `pointer`: where the first target mapped. `keyboard`: `nil`.
     public let globalPoint: GlobalPoint?
+    /// `pointer` `drag` only.
+    public let dragEnd: DragEnd?
     public let measuredAt: Timestamp
 
     public init(
         frontmostApp: AppRef, targetApp: AppRef?, windowTitle: String?, globalPoint: GlobalPoint?,
-        measuredAt: Timestamp
+        dragEnd: DragEnd? = nil, measuredAt: Timestamp
     ) {
         self.frontmostApp = frontmostApp
         self.targetApp = targetApp
-        self.windowTitle = windowTitle.map {
-            String(String.UnicodeScalarView($0.unicodeScalars.prefix(Self.maxWindowTitleLength)))
-        }
+        self.windowTitle = wireTitle(windowTitle)
         self.globalPoint = globalPoint
+        self.dragEnd = dragEnd
         self.measuredAt = measuredAt
     }
 
+    /// The same facts with every window title removed: what `denied_app` reports (contract 6.7).
+    public var withoutWindowTitles: Measured {
+        Measured(
+            frontmostApp: frontmostApp, targetApp: targetApp, windowTitle: nil, globalPoint: globalPoint,
+            dragEnd: dragEnd.map { DragEnd(targetApp: $0.targetApp, windowTitle: nil, globalPoint: $0.globalPoint) },
+            measuredAt: measuredAt)
+    }
+
     public var jsonValue: JSONValue {
-        [
+        var object: JSONObject = [
             "frontmost_app": frontmostApp.jsonValue, "target_app": targetApp?.jsonValue ?? .null,
             "window_title": windowTitle.map(JSONValue.string) ?? .null,
             "global_point": globalPoint?.jsonValue ?? .null, "measured_at": measuredAt.jsonValue,
         ]
+        object["drag_end"] = dragEnd?.jsonValue
+        return .object(object)
     }
 }
 

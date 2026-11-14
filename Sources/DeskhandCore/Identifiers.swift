@@ -86,10 +86,12 @@ public struct DisplayConfigGeneration: Hashable, Sendable, CustomStringConvertib
     public var description: String { String(rawValue) }
 }
 
-/// The five tools, in `tools/list` order.
+/// The six tools, in `tools/list` order (contract 3.2).
 public enum ToolName: String, CaseIterable, Hashable, Sendable {
-    case status, displays, screenshot, pointer, keyboard
+    case status, displays, screenshot, pointer, keyboard, lease
 
-    /// Effect tools post input and carry an `operation_id`. A caller treats unknown tools as effects.
+    /// Effect tools post input and carry an `operation_id`. `lease` is neither: it has no
+    /// `operation_id` and posts nothing, although a caller's own table classifies it as an effect
+    /// (amendment 4).
     public var isEffect: Bool { self == .pointer || self == .keyboard }
 }

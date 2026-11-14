@@ -1,92 +1,56 @@
-public enum LeaseOperation: String, CaseIterable, Sendable {
-    case acquire, renew, release
-}
-
-/// The optional `lease` argument of `status` (contract 5.1).
-public struct LeaseRequest: Hashable, Sendable {
-    public let operation: LeaseOperation
+/// `status.operation` as an argument: the record to look up (contract 6.1). Both members are required.
+public struct OperationQuery: Hashable, Sendable {
     public let holderID: HolderID
-    /// Validated for every operation, used only by `acquire` and `renew`. Defaults to 30,000.
-    public let ttlMs: Int
+    public let operationID: OperationID
+
+    public init(holderID: HolderID, operationID: OperationID) {
+        self.holderID = holderID
+        self.operationID = operationID
+    }
+
+    /// The record key under the caller's principal: a lookup never sees another principal's records.
+    public func key(for principal: Principal) -> OperationKey {
+        OperationKey(principal: principal, holderID: holderID, operationID: operationID)
+    }
 }
 
+/// The arguments of `status`, a pure read (contract 6.1). Both are optional.
 public struct StatusArguments: Hashable, Sendable {
-    public let lease: LeaseRequest?
+    /// Report the lease as seen from this holder. `nil`: `status.lease` is `null`.
+    public let holderID: HolderID?
+    /// Look up this operation record. `nil`: `status.operation` is absent.
+    public let operation: OperationQuery?
+
+    public init(holderID: HolderID? = nil, operation: OperationQuery? = nil) {
+        self.holderID = holderID
+        self.operation = operation
+    }
 
     public init(arguments: JSONObject) throws(ArgumentError) {
-        let reader = try ObjectReader(.object(arguments), at: .root, allowing: ["lease"])
-        lease = try reader.optional("lease") { value, path throws(ArgumentError) in
-            let lease = try ObjectReader(value, at: path, allowing: ["op", "holder_id", "ttl_ms"])
-            return LeaseRequest(
-                operation: try lease.required("op", Decode.oneOf(LeaseOperation.self)),
-                holderID: try lease.required("holder_id", Decode.identifier(HolderID.self)),
-                ttlMs: try lease.optional("ttl_ms", Decode.integer(ContractConstants.leaseTTLMsRange))
-                    ?? ContractConstants.defaultLeaseTTLMs
-            )
+        let reader = try ObjectReader(.object(arguments), at: .root, allowing: ["holder_id", "operation"])
+        holderID = try reader.optional("holder_id", Decode.identifier(HolderID.self))
+        operation = try reader.optional("operation") { value, path throws(ArgumentError) in
+            let query = try ObjectReader(value, at: path, allowing: ["holder_id", "operation_id"])
+            return OperationQuery(
+                holderID: try query.required("holder_id", Decode.identifier(HolderID.self)),
+                operationID: try query.required("operation_id", Decode.identifier(OperationID.self)))
         }
     }
 }
 
-/// Why a lease operation was refused. Reported in `lease_result.code`, never as a tool error.
-public enum LeaseRefusal: String, CaseIterable, Sendable {
-    case gated, paused, disarmed
-    case leaseNotHeld = "lease_not_held"
-    case leaseHeldByOther = "lease_held_by_other"
-    case leaseExpired = "lease_expired"
-}
-
-public enum LeaseOutcome: Hashable, Sendable {
-    case acquired, renewed, released, notHeld
-    case refused(LeaseRefusal)
-}
-
-/// `status.lease_result`: present exactly when the call carried a `lease` argument.
-public struct LeaseResult: Hashable, Sendable, JSONRepresentable {
-    public var operation: LeaseOperation
-    public var outcome: LeaseOutcome
-
-    public init(operation: LeaseOperation, outcome: LeaseOutcome) {
-        self.operation = operation
-        self.outcome = outcome
-    }
+/// `status.operation` in a result: the record's status and count, never its stored result.
+public enum StatusOperation: Hashable, Sendable, JSONRepresentable {
+    /// No record, and no call with that key being admitted: no input was ever posted for it, or its
+    /// record has passed the retention window.
+    case notFound
+    /// A call that is being admitted is reported as `accepted` with 0 events.
+    case found(OperationView)
 
     public var jsonValue: JSONValue {
-        let outcomeName: String
-        var object: JSONObject = ["op": .string(operation.rawValue)]
-        switch outcome {
-        case .acquired: outcomeName = "acquired"
-        case .renewed: outcomeName = "renewed"
-        case .released: outcomeName = "released"
-        case .notHeld: outcomeName = "not_held"
-        case .refused(let refusal):
-            outcomeName = "refused"
-            object["code"] = .string(refusal.rawValue)
+        switch self {
+        case .notFound: .null
+        case .found(let view): view.jsonValue
         }
-        object["outcome"] = .string(outcomeName)
-        return .object(object)
-    }
-}
-
-/// `status.lease`: the live lease as the caller may see it (contract 5.4).
-public struct LeaseView: Hashable, Sendable, JSONRepresentable {
-    /// `nil` when the lease is held under a different principal.
-    public var holderID: HolderID?
-    public var acquiredAt: Timestamp
-    public var expiresAt: Timestamp
-    public var expiresInMs: Int
-
-    public init(holderID: HolderID?, acquiredAt: Timestamp, expiresAt: Timestamp, expiresInMs: Int) {
-        self.holderID = holderID
-        self.acquiredAt = acquiredAt
-        self.expiresAt = expiresAt
-        self.expiresInMs = expiresInMs
-    }
-
-    public var jsonValue: JSONValue {
-        [
-            "holder_id": holderID.map { .string($0.rawValue) } ?? .null, "acquired_at": acquiredAt.jsonValue,
-            "expires_at": expiresAt.jsonValue, "expires_in_ms": JSONValue(expiresInMs),
-        ]
     }
 }
 
@@ -136,14 +100,16 @@ public struct StatusResult: Hashable, Sendable, JSONRepresentable {
     public var activeStates: ActiveStates
     public var conditions: Set<Condition>
     public var armedUntil: Timestamp?
+    /// `nil` exactly when the call named no `holder_id`.
     public var lease: LeaseView?
-    public var leaseResult: LeaseResult?
+    /// `nil` exactly when the call had no `operation` argument; the member is then absent.
+    public var operation: StatusOperation?
     public var displayConfigGeneration: DisplayConfigGeneration
     public var limits: Limits
 
     public init(
         serverVersion: String, mac: String, time: Timestamp, startedAt: Timestamp, activeStates: ActiveStates,
-        conditions: Set<Condition>, armedUntil: Timestamp?, lease: LeaseView?, leaseResult: LeaseResult?,
+        conditions: Set<Condition>, armedUntil: Timestamp?, lease: LeaseView?, operation: StatusOperation?,
         displayConfigGeneration: DisplayConfigGeneration, limits: Limits
     ) {
         self.serverVersion = serverVersion
@@ -154,7 +120,7 @@ public struct StatusResult: Hashable, Sendable, JSONRepresentable {
         self.conditions = conditions
         self.armedUntil = armedUntil
         self.lease = lease
-        self.leaseResult = leaseResult
+        self.operation = operation
         self.displayConfigGeneration = displayConfigGeneration
         self.limits = limits
     }
@@ -170,7 +136,7 @@ public struct StatusResult: Hashable, Sendable, JSONRepresentable {
             "armed_until": armedUntil?.jsonValue ?? .null, "lease": lease?.jsonValue ?? .null,
             "display_config_generation": JSONValue(displayConfigGeneration.rawValue), "limits": limits.jsonValue,
         ]
-        object["lease_result"] = leaseResult?.jsonValue
+        object["operation"] = operation?.jsonValue
         return .object(object)
     }
 }

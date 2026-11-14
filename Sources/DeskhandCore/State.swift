@@ -34,7 +34,20 @@ public enum BlockingState: String, CaseIterable, Comparable, Sendable {
     public var state: DeskhandState { DeskhandState(rawValue: rawValue)! }
 
     /// `gated`, `paused` and `disarmed` drop the lease when they begin and refuse `acquire`/`renew`.
-    public var dropsLease: Bool { self <= .disarmed }
+    public var dropsLease: Bool { leaseDropping != nil }
+
+    /// The same state as a ``LeaseDroppingState``, or `nil` when it leaves the lease alone.
+    public var leaseDropping: LeaseDroppingState? { LeaseDroppingState(rawValue: rawValue) }
+}
+
+/// The three states that drop the lease when they begin and refuse `acquire` and `renew` while they
+/// hold (contract 5.2, 10.4). Ordered by precedence like ``BlockingState``.
+public enum LeaseDroppingState: String, CaseIterable, Comparable, Sendable {
+    case gated, paused, disarmed
+
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.blocking < rhs.blocking }
+
+    public var blocking: BlockingState { BlockingState(rawValue: rawValue)! }
 }
 
 /// The set of states that hold now. `state` and `active_states` of `status` both derive from it,

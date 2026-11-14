@@ -5,6 +5,7 @@ public enum ToolCall: Hashable, Sendable {
     case screenshot(ScreenshotArguments)
     case pointer(PointerArguments)
     case keyboard(KeyboardArguments)
+    case lease(LeaseArguments)
 
     /// `arguments` is `{}` when the request omitted it (contract 3.3).
     public init(tool: ToolName, arguments: JSONObject) throws(ArgumentError) {
@@ -16,6 +17,7 @@ public enum ToolCall: Hashable, Sendable {
         case .screenshot: self = .screenshot(try ScreenshotArguments(arguments: arguments))
         case .pointer: self = .pointer(try PointerArguments(arguments: arguments))
         case .keyboard: self = .keyboard(try KeyboardArguments(arguments: arguments))
+        case .lease: self = .lease(try LeaseArguments(arguments: arguments))
         }
     }
 
@@ -26,6 +28,7 @@ public enum ToolCall: Hashable, Sendable {
         case .screenshot: .screenshot
         case .pointer: .pointer
         case .keyboard: .keyboard
+        case .lease: .lease
         }
     }
 }

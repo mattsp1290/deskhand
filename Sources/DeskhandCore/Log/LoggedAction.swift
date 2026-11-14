@@ -25,7 +25,7 @@ public enum LoggedAction: Hashable, Sendable, JSONRepresentable {
             switch tool {
             case .pointer: return .pointer(try PointerAction.decode(value, path))
             case .keyboard: return .keyboard(try LoggedKeyboardAction.decode(value, path))
-            case .status, .displays, .screenshot:
+            case .status, .displays, .screenshot, .lease:
                 throw ArgumentError(at: path, "\(tool.rawValue) is not an effect tool")
             }
         }

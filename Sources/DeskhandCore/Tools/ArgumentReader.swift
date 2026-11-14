@@ -16,13 +16,17 @@ public struct ArgumentError: Error, Hashable, Sendable, CustomStringConvertible 
 typealias ValueDecoder<T> = (JSONValue, JSONPointer) throws(ArgumentError) -> T
 
 /// Reads one closed JSON object: unknown members are refused before anything else is read.
+///
+/// Member names are compared by Unicode scalars. A name that only canonically equals an allowed one
+/// is unknown, so the `String`-keyed lookups that follow only ever see names spelled exactly.
 struct ObjectReader {
     let members: JSONObject
     let path: JSONPointer
 
     init(_ value: JSONValue, at path: JSONPointer, allowing names: Set<String>) throws(ArgumentError) {
         guard case .object(let members) = value else { throw ArgumentError(at: path, "must be an object") }
-        if let unknown = members.keys.filter({ !names.contains($0) }).min() {
+        let unknownNames = members.keys.filter { key in !names.contains { $0.hasSameScalars(as: key) } }
+        if let unknown = unknownNames.min() {
             throw ArgumentError(at: path, "unknown member '\(unknown)'")
         }
         self.members = members
@@ -44,10 +48,10 @@ enum Decode {
     /// A JSON number with no fraction (`10.0` counts) inside `range`.
     static func integer(_ range: ClosedRange<Int>) -> ValueDecoder<Int> {
         { value, path throws(ArgumentError) in
-            guard case .number(let number) = value, number.rounded(.towardZero) == number,
-                Double(range.lowerBound) <= number, number <= Double(range.upperBound)
-            else { throw ArgumentError(at: path, "must be an integer from \(range.lowerBound) to \(range.upperBound)") }
-            return Int(number)
+            guard let integer = value.integer(in: range) else {
+                throw ArgumentError(at: path, "must be an integer from \(range.lowerBound) to \(range.upperBound)")
+            }
+            return integer
         }
     }
 
@@ -75,10 +79,13 @@ enum Decode {
         }
     }
 
+    /// Matched by Unicode scalars, as the schema's `enum` is: U+037E GREEK QUESTION MARK is not `;`,
+    /// although Swift's `String` equality says it is.
     static func oneOf<E: RawRepresentable & CaseIterable>(_ type: E.Type) -> ValueDecoder<E>
     where E.RawValue == String {
         { value, path throws(ArgumentError) in
-            guard let member = E(rawValue: try string(value, path)) else {
+            let text = try string(value, path)
+            guard let member = E.allCases.first(where: { $0.rawValue.hasSameScalars(as: text) }) else {
                 throw ArgumentError(at: path, "must be one of " + E.allCases.map(\.rawValue).joined(separator: ", "))
             }
             return member

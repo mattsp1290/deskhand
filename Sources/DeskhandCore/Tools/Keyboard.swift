@@ -46,9 +46,7 @@ public struct KeyPress: Hashable, Sendable {
     public let holdMs: Int
 
     /// The chord as `details.shortcut` spells it: modifiers in press order, then the key, joined by `+`.
-    public var shortcut: String {
-        (modifiers.sorted().map(\.rawValue) + [key.rawValue]).joined(separator: "+")
-    }
+    public var shortcut: String { Chord(self).shortcut }
 }
 
 /// A `keyboard` action (contract 6.5), defaults applied.

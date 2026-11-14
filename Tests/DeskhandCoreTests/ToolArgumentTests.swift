@@ -36,9 +36,18 @@ import Testing
         "screenshot.input.max-long-edge-too-small.json": "/max_long_edge",
         "screenshot.input.missing-holder.json": "",
         "screenshot.input.unknown-format.json": "/format",
-        "status.input.lease-without-holder.json": "/lease",
-        "status.input.ttl-too-long.json": "/lease/ttl_ms",
-        "status.input.unknown-op.json": "/lease/op",
+        "status.input.holder-with-space.json": "/holder_id",
+        "status.input.lease-argument.json": "",
+        "status.input.operation-unknown-member.json": "/operation",
+        "status.input.operation-without-holder.json": "/operation",
+        "lease.input.missing-holder.json": "",
+        "lease.input.missing-op.json": "",
+        "lease.input.nested-under-lease.json": "",
+        "lease.input.ttl-fractional.json": "/ttl_ms",
+        "lease.input.ttl-too-long.json": "/ttl_ms",
+        "lease.input.ttl-too-short.json": "/ttl_ms",
+        "lease.input.unknown-member.json": "",
+        "lease.input.unknown-op.json": "/op",
     ]
 
     private func decode(_ tool: ToolName, _ arguments: JSONValue) throws -> ToolCall {
@@ -82,13 +91,23 @@ import Testing
         #expect(action.button == .left && action.count == 1 && action.modifiers.isEmpty)
         #expect(arguments.permittedApps == nil)
 
-        let release = try decode(.status, Fixtures.json("examples/status.input.release.json"))
-        guard case .status(let status) = release else {
-            Issue.record("expected status")
-            return
-        }
-        #expect(status.lease?.ttlMs == 30_000)
-        #expect(status.lease?.operation == .release)
+        let renew = try decode(.lease, Fixtures.json("examples/lease.input.renew-default-ttl.json"))
+        #expect(
+            renew
+                == .lease(
+                    LeaseArguments(holderID: HolderID("crew:inst-7f3a:desk-lunus")!, command: .renew(ttlMs: 30_000))))
+        let release = try decode(.lease, Fixtures.json("examples/lease.input.release.json"))
+        #expect(release == .lease(LeaseArguments(holderID: HolderID("crew:inst-7f3a:desk-lunus")!, command: .release)))
+
+        let lookup = try decode(.status, Fixtures.json("examples/status.input.operation-lookup.json"))
+        let holder = HolderID("crew:inst-7f3a:desk-lunus")!
+        #expect(
+            lookup
+                == .status(
+                    StatusArguments(
+                        holderID: holder,
+                        operation: OperationQuery(holderID: holder, operationID: OperationID("call_01HZX3M9Q3")!))))
+        #expect(try decode(.status, [:]) == .status(StatusArguments()))
 
         let screenshot = try decode(.screenshot, Fixtures.json("examples/screenshot.input.default.json"))
         guard case .screenshot(let shot) = screenshot else {
@@ -129,6 +148,31 @@ import Testing
         #expect(handles.holderID == HolderID("h") && handles.operationID == OperationID("o"))
         let malformed = EffectHandles(arguments: ["holder_id": "h\n", "operation_id": 1])
         #expect(malformed.holderID == nil && malformed.operationID == nil)
+    }
+
+    /// Contract 5.1: `ttl_ms` is refused on `release` even when its value is in range.
+    @Test func releaseRefusesTTL() throws {
+        let error = try #require(throws: ArgumentError.self) {
+            try decode(.lease, ["op": "release", "holder_id": "h", "ttl_ms": 30_000])
+        }
+        #expect(error.pointer.description == "/ttl_ms")
+    }
+
+    /// Enumerated values match by Unicode scalars, as the schema's `enum` does: U+037E GREEK QUESTION
+    /// MARK and U+1FEF GREEK VARIA canonically equal `;` and `` ` ``, and are not keys.
+    @Test(arguments: ["\u{037E}", "\u{1FEF}"])
+    func enumeratedValuesMatchByScalars(_ key: String) {
+        let arguments: JSONValue = [
+            "holder_id": "h", "frame_id": "f", "operation_id": "o", "action": ["type": "press", "key": .string(key)],
+        ]
+        #expect(throws: ArgumentError.self) { try decode(.keyboard, arguments) }
+    }
+
+    @Test func memberNamesMatchByScalars() {
+        // U+212A KELVIN SIGN canonically equals K; a member spelled with it is unknown, not `K`.
+        #expect(throws: ArgumentError.self) {
+            try decode(.lease, ["op": "acquire", "holder_id": "h", "\u{212A}": 1])
+        }
     }
 
     @Test func pointerEscapesTokens() {

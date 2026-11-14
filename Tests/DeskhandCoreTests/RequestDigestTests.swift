@@ -1,21 +1,36 @@
 import DeskhandCore
 import Testing
 
+/// A fixed test key: the bytes 0 to 31.
+private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
+
 @Suite struct RequestDigestTests {
-    private func digest(_ tool: ToolName, _ arguments: String) throws -> RequestDigest {
-        try RequestDigest(tool: tool, arguments: #require(JSONValue(parsing: arguments).objectValue))
+    private func digest(_ tool: ToolName, _ arguments: String, key: DigestKey = key) throws -> RequestDigest {
+        try RequestDigest(tool: tool, arguments: #require(JSONValue(parsing: arguments).objectValue), key: key)
     }
 
-    /// Golden values computed independently (SHA-256 of the JCS text in Node.js). A change here
-    /// would orphan every persisted operation record, so it must be deliberate.
+    /// Golden values computed independently (HMAC-SHA-256 of the JCS text with Python's `hmac`; the
+    /// same text's plain SHA-256 matches the values deskhand used before the key, which Node.js
+    /// computed). A change here would orphan every persisted operation record, so it must be
+    /// deliberate.
     @Test func matchesIndependentlyComputedDigests() throws {
         #expect(
             try digest(.displays, "{}").description
-                == "f013c6de5ff25ec8b945bd929289c1399a55dfdf730884f68850b56f26195fc7")
+                == "3eb0ae3f893496629709f6df74524a38e2f1357b0eafe9a22ace206b83144aa1")
         let drag = try #require(Fixtures.json("examples/pointer.input.drag.json").objectValue)
         #expect(
-            try RequestDigest(tool: .pointer, arguments: drag).description
-                == "a8d3418c558d99152f70f63d71824e6250906ed3c398351de2459f19b0edde73")
+            try RequestDigest(tool: .pointer, arguments: drag, key: key).description
+                == "3616a1cbe0eb7a93d10f8f9d3dffbda48894b0559f14332a7156c54cecda7478")
+    }
+
+    /// Contract 12.1: a lost key makes every stored digest stop matching, which is the safe way.
+    @Test func anotherKeyGivesAnotherDigest() throws {
+        let other = DigestKey(bytes: [UInt8](repeating: 7, count: 32))!
+        #expect(try digest(.displays, "{}") != digest(.displays, "{}", key: other))
+        #expect(try digest(.displays, "{}", key: DigestKey.generate()) != digest(.displays, "{}"))
+        #expect(DigestKey(bytes: [UInt8](repeating: 0, count: 31)) == nil)
+        #expect(DigestKey(bytes: [UInt8](repeating: 0, count: 33)) == nil)
+        #expect(DigestKey.generate().bytes.count == 32)
     }
 
     @Test func ignoresMemberOrderWhitespaceAndNumberSpelling() throws {
@@ -49,8 +64,8 @@ import Testing
 
     /// Swift's `==` treats canonically equivalent strings as equal; the digest must not.
     @Test func distinguishesUnicodeNormalizationForms() throws {
-        let composed = try RequestDigest(tool: .keyboard, arguments: ["text": "\u{FB33}"])
-        let decomposed = try RequestDigest(tool: .keyboard, arguments: ["text": "\u{05D3}\u{05BC}"])
+        let composed = try RequestDigest(tool: .keyboard, arguments: ["text": "\u{FB33}"], key: key)
+        let decomposed = try RequestDigest(tool: .keyboard, arguments: ["text": "\u{05D3}\u{05BC}"], key: key)
         #expect(composed != decomposed)
     }
 

@@ -1,9 +1,11 @@
 /// An I-JSON (RFC 7493) value: what deskhand parses from a request and serializes into a response.
 ///
 /// Numbers are IEEE 754 doubles because RFC 8785 canonicalization is defined over doubles. Swift
-/// compares strings by canonical equivalence, so `==` on two values (and duplicate-key detection
-/// in the parser) treats differently normalized strings as equal; serialization keeps the original
-/// code points, so the canonical bytes and the request digest never conflate them.
+/// compares strings by canonical equivalence, so `==` on two values treats differently normalized
+/// strings as equal, and one object cannot hold two member names that differ only that way (the
+/// parser refuses such an object). Serialization keeps the original code points, so the canonical
+/// bytes and the request digest never conflate them, and every name or enumerated value deskhand
+/// reads from a caller is compared by Unicode scalars.
 public enum JSONValue: Hashable, Sendable {
     case null
     case bool(Bool)
@@ -29,6 +31,15 @@ extension JSONValue {
     }
 
     public subscript(key: String) -> JSONValue? { objectValue?[key] }
+
+    /// A number with no fraction (`10.0` counts) inside `range`, or `nil`. The one integer rule of
+    /// every reader: tool arguments, the configuration, the allowance and the action log.
+    func integer(in range: ClosedRange<Int>) -> Int? {
+        guard case .number(let number) = self, number.rounded(.towardZero) == number,
+            Double(range.lowerBound) <= number, number <= Double(range.upperBound)
+        else { return nil }
+        return Int(number)
+    }
 }
 
 extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
@@ -51,7 +62,7 @@ public protocol JSONRepresentable {
     var jsonValue: JSONValue { get }
 }
 
-/// An RFC 6901 JSON Pointer into a tool call's `arguments`.
+/// An RFC 6901 JSON Pointer into a tool call's `arguments`, or into a whole document.
 public struct JSONPointer: Hashable, Sendable, CustomStringConvertible {
     public let tokens: [String]
 
@@ -61,6 +72,16 @@ public struct JSONPointer: Hashable, Sendable, CustomStringConvertible {
 
     public func appending(_ token: String) -> JSONPointer { JSONPointer(tokens + [token]) }
     public func appending(_ index: Int) -> JSONPointer { appending(String(index)) }
+
+    /// The rest of this pointer below `prefix`, or `nil` when it does not lie under `prefix`. Tokens
+    /// are compared by Unicode scalars. A strict-JSON fault at `/params/arguments/a` is the argument
+    /// fault `/a` (contract 2.4).
+    public func relative(to prefix: JSONPointer) -> JSONPointer? {
+        guard tokens.count >= prefix.tokens.count,
+            zip(tokens, prefix.tokens).allSatisfy({ $0.hasSameScalars(as: $1) })
+        else { return nil }
+        return JSONPointer(Array(tokens.dropFirst(prefix.tokens.count)))
+    }
 
     public var description: String {
         var text = ""

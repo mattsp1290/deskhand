@@ -25,6 +25,15 @@ public struct Timestamp: Hashable, Comparable, Sendable, CustomStringConvertible
 
     public var jsonValue: JSONValue { .string(description) }
 
+    /// Parses exactly the text ``description`` writes, and nothing else: `YYYY-MM-DDTHH:MM:SS`, then
+    /// `.fff` when the milliseconds are not zero, then `Z`. For files deskhand wrote itself, where a
+    /// second spelling of one instant would be a sign of tampering.
+    public init?(canonical text: String) {
+        guard let instant = UTCInstant(rfc3339: text), instant.isWholeMillisecond else { return nil }
+        self = instant.timestampRoundedUp
+        guard description == text else { return nil }
+    }
+
     /// Howard Hinnant's `civil_from_days`: proleptic Gregorian date of a day count from 1970-01-01.
     private static func civilDate(daysSinceEpoch: Int64) -> (year: Int64, month: Int64, day: Int64) {
         let shifted = daysSinceEpoch + 719_468

@@ -30,10 +30,10 @@ import Testing
     @Test func enumsMatchToolSchemas() throws {
         let leaseResult = "$defs/lease_result/properties"
         #expect(
-            try schemaEnum("\(leaseResult)/code", in: "tools/status.output.json")
-                == LeaseRefusal.allCases.map(\.rawValue))
+            try schemaEnum("\(leaseResult)/code", in: "tools/lease.output.json")
+                == LeaseRefusal.Code.allCases.map(\.rawValue))
         #expect(
-            try schemaEnum("\(leaseResult)/op", in: "tools/status.output.json")
+            try schemaEnum("\(leaseResult)/op", in: "tools/lease.output.json")
                 == LeaseOperation.allCases.map(\.rawValue))
         let format = "$defs/screenshot_result/properties/format"
         #expect(try schemaEnum(format, in: "tools/screenshot.output.json") == ImageFormat.allCases.map(\.rawValue))
