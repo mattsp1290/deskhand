@@ -39,13 +39,8 @@ public enum JSONRPCErrorCode: Int, CaseIterable, Sendable {
     case headerMismatch = -32_020
     case unsupportedProtocolVersion = -32_022
 
-    /// The HTTP status that carries the error.
-    public var httpStatus: Int {
-        switch self {
-        case .parseError, .invalidRequest, .headerMismatch, .unsupportedProtocolVersion: 400
-        case .methodNotFound, .invalidParams, .internalError: 200
-        }
-    }
+    // No HTTP status here: contract 9.4 gives `-32602` either `400` or `200` depending on the check
+    // that failed, so the listener's check table owns it.
 
     public var defaultMessage: String {
         switch self {

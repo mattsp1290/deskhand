@@ -62,13 +62,15 @@ import Testing
         }
     }
 
-    @Test func jsonRPCErrorsCarryTheirHTTPStatus() {
-        #expect(JSONRPCErrorCode.parseError.rawValue == -32_700 && JSONRPCErrorCode.parseError.httpStatus == 400)
-        #expect(
-            JSONRPCErrorCode.headerMismatch.rawValue == -32_020 && JSONRPCErrorCode.headerMismatch.httpStatus == 400)
-        #expect(JSONRPCErrorCode.unsupportedProtocolVersion.rawValue == -32_022)
-        #expect(JSONRPCErrorCode.methodNotFound.httpStatus == 200)
-        #expect(JSONRPCErrorCode.invalidParams.httpStatus == 200)
+    /// Contract 9.4. The HTTP status depends on the check that failed, not only on the code, so the
+    /// listener's check table owns it.
+    @Test func jsonRPCErrorsCarryTheContractCodes() {
+        let codes: [JSONRPCErrorCode: Int] = [
+            .parseError: -32_700, .invalidRequest: -32_600, .methodNotFound: -32_601, .invalidParams: -32_602,
+            .internalError: -32_603, .headerMismatch: -32_020, .unsupportedProtocolVersion: -32_022,
+        ]
+        #expect(codes.count == JSONRPCErrorCode.allCases.count)
+        for (code, value) in codes { #expect(code.rawValue == value) }
     }
 
     @Test func timestampsAreUTCWithOptionalMilliseconds() {

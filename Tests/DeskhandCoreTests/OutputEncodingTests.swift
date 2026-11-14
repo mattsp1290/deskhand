@@ -326,6 +326,18 @@ private enum Examples {
         #expect(existing.jsonValue["replayed"] == nil && existing.jsonValue["current_state"] == nil)
     }
 
+    /// `defs.json`: a state's own code carries that state. Re-review A, finding 6: an abort for a
+    /// lease that `disarmed` dropped is built while `gated` may already be the state.
+    @Test(arguments: BlockingState.allCases)
+    func aStateCodeCarriesItsOwnState(_ blocked: BlockingState) {
+        for given in DeskhandState.allCases {
+            let error = ToolError(.blocked(blocked), message: "", state: given)
+            #expect(error.state == blocked.state)
+            #expect(error.jsonValue["state"] == .string(blocked.rawValue))
+        }
+        #expect(ToolError(.leaseNotHeld, message: "", state: .gated).state == .gated)
+    }
+
     static let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
 
     static func measured(
