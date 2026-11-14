@@ -33,7 +33,7 @@
 ///   "app_policy": {                                optional, default {"allow": []} (deny everything)
 ///     "allow": [                                   0-256 distinct entries
 ///       {"bundle_id": "com.apple.TextEdit",        bundle identifier, compared exactly
-///        "team_id": null}                          10 of A-Z 0-9, or null for no team identifier
+///        "team_id": null}                          10 of A-Z 0-9 (TeamID), or null for Apple-signed
 ///     ]
 ///   },
 ///   "limits": {                                    optional; members as in status.limits
@@ -56,7 +56,9 @@ public struct DeskhandConfig: Hashable, Sendable {
     public let service: ServiceConfig
     public let credentials: CredentialsConfig
     public let allowance: AllowanceConfig
-    public let appPolicy: AppPolicyConfig
+    /// The `app_policy.allow` entries, decoded into the policy's own ``AllowedApp``. Deny-by-default:
+    /// an app not listed here is denied, and an absent `app_policy` or `allow` yields `[]`.
+    public let allowedApps: [AllowedApp]
     /// The configured values that `status.limits` reports.
     public let limits: Limits
 }
@@ -87,20 +89,6 @@ public struct AllowanceConfig: Hashable, Sendable {
     public let path: String
     /// `ALLOWANCE_SKEW_TOLERANCE_MS`: applies to `not_before` only (contract 14.3).
     public let skewToleranceMs: Int
-}
-
-/// The app allowlist as plain data. Deny-by-default: an app not listed here is denied.
-public struct AppPolicyConfig: Hashable, Sendable {
-    public let allow: [AllowedApp]
-
-    public static let denyAll = AppPolicyConfig(allow: [])
-}
-
-/// An app identity the owner allows: bundle identifier plus code-signing team identifier.
-public struct AllowedApp: Hashable, Sendable {
-    public let bundleID: BundleID
-    /// `nil` matches only an app whose signature has no team identifier, as Apple's own apps do.
-    public let teamID: String?
 }
 
 /// Defaults and ranges of the configured values. Where the contract gives a range or default it

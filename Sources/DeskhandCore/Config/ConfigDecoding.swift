@@ -63,18 +63,18 @@ private struct ConfigReader {
         let service = members["service"].flatMap { readService($0, at: root.appending("service")) }
         let credentials = members["credentials"].flatMap { readCredentials($0, at: root.appending("credentials")) }
         let allowance = members["allowance"].flatMap { readAllowance($0, at: root.appending("allowance")) }
-        let appPolicy = members["app_policy"].map { readAppPolicy($0, at: root.appending("app_policy")) } ?? .denyAll
+        let allowedApps = members["app_policy"].map { readAppPolicy($0, at: root.appending("app_policy")) } ?? []
         let limits = members["limits"].map { readLimits($0, at: root.appending("limits")) } ?? Limits()
 
         if let credentials, let allowance {
             requireDistinctPaths(credentials: credentials, allowance: allowance)
         }
-        guard let mac, let listen, let service, let credentials, let allowance, let appPolicy, let limits else {
+        guard let mac, let listen, let service, let credentials, let allowance, let allowedApps, let limits else {
             return nil
         }
         return DeskhandConfig(
             mac: mac, listen: listen, service: service, credentials: credentials, allowance: allowance,
-            appPolicy: appPolicy, limits: limits)
+            allowedApps: allowedApps, limits: limits)
     }
 
     // MARK: Sections
@@ -133,13 +133,12 @@ private struct ConfigReader {
         return AllowanceConfig(path: filePath, skewToleranceMs: skew)
     }
 
-    private mutating func readAppPolicy(_ value: JSONValue, at path: JSONPointer) -> AppPolicyConfig? {
+    private mutating func readAppPolicy(_ value: JSONValue, at path: JSONPointer) -> [AllowedApp]? {
         guard let members = closedObject(value, at: path, required: [], optional: ["allow"]) else { return nil }
-        guard let allow = members["allow"] else { return .denyAll }
-        let apps = uniqueArray(allow, at: path.appending("allow"), count: ConfigLimits.allowedAppCount) {
+        guard let allow = members["allow"] else { return [] }
+        return uniqueArray(allow, at: path.appending("allow"), count: ConfigLimits.allowedAppCount) {
             reader, value, path in reader.allowedApp(value, at: path)
         }
-        return apps.map(AppPolicyConfig.init(allow:))
     }
 
     private mutating func allowedApp(_ value: JSONValue, at path: JSONPointer) -> AllowedApp? {
@@ -151,15 +150,17 @@ private struct ConfigReader {
             }
             return id
         }
-        var teamID: String??
+        // `null` means a signature with no team identifier, which the policy trusts only as Apple's.
+        var signer: TrustedSigner?
         switch members["team_id"] {
-        case .some(.null): teamID = .some(nil)
-        case .some(.string(let text)) where Self.isTeamID(text): teamID = .some(text)
+        case .some(.null): signer = .apple
+        case .some(.string(let text)):
+            if let team = TeamID(text) { signer = .team(team) } else { report(path.appending("team_id"), .teamID) }
         case .some: report(path.appending("team_id"), .teamID)
         case nil: break
         }
-        guard let bundleID, let teamID else { return nil }
-        return AllowedApp(bundleID: bundleID, teamID: teamID)
+        guard let bundleID, let signer else { return nil }
+        return AllowedApp(bundleID: bundleID, signer: signer)
     }
 
     private mutating func readLimits(_ value: JSONValue, at path: JSONPointer) -> Limits? {
@@ -341,13 +342,5 @@ private struct ConfigReader {
         }
         let lastIsNumeric = labels.last?.allSatisfy { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) } ?? true
         return labelsValid && !lastIsNumeric
-    }
-
-    static func isTeamID(_ text: String) -> Bool {
-        text.utf8.count == 10
-            && text.utf8.allSatisfy {
-                (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0)
-                    || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
-            }
     }
 }

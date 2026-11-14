@@ -32,8 +32,13 @@ import Testing
         #expect(config.credentials.tokenOverlapMs == 0)
         #expect(config.allowance.path == "/var/run/birbhomes/deskhand-allowance.json")
         #expect(config.allowance.skewToleranceMs == 0)
-        #expect(config.appPolicy.allow.map(\.bundleID.rawValue) == ["com.apple.TextEdit", "com.example.Editor"])
-        #expect(config.appPolicy.allow.map(\.teamID) == [nil, "ABCDE12345"])
+        #expect(
+            config.allowedApps == [
+                AllowedApp(bundleID: try #require(BundleID("com.apple.TextEdit")), signer: .apple),
+                AllowedApp(
+                    bundleID: try #require(BundleID("com.example.Editor")),
+                    signer: .team(try #require(TeamID("ABCDE12345")))),
+            ])
         #expect(config.limits == Limits())
     }
 
@@ -42,7 +47,7 @@ import Testing
         #expect(config.mac == "m1max2021")
         #expect(config.credentials.tokenOverlapMs == 0)
         #expect(config.allowance.skewToleranceMs == 0)
-        #expect(config.appPolicy.allow.isEmpty)
+        #expect(config.allowedApps.isEmpty)
         #expect(config.limits.frameMaxAgeMs == 60_000)
         #expect(config.limits.actionsPerMinute == 60)
         #expect(config.limits.operationRetentionMs == 86_400_000)
@@ -178,6 +183,10 @@ import Testing
         Invalid(
             name: "allow entry with short team_id", path: ["app_policy", "allow"],
             value: [["bundle_id": "com.example.Editor", "team_id": "ABCDE"]], pointer: "/app_policy/allow/0/team_id",
+            rule: .teamID),
+        Invalid(
+            name: "allow entry with numeric team_id", path: ["app_policy", "allow"],
+            value: [["bundle_id": "com.example.Editor", "team_id": 12345]], pointer: "/app_policy/allow/0/team_id",
             rule: .teamID),
         Invalid(
             name: "allow entry with bad bundle_id", path: ["app_policy", "allow"],
