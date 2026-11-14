@@ -14,9 +14,17 @@ public enum ScreenshotSizingError: Error, Hashable, Sendable {
     }
 }
 
-/// The size of a returned screenshot (contract 7). The output never breaks `max_long_edge` or
-/// `MAX_PIXELS`, because a model provider refuses such an image instead of shrinking it.
+/// The size of a returned screenshot (contract 7). The output never breaks `max_long_edge`,
+/// `MAX_PIXELS` or `MAX_VISUAL_TOKENS` counted by patches, because a model provider refuses such an
+/// image instead of shrinking it. The pixel cap implies the token cap for every size the rule
+/// produces (contract 7 shows it); the loop checks both anyway, so a rounding slip cannot pass.
 public struct ScreenshotSize: Hashable, Sendable {
+    /// `ceil(w / 28) * ceil(h / 28)`: what a provider that counts by patches charges for `size`.
+    public static func visualTokens(_ size: PixelSize) -> Int {
+        let side = ContractConstants.visualTokenPatchSide
+        return ((size.width + side - 1) / side) * ((size.height + side - 1) / side)
+    }
+
     /// The frame pixel space.
     public let output: PixelSize
     /// The contract's `scale`, in (0, 1], reported as `downscale`. The output sides are floored from
@@ -38,7 +46,9 @@ public struct ScreenshotSize: Hashable, Sendable {
             1, Double(maxLongEdge) / max(width, height), (Double(maxPixels) / (width * height)).squareRoot())
         var outWidth = max(1, Int((width * scale).rounded(.down)))
         var outHeight = max(1, Int((height * scale).rounded(.down)))
-        while outWidth * outHeight > maxPixels || max(outWidth, outHeight) > maxLongEdge {
+        while outWidth * outHeight > maxPixels || max(outWidth, outHeight) > maxLongEdge
+            || Self.visualTokens(PixelSize(width: outWidth, height: outHeight)) > ContractConstants.maxVisualTokens
+        {
             if outWidth >= outHeight { outWidth -= 1 } else { outHeight -= 1 }
         }
         output = PixelSize(width: outWidth, height: outHeight)

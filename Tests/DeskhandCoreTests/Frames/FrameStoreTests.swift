@@ -139,10 +139,12 @@ import Testing
         store.invalidateAll()
         var generator = SeededGenerator(state: 1)
         #expect(throws: FrameRecordError.invalidatedDuringCapture) {
-            try store.record(F.capture(), for: F.alpha, startedIn: started, now: F.t0, using: &generator)
+            try store.record(
+                F.capture(), for: F.alpha, leaseHolder: nil, startedIn: started, now: F.t0, using: &generator)
         }
         #expect(store.liveFrameCount == 0)
-        _ = try store.record(F.capture(), for: F.alpha, startedIn: store.epoch, now: F.t0, using: &generator)
+        _ = try store.record(
+            F.capture(), for: F.alpha, leaseHolder: nil, startedIn: store.epoch, now: F.t0, using: &generator)
         #expect(store.liveFrameCount == 1)
     }
 
@@ -167,8 +169,10 @@ import Testing
     @Test func mintsAFreshIDWhenTheGeneratorRepeats() throws {
         var store = FrameStore()
         var repeating = ScriptedGenerator(words: [1, 2, 1, 2, 3, 4])
-        let first = try store.record(F.capture(), for: F.alpha, startedIn: store.epoch, now: F.t0, using: &repeating)
-        let second = try store.record(F.capture(), for: F.beta, startedIn: store.epoch, now: F.t0, using: &repeating)
+        let first = try store.record(
+            F.capture(), for: F.alpha, leaseHolder: nil, startedIn: store.epoch, now: F.t0, using: &repeating)
+        let second = try store.record(
+            F.capture(), for: F.beta, leaseHolder: nil, startedIn: store.epoch, now: F.t0, using: &repeating)
         var expected = ScriptedGenerator(words: [3, 4])
         let expectedID = FrameID.mint(using: &expected)
         #expect(first.id != second.id && second.id == expectedID)
@@ -198,6 +202,34 @@ import Testing
         #expect(store.reason(frames[0].id, in: holders[0]) == .unknown)
         #expect(store.latest(in: holders[0], displayID: F.mainDisplay) == nil)
         #expect(store.lookup(frames[1].id, in: holders[1]) != nil && store.lookup(frames[2].id, in: holders[2]) != nil)
+    }
+
+    /// Contract 4.2: screenshots under other `holder_id` values never discard the lease holder's
+    /// latest frame, however many there are.
+    @Test func otherHoldersNeverEvictTheLeaseHoldersFrame() throws {
+        var store = FrameStore()
+        let held = try store.take(F.capture(), for: F.alpha, leaseHolder: F.alpha)
+        for index in 0..<(FrameStore.defaultMaxLiveFrames * 2) {
+            let scope = FrameScope(principal: F.crew, holderID: HolderID("reader-\(index)")!)
+            _ = try store.take(
+                F.capture(at: F.t0.adding(milliseconds: Int64(index + 1))), for: scope, leaseHolder: F.alpha)
+        }
+        #expect(store.liveFrameCount == FrameStore.defaultMaxLiveFrames)
+        #expect(store.latest(in: F.alpha, displayID: F.mainDisplay)?.frame == held)
+        #expect(store.reason(held.id, in: F.alpha, now: F.t0.adding(milliseconds: 100)) == nil)
+    }
+
+    /// A scope over its own bound gives up its own oldest frame, not another scope's.
+    @Test func aScopeOverItsBoundEvictsItsOwnOldest() throws {
+        var store = FrameStore(maxLiveFrames: 16, maxLiveFramesPerScope: 2)
+        let other = try store.take(F.capture(), for: F.beta)
+        let displays = (1...3).map { DisplayID(UInt32(100 + $0)) }
+        let frames = try displays.enumerated().map { index, display in
+            try store.take(F.capture(display: display, at: F.t0.adding(milliseconds: Int64(index + 1))), for: F.alpha)
+        }
+        #expect(store.lookup(frames[0].id, in: F.alpha) == nil)
+        #expect(store.lookup(frames[1].id, in: F.alpha) != nil && store.lookup(frames[2].id, in: F.alpha) != nil)
+        #expect(store.lookup(other.id, in: F.beta) != nil)
     }
 
     @Test func neverEvictsTheFrameJustRecorded() throws {

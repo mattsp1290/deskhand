@@ -33,8 +33,10 @@ public struct FrameGeometry: Hashable, Sendable {
         return .outOfFrame(pointIndex: index, outputPixelSize: outputPixelSize)
     }
 
-    /// The centre of the named pixel in global points, clamped to the display's bounds.
-    public func globalPoint(for point: FramePoint) -> GlobalPoint {
+    /// The centre of the named pixel in global points, clamped to the display's bounds, or `nil` for
+    /// a point outside the frame: the pointer never goes where the caller never saw.
+    public func globalPoint(for point: FramePoint) -> GlobalPoint? {
+        guard contains(point) else { return nil }
         let x = captureRect.x + (Double(point.x) + 0.5) * captureRect.width / Double(outputPixelSize.width)
         let y = captureRect.y + (Double(point.y) + 0.5) * captureRect.height / Double(outputPixelSize.height)
         return GlobalPoint(

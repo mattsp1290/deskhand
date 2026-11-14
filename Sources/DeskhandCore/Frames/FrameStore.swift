@@ -20,6 +20,14 @@ public enum FrameValidation: Sendable {
 /// `display_id`) keeps its pixels; a superseded frame keeps its record so that it can still be refused
 /// as `not_latest`. Both sets are bounded, and a frame dropped from them is refused as `unknown`, which
 /// the contract allows for any discarded frame.
+///
+/// Live frames are bounded per scope first: a scope over ``defaultMaxLiveFramesPerScope`` loses its
+/// own oldest. The bound over all scopes then takes the oldest frame of a scope that is neither the
+/// recording one nor the lease holder's, so screenshots under one `holder_id` never discard the
+/// frames the lease holder acts on (contract 4.2: only the lease holder's frames matter for an
+/// effect). Only when every other live frame is the lease holder's does a scope give up its own.
+/// The residual case: past the global bound, one non-holding scope's screenshots can discard another
+/// non-holding scope's frame, which that scope could not act on without taking a new one anyway.
 public struct FrameStore: Sendable {
     /// Changes on every ``invalidateAll()``. A capture started under one epoch cannot be recorded in another.
     public struct Epoch: Hashable, Sendable {
@@ -28,6 +36,8 @@ public struct FrameStore: Sendable {
 
     /// The contract sets no bound; each live frame holds up to `MAX_PIXELS * 3` bytes of pixels.
     public static let defaultMaxLiveFrames = 16
+    /// One latest frame per display; more displays than this on one Mac is not expected.
+    public static let defaultMaxLiveFramesPerScope = 4
     public static let defaultMaxSupersededFrames = 1024
 
     private struct LatestKey: Hashable {
@@ -40,14 +50,16 @@ public struct FrameStore: Sendable {
     private var latest: [LatestKey: FrameID] = [:]
     private var superseded: [FrameID: Frame] = [:]
     private let maxLiveFrames: Int
+    private let maxLiveFramesPerScope: Int
     private let maxSupersededFrames: Int
 
     public init(
-        maxLiveFrames: Int = Self.defaultMaxLiveFrames, maxSupersededFrames: Int = Self.defaultMaxSupersededFrames
+        maxLiveFrames: Int = Self.defaultMaxLiveFrames, maxLiveFramesPerScope: Int = Self.defaultMaxLiveFramesPerScope,
+        maxSupersededFrames: Int = Self.defaultMaxSupersededFrames
     ) {
-        precondition(maxLiveFrames >= 1 && maxSupersededFrames >= 0, "frame store bounds")
-        self.maxLiveFrames = maxLiveFrames
-        self.maxSupersededFrames = maxSupersededFrames
+        self.maxLiveFrames = max(1, maxLiveFrames)
+        self.maxLiveFramesPerScope = max(1, maxLiveFramesPerScope)
+        self.maxSupersededFrames = max(0, maxSupersededFrames)
     }
 
     public var liveFrameCount: Int { live.count }
@@ -55,10 +67,13 @@ public struct FrameStore: Sendable {
 
     /// Mints a frame for `capture`, makes it the latest for its scope and display, and supersedes the
     /// previous latest. Frames older than their own `max_age_ms` at `now` are dropped on the way.
-    /// - Parameter epoch: ``epoch`` as read before the capture started.
+    /// - Parameters:
+    ///   - leaseHolder: the scope of the current lease holder, if any: its frames are kept while any
+    ///     other scope's frame can be dropped instead.
+    ///   - epoch: ``epoch`` as read before the capture started.
     public mutating func record(
-        _ capture: FrameCapture, for scope: FrameScope, startedIn epoch: Epoch, now: Timestamp,
-        using generator: inout some RandomNumberGenerator
+        _ capture: FrameCapture, for scope: FrameScope, leaseHolder: FrameScope?, startedIn epoch: Epoch,
+        now: Timestamp, using generator: inout some RandomNumberGenerator
     ) throws(FrameRecordError) -> Frame {
         guard epoch == self.epoch else { throw .invalidatedDuringCapture }
         guard capture.isConsistent else { throw .inconsistentCapture }
@@ -74,7 +89,18 @@ public struct FrameStore: Sendable {
         live[id] = LiveFrame(frame: frame, pixels: capture.pixels)
         latest[key] = id
 
-        while live.count > maxLiveFrames, let oldest = oldestID(in: live.values.lazy.map(\.frame), except: id) {
+        let own = { (frame: Frame) in frame.scope == scope && frame.id != id }
+        while live.values.lazy.map(\.frame).filter(own).count >= maxLiveFramesPerScope,
+            let oldest = oldestID(in: live.values.lazy.map(\.frame).filter(own), except: id)
+        {
+            dropLive(oldest)
+        }
+        while live.count > maxLiveFrames {
+            let frames = live.values.lazy.map(\.frame)
+            let others = frames.filter { $0.scope != scope && $0.scope != leaseHolder }
+            guard let oldest = oldestID(in: others, except: id) ?? oldestID(in: frames.filter(own), except: id) else {
+                break
+            }
             dropLive(oldest)
         }
         while superseded.count > maxSupersededFrames, let oldest = oldestID(in: superseded.values, except: nil) {
@@ -83,12 +109,13 @@ public struct FrameStore: Sendable {
         return frame
     }
 
-    /// ``record(_:for:startedIn:now:using:)`` with the system's secure generator.
+    /// ``record(_:for:leaseHolder:startedIn:now:using:)`` with the system's secure generator.
     public mutating func record(
-        _ capture: FrameCapture, for scope: FrameScope, startedIn epoch: Epoch, now: Timestamp
+        _ capture: FrameCapture, for scope: FrameScope, leaseHolder: FrameScope?, startedIn epoch: Epoch,
+        now: Timestamp
     ) throws(FrameRecordError) -> Frame {
         var generator = SystemRandomNumberGenerator()
-        return try record(capture, for: scope, startedIn: epoch, now: now, using: &generator)
+        return try record(capture, for: scope, leaseHolder: leaseHolder, startedIn: epoch, now: now, using: &generator)
     }
 
     /// The frame named `id` if `scope` owns it, live or superseded. Under another scope it does not exist.

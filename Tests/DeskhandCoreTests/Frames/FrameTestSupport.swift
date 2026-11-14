@@ -64,10 +64,13 @@ enum FrameFixtures {
 
 extension FrameStore {
     mutating func take(
-        _ capture: FrameCapture, for scope: FrameScope, now: Timestamp? = nil, seed: UInt64 = 1
+        _ capture: FrameCapture, for scope: FrameScope, leaseHolder: FrameScope? = nil, now: Timestamp? = nil,
+        seed: UInt64 = 1
     ) throws -> Frame {
         var generator = SeededGenerator(state: seed &+ UInt64(liveFrameCount + supersededFrameCount))
-        return try record(capture, for: scope, startedIn: epoch, now: now ?? capture.capturedAt, using: &generator)
+        return try record(
+            capture, for: scope, leaseHolder: leaseHolder, startedIn: epoch, now: now ?? capture.capturedAt,
+            using: &generator)
     }
 
     /// The `stale_frame` reason `validate` gives, or `nil` when the frame is valid.

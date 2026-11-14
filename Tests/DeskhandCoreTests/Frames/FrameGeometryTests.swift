@@ -15,23 +15,23 @@ import Testing
         GlobalRect(x: 0, y: 0, width: 1440, height: 900), PixelSize(width: 2160, height: 1350))
 
     @Test func mapsTheContractExample() {
-        let point = Self.retina.globalPoint(for: FramePoint(x: 1204, y: 778))
+        let point = Self.retina.mapped(FramePoint(x: 1204, y: 778))
         #expect(abs(point.x - 864.359) < 0.0005)
         #expect(abs(point.y - 558.859) < 0.0005)
     }
 
     @Test func mapsToPixelCentresWithNegativeOrigins() {
-        let first = Self.leftOfMain.globalPoint(for: FramePoint(x: 0, y: 0))
+        let first = Self.leftOfMain.mapped(FramePoint(x: 0, y: 0))
         #expect(first == GlobalPoint(x: -1920 + 0.5 * 1920 / 2576, y: -300 + 0.5 * 1080 / 1449))
-        let last = Self.leftOfMain.globalPoint(for: FramePoint(x: 2575, y: 1448))
+        let last = Self.leftOfMain.mapped(FramePoint(x: 2575, y: 1448))
         #expect(last == GlobalPoint(x: -1920 + 2575.5 * 1920 / 2576, y: -300 + 1448.5 * 1080 / 1449))
         #expect(last.x < 0 && last.y < 780)
     }
 
     @Test func mapsAtANonIntegerScale() {
-        let first = Self.scaled.globalPoint(for: FramePoint(x: 0, y: 0))
+        let first = Self.scaled.mapped(FramePoint(x: 0, y: 0))
         #expect(abs(first.x - 1.0 / 3) < 1e-12 && abs(first.y - 1.0 / 3) < 1e-12)
-        let last = Self.scaled.globalPoint(for: FramePoint(x: 2159, y: 1349))
+        let last = Self.scaled.mapped(FramePoint(x: 2159, y: 1349))
         #expect(abs(last.x - (1440 - 1.0 / 3)) < 1e-9 && abs(last.y - (900 - 1.0 / 3)) < 1e-9)
     }
 
@@ -39,10 +39,10 @@ import Testing
         let geometry = F.geometry(
             GlobalRect(x: -1, y: -1, width: 102, height: 52), PixelSize(width: 102, height: 52),
             display: GlobalRect(x: 0, y: 0, width: 100, height: 50))
-        #expect(geometry.globalPoint(for: FramePoint(x: 0, y: 0)) == GlobalPoint(x: 0, y: 0))
-        let far = geometry.globalPoint(for: FramePoint(x: 101, y: 51))
+        #expect(geometry.mapped(FramePoint(x: 0, y: 0)) == GlobalPoint(x: 0, y: 0))
+        let far = geometry.mapped(FramePoint(x: 101, y: 51))
         #expect(far == GlobalPoint(x: Double(100).nextDown, y: Double(50).nextDown))
-        #expect(geometry.globalPoint(for: FramePoint(x: 50, y: 25)) == GlobalPoint(x: 49.5, y: 24.5))
+        #expect(geometry.mapped(FramePoint(x: 50, y: 25)) == GlobalPoint(x: 49.5, y: 24.5))
     }
 
     @Test(arguments: [retina, leftOfMain, scaled])
@@ -55,7 +55,7 @@ import Testing
             }
         }
         for point in points {
-            #expect(geometry.framePoint(for: geometry.globalPoint(for: point)) == point)
+            #expect(geometry.framePoint(for: geometry.mapped(point)) == point)
         }
     }
 
@@ -101,4 +101,20 @@ import Testing
         #expect(FrameGeometry(captureRect: rect, outputPixelSize: size, displayBounds: infinite) == nil)
         #expect(FrameGeometry(captureRect: rect, outputPixelSize: size, displayBounds: rect) != nil)
     }
+
+    /// A region frame of 400 x 400 px on a 1728 x 1117 display: a point outside the frame maps to
+    /// nothing, rather than to a clamped place the caller never saw.
+    @Test func mapsOnlyPointsInsideTheFrame() {
+        let region = F.geometry(
+            GlobalRect(x: 100, y: 100, width: 200, height: 200), PixelSize(width: 400, height: 400),
+            display: GlobalRect(x: 0, y: 0, width: 1728, height: 1117))
+        #expect(region.globalPoint(for: FramePoint(x: 2000, y: -50)) == nil)
+        #expect(region.globalPoint(for: FramePoint(x: 400, y: 0)) == nil)
+        #expect(region.globalPoint(for: FramePoint(x: 399, y: 399)) == GlobalPoint(x: 299.75, y: 299.75))
+    }
+}
+
+extension FrameGeometry {
+    /// For points the test knows are inside the frame.
+    fileprivate func mapped(_ point: FramePoint) -> GlobalPoint { globalPoint(for: point)! }
 }
