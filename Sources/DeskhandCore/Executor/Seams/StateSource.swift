@@ -29,30 +29,34 @@ public protocol StateSource: Sendable {
     func snapshot() -> DeskSnapshot
 }
 
-/// A frame that passed every staleness check but `pixels_changed`, with the `sha256` its
-/// `screenshot` result reported, which the intent entry names (contract 12.10).
-public struct CheckedFrame: Sendable {
-    public let live: LiveFrame
-    public let sha256: SHA256Hex
-
-    public init(live: LiveFrame, sha256: SHA256Hex) {
-        self.live = live
-        self.sha256 = sha256
-    }
-}
-
 /// What ``FrameSource/check(_:in:for:now:)`` found.
 public enum FrameCheck: Sendable {
-    case valid(CheckedFrame)
+    /// Passed every staleness check but `pixels_changed`. Its ``Frame/sha256`` is the digest the
+    /// intent entry names (contract 12.10).
+    case valid(LiveFrame)
     /// `sha256` when deskhand still knows the frame, for the refusal entry.
     case stale(StaleFrameReason, sha256: SHA256Hex?)
 }
 
 /// The frames of contract 4.2, held by whoever records screenshots.
 public protocol FrameSource: Sendable {
-    /// Refusal step 9: ``FrameStore/validate(_:in:for:displayConfigGeneration:now:)`` against the
+    /// Refusal step 9: ``FrameStore/check(_:in:for:displayConfigGeneration:now:)`` against the
     /// display configuration generation in force.
     func check(_ id: FrameID, in scope: FrameScope, for use: FrameUse, now: Timestamp) async -> FrameCheck
+}
+
+extension FrameStore {
+    /// ``validate(_:in:for:displayConfigGeneration:now:)`` as refusal step 9 answers it: a stale
+    /// frame that the store still has names its digest.
+    public func check(
+        _ id: FrameID, in scope: FrameScope, for use: FrameUse, displayConfigGeneration: DisplayConfigGeneration,
+        now: Timestamp
+    ) -> FrameCheck {
+        switch validate(id, in: scope, for: use, displayConfigGeneration: displayConfigGeneration, now: now) {
+        case .valid(let live): .valid(live)
+        case .stale(let reason): .stale(reason, sha256: lookup(id, in: scope)?.sha256)
+        }
+    }
 }
 
 /// The person at the Mac (contract 13.2).

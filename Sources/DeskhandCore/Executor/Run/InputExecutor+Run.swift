@@ -185,17 +185,11 @@ extension InputExecutor {
             guard now < end else { return nil }
             var wait = min(now.duration(to: end), .milliseconds(ContractConstants.userActivityPollMs))
             let deadline = snapshot.report.effectDeadline(
-                lease: currentLease(execution.lease, snapshot), at: snapshot.reading)
+                of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
             if deadline > now { wait = min(wait, now.duration(to: deadline)) }
             await seams.timer.sleep(for: wait)
             if let stop = check(target, execution).0 { return .stopped(stop) }
         }
-    }
-
-    /// The admitted lease as renewed since, which moves the deadline (contract 13.1).
-    private func currentLease(_ admitted: Lease, _ snapshot: DeskSnapshot) -> Lease {
-        if case .held(let held) = snapshot.lease.lease, held.serial == admitted.serial { return held }
-        return admitted
     }
 
     /// Contract 12.4 steps 2 to 5, or 12.3 steps 7 to 9 for a completed operation: releases, the

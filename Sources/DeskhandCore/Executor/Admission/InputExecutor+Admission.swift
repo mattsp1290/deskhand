@@ -128,21 +128,21 @@ extension InputExecutor {
             frontmost = app.appRef
             use = .keyboard(frontmostApp: app.isCertain ? app.appRef : nil)
         }
-        let frame: CheckedFrame
+        let live: LiveFrame
         switch await seams.frames.check(call.arguments.frameID, in: call.scope, for: use, now: snapshot.reading.wall) {
         case .stale(let reason, let sha256):
             return .refused(Refusal(.staleFrame(reason), frontmostApp: frontmost, frameSHA256: sha256))
-        case .valid(let checked): frame = checked
+        case .valid(let checked): live = checked
         }
         func refused(_ reason: ToolErrorReason) -> AdmissionResult {
-            .refused(Refusal(reason, frontmostApp: frontmost, frameSHA256: frame.sha256))
+            .refused(Refusal(reason, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
         }
 
         let plan: ActionPlan
         let action: CheckedAction
         switch call.arguments {
         case .pointer(let pointer):
-            let geometry = frame.live.frame.geometry
+            let geometry = live.frame.geometry
             if let outside = geometry.outOfFrame(pointer.action.points) { return refused(outside) }
             guard let targets = PointerTargets(pointer.action, geometry: geometry) else {
                 return refused(.outOfFrame(pointIndex: 0, outputPixelSize: geometry.outputPixelSize))
@@ -168,7 +168,7 @@ extension InputExecutor {
             // Read before the recapture, so the age measured at the last look is never less than
             // the capture's (contract 8.4).
             let beforeCapture = seams.state.snapshot().reading.monotonic
-            if let stale = await TargetPatchCheck.run(pointer.action, on: frame.live, verifier: seams.patches) {
+            if let stale = await TargetPatchCheck.run(pointer.action, on: live, verifier: seams.patches) {
                 return refused(.staleFrame(stale))
             }
             patchCheckedAt = beforeCapture
@@ -189,7 +189,7 @@ extension InputExecutor {
         let intent = ActionLogIntent(
             time: snapshot.reading.wall, nodeAddress: call.nodeAddress, principal: call.principal,
             holderID: call.arguments.holderID, operationID: call.arguments.operationID,
-            frameID: call.arguments.frameID, frameSHA256: frame.sha256, frontmostApp: measured.frontmostApp,
+            frameID: call.arguments.frameID, frameSHA256: live.frame.sha256, frontmostApp: measured.frontmostApp,
             action: call.arguments.loggedAction)
         let receipt: IntentReceipt
         do {

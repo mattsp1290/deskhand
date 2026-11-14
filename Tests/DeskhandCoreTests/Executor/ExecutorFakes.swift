@@ -274,7 +274,7 @@ final class FakeFrames: FrameSource {
             displayID: DisplayID(1), displayConfigGeneration: Self.generation,
             geometry: FrameGeometry(captureRect: rect, outputPixelSize: Self.size, displayBounds: rect)!,
             sourcePixelSize: Self.size, pointPixelScale: 1, downscale: 1, capturedAt: capturedAt, maxAgeMs: 600_000,
-            frontmostApp: ExecutorFixture.textEdit.appRef,
+            frontmostApp: ExecutorFixture.textEdit.appRef, sha256: ExecutorFixture.frameSHA256,
             pixels: FramePixels(
                 size: Self.size, rgb: Array(repeating: 90, count: Self.size.width * Self.size.height * 3))!)
         var generator = SeededGenerator(state: 11)
@@ -294,12 +294,8 @@ final class FakeFrames: FrameSource {
 
     func check(_ id: FrameID, in scope: FrameScope, for use: FrameUse, now: Timestamp) async -> FrameCheck {
         await gate?.pass()
-        return store.withLock { store in
-            switch store.validate(id, in: scope, for: use, displayConfigGeneration: Self.generation, now: now) {
-            case .valid(let live): .valid(CheckedFrame(live: live, sha256: ExecutorFixture.frameSHA256))
-            case .stale(let reason):
-                .stale(reason, sha256: store.lookup(id, in: scope) == nil ? nil : ExecutorFixture.frameSHA256)
-            }
+        return store.withLock {
+            $0.check(id, in: scope, for: use, displayConfigGeneration: Self.generation, now: now)
         }
     }
 }
