@@ -7,6 +7,7 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
     case object
     case string
     case integer(ClosedRange<Int>)
+    case boolean
     case array(count: ClosedRange<Int>)
     case version(Int)
     /// 1 to 63 characters from `a-z 0-9 -` (contract 14.2), the same string as `status.mac`.
@@ -23,6 +24,11 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
     /// An Apple code-signing team identifier (10 characters from `A-Z 0-9`), or `null` for an app
     /// whose signature carries none.
     case teamID
+    /// An RFC 4514 subject string of 1 to 1024 bytes with no NUL.
+    case clientSubject
+    /// The allow entry names an app that this default deny list family covers. The deny list wins,
+    /// so the entry could never allow anything.
+    case deniedByDefault(BundleIDFamily)
 
     public var name: String {
         switch self {
@@ -31,6 +37,7 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
         case .object: "object"
         case .string: "string"
         case .integer: "integer"
+        case .boolean: "boolean"
         case .array: "array"
         case .version: "version"
         case .macName: "mac_name"
@@ -41,6 +48,8 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
         case .unique: "unique"
         case .bundleID: "bundle_id"
         case .teamID: "team_id"
+        case .clientSubject: "client_subject"
+        case .deniedByDefault: "denied_by_default"
         }
     }
 
@@ -51,6 +60,7 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
         case .object: "must be an object"
         case .string: "must be a string"
         case .integer(let range): "must be an integer from \(range.lowerBound) to \(range.upperBound)"
+        case .boolean: "must be true or false"
         case .array(let count): "must be an array of \(count.lowerBound) to \(count.upperBound) items"
         case .version(let version): "must be the integer \(version)"
         case .macName: "must be 1 to 63 characters from a-z 0-9 -"
@@ -63,6 +73,10 @@ public enum ConfigRule: Hashable, Sendable, CustomStringConvertible {
         case .unique(let first): "duplicates \(first)"
         case .bundleID: "must be \(BundleID.requirement)"
         case .teamID: "must be 10 characters from A-Z 0-9, or null"
+        case .clientSubject:
+            "must be a certificate subject as an RFC 4514 string of 1 to \(ConfigLimits.maxClientSubjectBytes) bytes"
+        case .deniedByDefault(let family):
+            "names an app that the default deny list denies (\(family)); the deny list wins over the allowlist"
         }
     }
 }

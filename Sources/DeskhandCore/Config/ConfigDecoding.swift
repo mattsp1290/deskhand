@@ -103,9 +103,12 @@ private struct ConfigReader {
         guard
             let members = closedObject(
                 value, at: path,
-                required: ["ca_certificate_path", "server_certificate_path", "server_key_path", "token_path"],
+                required: [
+                    "client_subject", "ca_certificate_path", "server_certificate_path", "server_key_path", "token_path",
+                ],
                 optional: ["token_overlap_ms"])
         else { return nil }
+        let subject = members["client_subject"].flatMap { clientSubject($0, at: path.appending("client_subject")) }
         let ca = members["ca_certificate_path"].flatMap { absolutePath($0, at: path.appending("ca_certificate_path")) }
         let certificate = members["server_certificate_path"].flatMap {
             absolutePath($0, at: path.appending("server_certificate_path"))
@@ -115,22 +118,32 @@ private struct ConfigReader {
         let overlap = optionalInteger(
             members["token_overlap_ms"], at: path.appending("token_overlap_ms"), in: ConfigLimits.tokenOverlapMs,
             default: ConfigLimits.defaultTokenOverlapMs)
-        guard let ca, let certificate, let key, let token, let overlap else { return nil }
+        guard let subject, let ca, let certificate, let key, let token, let overlap else { return nil }
         return CredentialsConfig(
-            caCertificatePath: ca, serverCertificatePath: certificate, serverKeyPath: key, tokenPath: token,
+            clientSubject: subject, caCertificatePath: ca, serverCertificatePath: certificate, serverKeyPath: key,
+            tokenPath: token,
             tokenOverlapMs: overlap)
     }
 
     private mutating func readAllowance(_ value: JSONValue, at path: JSONPointer) -> AllowanceConfig? {
-        guard let members = closedObject(value, at: path, required: ["path"], optional: ["skew_tolerance_ms"]) else {
-            return nil
-        }
+        guard
+            let members = closedObject(
+                value, at: path, required: ["path"], optional: ["skew_tolerance_ms", "gated_ends_arming"])
+        else { return nil }
         let filePath = members["path"].flatMap { absolutePath($0, at: path.appending("path")) }
         let skew = optionalInteger(
             members["skew_tolerance_ms"], at: path.appending("skew_tolerance_ms"),
             in: ConfigLimits.allowanceSkewToleranceMs, default: ConfigLimits.defaultAllowanceSkewToleranceMs)
-        guard let filePath, let skew else { return nil }
-        return AllowanceConfig(path: filePath, skewToleranceMs: skew)
+        var gatedEndsArming: Bool? = ConfigLimits.defaultGatedEndsArming
+        switch members["gated_ends_arming"] {
+        case nil: break
+        case .bool(let value)?: gatedEndsArming = value
+        case _?:
+            report(path.appending("gated_ends_arming"), .boolean)
+            gatedEndsArming = nil
+        }
+        guard let filePath, let skew, let gatedEndsArming else { return nil }
+        return AllowanceConfig(path: filePath, skewToleranceMs: skew, gatedEndsArming: gatedEndsArming)
     }
 
     private mutating func readAppPolicy(_ value: JSONValue, at path: JSONPointer) -> [AllowedApp]? {
@@ -146,6 +159,10 @@ private struct ConfigReader {
         let bundleID = members["bundle_id"].flatMap { value -> BundleID? in
             guard let id = string(value, at: path.appending("bundle_id")).flatMap(BundleID.init) else {
                 if case .string = value { report(path.appending("bundle_id"), .bundleID) }
+                return nil
+            }
+            if let family = AppPolicy.defaultDenied.first(where: { $0.contains(id) }) {
+                report(path.appending("bundle_id"), .deniedByDefault(family))
                 return nil
             }
             return id
@@ -221,7 +238,7 @@ private struct ConfigReader {
             return nil
         }
         let known = Set(required + optional)
-        for name in members.keys.sorted() where !known.contains(name) {
+        for name in members.keys.sorted() where !known.contains(where: { $0.hasSameScalars(as: name) }) {
             report(path.appending(name), .unknownMember)
         }
         for name in required where members[name] == nil {
@@ -240,13 +257,11 @@ private struct ConfigReader {
 
     /// A JSON number with no fraction inside `range`.
     private mutating func integer(_ value: JSONValue, at path: JSONPointer, in range: ClosedRange<Int>) -> Int? {
-        guard case .number(let number) = value, number.rounded(.towardZero) == number,
-            Double(range.lowerBound) <= number, number <= Double(range.upperBound)
-        else {
+        guard let integer = value.integer(in: range) else {
             report(path, .integer(range))
             return nil
         }
-        return Int(number)
+        return integer
     }
 
     private mutating func optionalInteger(
@@ -304,6 +319,15 @@ private struct ConfigReader {
             report(path, .listenAddress(error))
             return nil
         }
+    }
+
+    private mutating func clientSubject(_ value: JSONValue, at path: JSONPointer) -> Principal? {
+        guard let text = string(value, at: path) else { return nil }
+        guard (1...ConfigLimits.maxClientSubjectBytes).contains(text.utf8.count), !text.utf8.contains(0) else {
+            report(path, .clientSubject)
+            return nil
+        }
+        return Principal(certificateSubject: text)
     }
 
     private mutating func dnsName(_ value: JSONValue, at path: JSONPointer) -> String? {

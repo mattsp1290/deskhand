@@ -54,6 +54,46 @@ import Testing
         #expect(config.limits.operationMaxRecords == 10_000)
     }
 
+    @Test func readsTheClientSubjectAndGateSetting() throws {
+        let config = try DeskhandConfig(json: ConfigFixtures.minimal)
+        #expect(config.credentials.clientSubject == Principal(certificateSubject: "CN=crew-executor,O=crew"))
+        #expect(config.allowance.gatedEndsArming)
+        #expect(config.stateConfiguration == .standard)
+        let off = try DeskhandConfig(
+            json: ConfigFixtures.minimal(setting: ["allowance", "gated_ends_arming"], to: false))
+        #expect(off.stateConfiguration == StateConfiguration(gatedEndsArming: false))
+        #expect(
+            Self.issues(ConfigFixtures.minimal(setting: ["allowance", "gated_ends_arming"], to: "no"))
+                == [ConfigIssue(Self.pointer("/allowance/gated_ends_arming"), .boolean)])
+        for subject: JSONValue in ["", .string(String(repeating: "a", count: 1025)), "CN=a\u{0}b", 7] {
+            let rule: ConfigRule = subject.stringValue == nil ? .string : .clientSubject
+            #expect(
+                Self.issues(ConfigFixtures.minimal(setting: ["credentials", "client_subject"], to: subject))
+                    == [ConfigIssue(Self.pointer("/credentials/client_subject"), rule)])
+        }
+    }
+
+    /// The deny list wins over the allowlist, so an allow entry that it covers could never allow
+    /// anything; the configuration says so instead of starting with a dead entry.
+    @Test(arguments: ["com.google.Chrome", "com.apple.Safari.WebApp.1", "com.apple.terminal"])
+    func anAllowEntryTheDenyListCoversIsAnError(_ raw: String) throws {
+        let document = ConfigFixtures.minimal(
+            setting: ["app_policy"], to: ["allow": [["bundle_id": .string(raw), "team_id": nil]]])
+        let issues = Self.issues(document)
+        #expect(issues.count == 1)
+        #expect(issues.first?.pointer == Self.pointer("/app_policy/allow/0/bundle_id"))
+        #expect(issues.first?.rule.name == "denied_by_default")
+    }
+
+    @Test func buildsTheAppPolicyWithDeskhandDenied() throws {
+        let config = try DeskhandConfig(parsing: Array(ConfigFixtures.example.utf8))
+        let me = try #require(BundleID("com.example.deskhand"))
+        let policy = config.appPolicy(deskhandBundleID: me)
+        #expect(policy.allowed == Set(config.allowedApps))
+        #expect(policy.refusal(of: AppIdentity(bundleID: me, signer: .apple)) == .deskhandItself)
+        #expect(policy.refusal(of: AppIdentity(bundleID: BundleID("com.apple.TextEdit"), signer: .apple)) == nil)
+    }
+
     @Test func configuredLimitsFeedStatusLimits() throws {
         let document = ConfigFixtures.minimal(
             setting: ["limits"],
@@ -266,7 +306,7 @@ import Testing
             Issue.record("expected notJSON, got \(String(describing: error))")
             return
         }
-        #expect(parse.reason == "duplicate key")
+        #expect(parse.kind == .duplicateMemberName && parse.location == JSONPointer(["version"]))
     }
 
     @Test func bothMacNamesAreAccepted() throws {

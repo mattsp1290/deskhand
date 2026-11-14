@@ -19,7 +19,10 @@
 ///                                                  1-8 distinct lowercase DNS names, no IP literal
 ///     "port": 443                                  1-65535, the port callers dial on the Service
 ///   },
-///   "credentials": {                               required, absolute paths, pairwise distinct
+///   "credentials": {                               required; the paths absolute and pairwise distinct
+///     "client_subject": "CN=crew-executor,O=crew", the expected client certificate subject, as the
+///                                                  RFC 4514 string of its DER encoding (contract 2.2);
+///                                                  1-1024 bytes, no NUL
 ///     "ca_certificate_path": "...",                private CA (PEM) for client and server chains
 ///     "server_certificate_path": "...",            server leaf certificate (PEM)
 ///     "server_key_path": "...",                    server private key (PEM)
@@ -28,11 +31,14 @@
 ///   },
 ///   "allowance": {                                 required (contract 14)
 ///     "path": "...",                               absolute, distinct from every credential path
-///     "skew_tolerance_ms": 0                       optional, 0-60,000 (ALLOWANCE_SKEW_TOLERANCE_MS)
+///     "skew_tolerance_ms": 0,                      optional, 0-60,000 (ALLOWANCE_SKEW_TOLERANCE_MS)
+///     "gated_ends_arming": true                    optional, default true (contract 10.4)
 ///   },
 ///   "app_policy": {                                optional, default {"allow": []} (deny everything)
 ///     "allow": [                                   0-256 distinct entries
-///       {"bundle_id": "com.apple.TextEdit",        bundle identifier, compared exactly
+///       {"bundle_id": "com.apple.TextEdit",        bundle identifier, compared exactly; one that
+///                                                  the default deny list covers is an error, since
+///                                                  the deny list wins and the entry could never allow
 ///        "team_id": null}                          10 of A-Z 0-9 (TeamID), or null for Apple-signed
 ///     ]
 ///   },
@@ -61,6 +67,16 @@ public struct DeskhandConfig: Hashable, Sendable {
     public let allowedApps: [AllowedApp]
     /// The configured values that `status.limits` reports.
     public let limits: Limits
+
+    /// The app policy this configuration describes, with deskhand's own bundle always denied.
+    public func appPolicy(deskhandBundleID: BundleID) -> AppPolicy {
+        AppPolicy(deskhandBundleID: deskhandBundleID, allowed: Set(allowedApps))
+    }
+
+    /// How states combine on this Mac.
+    public var stateConfiguration: StateConfiguration {
+        StateConfiguration(gatedEndsArming: allowance.gatedEndsArming)
+    }
 }
 
 public struct ListenConfig: Hashable, Sendable {
@@ -77,6 +93,8 @@ public struct ServiceConfig: Hashable, Sendable {
 }
 
 public struct CredentialsConfig: Hashable, Sendable {
+    /// The only client certificate subject accepted at the handshake, and so the only principal.
+    public let clientSubject: Principal
     public let caCertificatePath: String
     public let serverCertificatePath: String
     public let serverKeyPath: String
@@ -89,6 +107,8 @@ public struct AllowanceConfig: Hashable, Sendable {
     public let path: String
     /// `ALLOWANCE_SKEW_TOLERANCE_MS`: applies to `not_before` only (contract 14.3).
     public let skewToleranceMs: Int
+    /// `gated_ends_arming` (contract 10.4).
+    public let gatedEndsArming: Bool
 }
 
 /// Defaults and ranges of the configured values. Where the contract gives a range or default it
@@ -97,6 +117,8 @@ public enum ConfigLimits {
     public static let serviceNameCount = 1...8
     public static let port = 1...65_535
     public static let maxPathBytes = 1024
+    public static let maxClientSubjectBytes = 1024
+    public static let defaultGatedEndsArming = true
     public static let tokenOverlapMs = 0...3_600_000
     public static let defaultTokenOverlapMs = 0
     public static let allowanceSkewToleranceMs = 0...60_000

@@ -18,6 +18,7 @@ enum ConfigFixtures {
             "port": 443
           },
           "credentials": {
+            "client_subject": "CN=crew-executor,O=crew",
             "ca_certificate_path": "/Users/deskhand/Library/Application Support/deskhand/ca.pem",
             "server_certificate_path": "/Users/deskhand/Library/Application Support/deskhand/server.pem",
             "server_key_path": "/Users/deskhand/Library/Application Support/deskhand/server-key.pem",
@@ -26,7 +27,8 @@ enum ConfigFixtures {
           },
           "allowance": {
             "path": "/var/run/birbhomes/deskhand-allowance.json",
-            "skew_tolerance_ms": 0
+            "skew_tolerance_ms": 0,
+            "gated_ends_arming": true
           },
           "app_policy": {
             "allow": [
@@ -50,6 +52,7 @@ enum ConfigFixtures {
         "listen": ["address": "10.0.0.96", "port": 8443],
         "service": ["names": ["deskhand-m1max2021.forge.svc"], "port": 8443],
         "credentials": [
+            "client_subject": "CN=crew-executor,O=crew",
             "ca_certificate_path": "/etc/deskhand/ca.pem",
             "server_certificate_path": "/etc/deskhand/server.pem",
             "server_key_path": "/etc/deskhand/server-key.pem",

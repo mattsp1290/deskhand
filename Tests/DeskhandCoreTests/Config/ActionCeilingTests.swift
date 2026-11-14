@@ -22,6 +22,31 @@ import Testing
         #expect(ToolErrorReason.rateLimited(retryAfterMs: 1).code == .rateLimited)
     }
 
+    /// Contract 9.5, D9: `denied_app` and `denied_shortcut` refusals before admission count, so the
+    /// policy cannot be probed without limit; no other refusal does.
+    @Test func policyRefusalsCountAndOthersDoNot() {
+        var ceiling = ActionCeiling(actionsPerMinute: 3)
+        let measured = Measured(
+            frontmostApp: .undetermined, targetApp: nil, windowTitle: nil, globalPoint: nil, measuredAt: Self.at(0))
+        let counted = [
+            ceiling.recordRefusal(.deniedApp(.policy, measured: measured, pointIndex: 0), at: Self.at(0)),
+            ceiling.recordRefusal(.deniedShortcut(shortcut: "command+tab"), at: Self.at(1)),
+            ceiling.recordRefusal(.staleFrame(.tooOld), at: Self.at(2)),
+            ceiling.recordRefusal(.rateLimited(retryAfterMs: 1), at: Self.at(3)),
+        ]
+        #expect(counted == [true, true, false, false])
+        #expect(ceiling.refusal(at: Self.at(4)) == nil)
+        ceiling.recordAdmission(at: Self.at(5))
+        #expect(ceiling.refusal(at: Self.at(6)) == .rateLimited(retryAfterMs: 59_994))
+    }
+
+    @Test func aCeilingBelowOneIsOne() {
+        var ceiling = ActionCeiling(actionsPerMinute: 0)
+        #expect(ceiling.actionsPerMinute == 1)
+        ceiling.recordAdmission(at: Self.at(0))
+        #expect(ceiling.refusal(at: Self.at(1)) != nil)
+    }
+
     @Test func retryAfterIsTheEarliestUsefulRetry() {
         var ceiling = ActionCeiling(actionsPerMinute: 3)
         for offset: Int64 in [0, 1000, 2000] { ceiling.recordAdmission(at: Self.at(offset)) }
