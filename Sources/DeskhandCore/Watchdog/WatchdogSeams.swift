@@ -59,7 +59,10 @@ public protocol WatchdogStateOwner: StateSource {
     /// when a deadline has passed, and with `allowanceChanged` at least every
     /// ``Watchdog/Configuration/allowanceReadInterval``.
     ///
-    /// It should not wait for the executor: the watchdog passes what the new snapshot stops to the
-    /// executor itself, and the time this takes counts against the bound of contract 13.1.
+    /// It passes what the reduction stops (a ``TransitionEffect/cancelInFlight(_:)``, a lease it
+    /// ended) to ``InputExecutor/interrupt(_:)`` as soon as it has reduced, since a state that ends
+    /// again before the watchdog looks leaves nothing in the snapshot. Otherwise it should not wait
+    /// for the executor: the watchdog passes what the new snapshot stops and retries the cleanup
+    /// itself, and the time this takes counts against the bound of contract 13.1.
     func reduceNow(allowanceChanged: Bool) async
 }

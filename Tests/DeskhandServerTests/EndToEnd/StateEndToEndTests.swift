@@ -148,4 +148,62 @@ struct StateEndToEndTests {
             #expect(admitted.structuredContent?["status"] == "completed")
         }
     }
+
+    /// A press that holds its key until the test opens `proceed`, and the call's task.
+    static func holdKey(on stack: DeskhandStack) async throws -> (Task<WireResponse, any Error>, proceed: Latch) {
+        let frame = try await stack.ready()
+        let (entered, proceed) = (Latch(), Latch())
+        stack.desk.change {
+            $0.onSleep = {
+                entered.open()
+                await proceed.wait()
+            }
+        }
+        let held = Task { try await stack.call("keyboard", Wire.press("a", holdMs: 2000, frame: frame, "op-1")) }
+        try #require(try await bounded { await entered.wait() })
+        return (held, proceed)
+    }
+
+    /// The press of ``holdKey(on:)`` aborted with `secure_input` after its key-down, and its key let up.
+    static func expectAbortedBySecureInput(_ held: Task<WireResponse, any Error>, on stack: DeskhandStack)
+        async throws
+    {
+        let answer = try #require(try await bounded { try await held.value })
+        ContractShape.expectToolError(answer, "secure_input")
+        #expect(answer.operation == ["status": "aborted", "events_posted": 1])
+        #expect(stack.desk.posted.count == 1)
+        #expect(stack.desk.released == [HeldInput.key(try #require(stack.desk.code(for: .a)))])
+    }
+
+    @Test("a blocking state that begins and ends before the watchdog looks still aborts the executing effect")
+    func blipAbortsTheEffect() async throws {
+        try await DeskhandStack.with { stack in
+            let (held, proceed) = try await Self.holdKey(on: stack)
+            // Two reductions back to back, as two of the watchdog's reads make them, before its
+            // executor loop looks at the snapshot: by then it shows `ok` and nothing to stop.
+            stack.platform.report([.secureInput], conditions: [])
+            await stack.stateOwner.reduceNow(allowanceChanged: false)
+            stack.platform.report([], conditions: [])
+            await stack.stateOwner.reduceNow(allowanceChanged: false)
+            #expect(stack.owner.snapshot().state == .ok)
+            proceed.open()
+
+            try await Self.expectAbortedBySecureInput(held, on: stack)
+        }
+    }
+
+    @Test("a blip that the state owner and then the watchdog both pass to the executor stops the effect once")
+    func blipDeliveredTwice() async throws {
+        try await DeskhandStack.with { stack in
+            let (held, proceed) = try await Self.holdKey(on: stack)
+            // A signal change: the owner passes the reduction's interruption, then the watchdog's
+            // evaluation passes the same one again from the snapshot.
+            await stack.hold([.secureInput])
+            await stack.hold([])
+            proceed.open()
+
+            try await Self.expectAbortedBySecureInput(held, on: stack)
+            #expect(await stack.entries.map(\.kind) == [.intent, .outcome])
+        }
+    }
 }

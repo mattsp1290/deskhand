@@ -139,9 +139,11 @@ public actor Watchdog {
 
     /// The signals changed: a reduction, a `lease` call or a read of the allowance. Evaluates at
     /// once, so the executor and the cleanup retry see the change now (contract 11.2), and moves
-    /// both loops' wakeups. An owner may call it from inside its reduction: it starts no other.
+    /// both loops' wakeups. An owner may call it from inside its reduction: while a reduction runs
+    /// it only wakes both loops, so it starts no other reduction, and the reduction never waits
+    /// for the executor through it. The executor's loop then evaluates.
     public func refreshState() async {
-        _ = await evaluate()
+        if !reducing { _ = await evaluate() }
         ring(.owner)
         ring(.executor)
     }

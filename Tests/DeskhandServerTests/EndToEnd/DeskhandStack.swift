@@ -209,9 +209,10 @@ extension DeskhandStack {
 }
 
 /// The state owner the app runs (deskhand-qbi7's role): it reads the platform's signals, reduces
-/// them through the ``DeskOwner``, and posts the releases the result allows, then lets the
-/// watchdog re-evaluate. It forwards no interruption: the watchdog reads them from the new
-/// snapshot and passes them to the executor itself, so there is one path.
+/// them through the ``DeskOwner``, and passes each reduction's interruptions to the executor at
+/// once, so a state that ends again before the watchdog looks still aborts the effect (contract
+/// 10.3). It waits for nothing else of the executor: the watchdog's executor loop posts the
+/// releases a reduction allows.
 final class StackStateOwner: WatchdogStateOwner {
     let owner: DeskOwner
     let executor: InputExecutor
@@ -230,17 +231,17 @@ final class StackStateOwner: WatchdogStateOwner {
     func snapshot() -> DeskSnapshot { owner.snapshot() }
 
     func reduceNow(allowanceChanged: Bool) async {
-        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
+        await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
     }
 
     /// A signal changed, or a person used the menu bar.
     func change(command: ArmingCommand?) async {
-        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
+        await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
         await watchdog.withLock { $0 }?.refreshState()
     }
 
-    private func carryOut(_ reduction: DeskOwner.Reduction) async {
-        if reduction.releasesHeldInput { _ = await executor.retryCleanup(now: reduction.reading) }
+    private func deliver(_ reduction: DeskOwner.Reduction) async {
+        for interruption in reduction.interruptions { await executor.interrupt(interruption) }
     }
 }
 
