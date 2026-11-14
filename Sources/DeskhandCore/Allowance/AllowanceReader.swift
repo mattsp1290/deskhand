@@ -115,7 +115,7 @@ public struct AllowanceReader: Sendable {
 /// A value type with one owner, the state's actor, which serializes every call.
 public struct AllowanceCache: Sendable {
     /// `ALLOWANCE_CACHE_MAX_MS`.
-    public static let maxAge: Duration = .milliseconds(1000)
+    public static let maxAge: Duration = .milliseconds(ContractConstants.allowanceCacheMaxMs)
 
     public let reader: AllowanceReader
     private var copy: (snapshot: AllowanceSnapshot, readAt: ContinuousClock.Instant)?

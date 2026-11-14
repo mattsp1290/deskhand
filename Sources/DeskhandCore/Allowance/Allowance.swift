@@ -23,7 +23,8 @@ public struct Allowance: Hashable, Sendable {
             throw .malformedJSON
         }
         guard let members = json.objectValue else { throw .notAnObject }
-        if let unknown = members.keys.filter({ !Self.members.contains($0) }).min() { throw .unknownMember(unknown) }
+        let unknownNames = members.keys.filter { key in !Self.members.contains { $0.hasSameScalars(as: key) } }
+        if let unknown = unknownNames.min() { throw .unknownMember(unknown) }
         if let missing = Self.members.subtracting(members.keys).min() { throw .missingMember(missing) }
 
         guard members["version"] == JSONValue(Self.formatVersion) else { throw .unsupportedVersion }
