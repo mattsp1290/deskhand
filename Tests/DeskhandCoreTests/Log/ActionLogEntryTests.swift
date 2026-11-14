@@ -17,11 +17,15 @@ import Testing
     }
 
     /// Contract 12.10: an outcome also names the apps of the result's `measured`, never its title.
+    /// It repeats the intent's frame and action (re-review A, finding 4), so a line read alone still
+    /// says what was done.
     @Test func outcomeRepeatsTheIntentsCallerAndHandles() async throws {
         let intent = try LogSamples.intent(keyboard: LogSamples.typing("abc"))
         let line = try await LogSamples.outcomeLine(.aborted(.userActive, eventsPosted: 3), intent: intent)
         let expected =
-            #"{"frontmost_app":{"bundle_id":"com.apple.TextEdit","name":"TextEdit","team_id":null},"#
+            #"{"action":{"text_length":3,"type":"type"},"frame_id":"frm_AAAAAAAAAAAAAAAAAAAAAA","#
+            + #""frame_sha256":"5d2fe555eea829ac791af899610755bc8c5dc4f350bee9abbac1d2144d005fc8","#
+            + #""frontmost_app":{"bundle_id":"com.apple.TextEdit","name":"TextEdit","team_id":null},"#
             + #""holder_id":"crew-1","intent_time":"2026-11-14T12:00:00.250Z","kind":"outcome","#
             + #""node_address":"10.0.0.21","operation_id":"op-1","#
             + #""outcome":{"code":"user_active","events_posted":3,"status":"aborted"},"#
