@@ -16,16 +16,39 @@ import Testing
         #expect(LogSamples.text(ActionLogLine(.intent(intent))) == expected)
     }
 
+    /// Contract 12.10: an outcome also names the apps of the result's `measured`, never its title.
     @Test func outcomeRepeatsTheIntentsCallerAndHandles() async throws {
         let intent = try LogSamples.intent(keyboard: LogSamples.typing("abc"))
         let line = try await LogSamples.outcomeLine(.aborted(.userActive, eventsPosted: 3), intent: intent)
         let expected =
-            #"{"holder_id":"crew-1","intent_time":"2026-11-14T12:00:00.250Z","kind":"outcome","#
+            #"{"frontmost_app":{"bundle_id":"com.apple.TextEdit","name":"TextEdit","team_id":null},"#
+            + #""holder_id":"crew-1","intent_time":"2026-11-14T12:00:00.250Z","kind":"outcome","#
             + #""node_address":"10.0.0.21","operation_id":"op-1","#
             + #""outcome":{"code":"user_active","events_posted":3,"status":"aborted"},"#
-            + #""principal":"CN=crew-executor,O=birb","schema_version":1,"time":"2026-11-14T12:00:01.750Z","#
-            + #""tool":"keyboard"}"# + "\n"
+            + #""principal":"CN=crew-executor,O=birb","schema_version":1,"#
+            + #""target_app":{"bundle_id":"com.apple.Preview","name":"Preview","team_id":null},"#
+            + #""time":"2026-11-14T12:00:01.750Z","tool":"keyboard"}"# + "\n"
         #expect(LogSamples.text(line) == expected)
+        #expect(!LogSamples.text(line).contains("secret title"))
+    }
+
+    @Test func outcomeWithNothingMeasuredHasNullApps() async throws {
+        let intent = try LogSamples.intent(keyboard: LogSamples.typing("abc"))
+        let line = try await LogSamples.outcomeLine(.failedBeforeExecution, intent: intent, measured: nil)
+        #expect(try ActionLogLine(verifying: line.bytes) == line)
+        #expect(line.entry.jsonValue["frontmost_app"] == .null && line.entry.jsonValue["target_app"] == .null)
+        let noTarget = Measured(
+            frontmostApp: LogSamples.textEdit, targetApp: nil, windowTitle: nil, globalPoint: nil,
+            measuredAt: LogSamples.time)
+        let partial = try await LogSamples.outcomeLine(.failed(eventsPosted: 0), intent: intent, measured: noTarget)
+        #expect(try ActionLogLine(verifying: partial.bytes) == partial)
+        #expect(partial.entry.jsonValue["target_app"] == .null)
+
+        let orphanTarget = LogSamples.text(line).replacingFirst(
+            #""target_app":null"#, with: #""target_app":{"bundle_id":"a.b","name":"B","team_id":null}"#)
+        #expect(throws: ActionLogLineError.self) { try ActionLogLine(verifying: Array(orphanTarget.utf8)) }
+        let missing = LogSamples.text(line).replacingFirst(#""target_app":null,"#, with: "")
+        #expect(throws: ActionLogLineError.self) { try ActionLogLine(verifying: Array(missing.utf8)) }
     }
 
     static let pointerActions: [JSONValue] = [

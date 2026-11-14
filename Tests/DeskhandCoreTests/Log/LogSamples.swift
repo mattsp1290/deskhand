@@ -43,11 +43,20 @@ enum LogSamples {
 
     static func typing(_ text: String) -> JSONValue { ["type": "type", "text": .string(text)] }
 
+    static let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
+
+    /// A last look with TextEdit in front and Preview as the target. The title must never be logged.
+    static let measured = Measured(
+        frontmostApp: textEdit, targetApp: preview, windowTitle: "secret title", globalPoint: nil,
+        measuredAt: time.adding(milliseconds: 20))
+
     /// An outcome line can only come from a committed intent, so this commits one first.
-    static func outcomeLine(_ outcome: ActionOutcome, intent: ActionLogIntent) async throws -> ActionLogLine {
+    static func outcomeLine(
+        _ outcome: ActionOutcome, intent: ActionLogIntent, measured: Measured? = measured
+    ) async throws -> ActionLogLine {
         let log = InMemoryActionLog()
         let receipt = try await log.commitIntent(intent)
-        try await log.commitOutcome(receipt, outcome, now: time.adding(milliseconds: 1500))
+        try await log.commitOutcome(receipt, outcome, measured: measured, now: time.adding(milliseconds: 1500))
         return try #require(await log.lines.last)
     }
 

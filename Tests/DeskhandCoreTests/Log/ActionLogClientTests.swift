@@ -12,7 +12,9 @@ import Testing
         let intent = try intent()
         let receipt = try await log.commitIntent(intent)
         #expect(receipt.intent == intent)
-        try await log.commitOutcome(receipt, .completed(eventsPosted: 6), now: LogSamples.time.adding(milliseconds: 9))
+        try await log.commitOutcome(
+            receipt, .completed(eventsPosted: 6), measured: LogSamples.measured,
+            now: LogSamples.time.adding(milliseconds: 9))
         let entries = await log.entries
         #expect(entries.map(\.kind) == [.intent, .outcome])
         #expect(entries.first == .intent(intent))
@@ -26,6 +28,7 @@ import Testing
         #expect(outcome.nodeAddress == intent.nodeAddress)
         #expect(outcome.intentTime == intent.time)
         #expect(outcome.time == LogSamples.time.adding(milliseconds: 9))
+        #expect(outcome.frontmostApp == LogSamples.textEdit && outcome.targetApp == LogSamples.preview)
     }
 
     @Test(arguments: [ActionLogFailure.connectionRefused, .connectionLost, .notCommitted])
@@ -60,13 +63,13 @@ import Testing
         await log.failEvery(.outcome, with: .reject(.connectionLost))
         for _ in 0..<2 {
             await #expect(throws: ActionLogFailure.connectionLost) {
-                try await log.commitOutcome(receipt, .completed(eventsPosted: 1), now: LogSamples.time)
+                try await log.commitOutcome(receipt, .completed(eventsPosted: 1), measured: nil, now: LogSamples.time)
             }
         }
         #expect(await base.entries.map(\.kind) == [.intent])
 
         await log.failEvery(.outcome, with: nil)
-        try await log.commitOutcome(receipt, .completed(eventsPosted: 1), now: LogSamples.time)
+        try await log.commitOutcome(receipt, .completed(eventsPosted: 1), measured: nil, now: LogSamples.time)
         #expect(await base.entries.map(\.kind) == [.intent, .outcome])
     }
 
@@ -82,7 +85,7 @@ import Testing
         let log = InMemoryActionLog()
         let receipt = try await log.commitIntent(try intent())
         await #expect(throws: ActionLogFailure.notCommitted) {
-            try await log.commitOutcome(receipt, .completed(eventsPosted: -1), now: LogSamples.time)
+            try await log.commitOutcome(receipt, .completed(eventsPosted: -1), measured: nil, now: LogSamples.time)
         }
         #expect(await log.entries.count == 1)
     }

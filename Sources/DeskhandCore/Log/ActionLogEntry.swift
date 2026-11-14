@@ -52,7 +52,7 @@ public struct ActionLogIntent: Hashable, Sendable {
     }
 }
 
-/// The outcome entry, written after the final record is durable (contract 12.3, step 7). It repeats
+/// The outcome entry, written after the final record is durable (contract 12.3, step 8). It repeats
 /// the intent's caller and handles and its time, so each outcome joins exactly one intent. It is
 /// built only from an ``IntentReceipt``: an outcome without a committed intent cannot be written.
 public struct ActionLogOutcome: Hashable, Sendable {
@@ -63,18 +63,26 @@ public struct ActionLogOutcome: Hashable, Sendable {
     public let holderID: HolderID
     public let operationID: OperationID
     public let tool: ToolName
+    /// The frontmost app of the result's `measured` (contract 12.10). `nil` when the operation
+    /// ended with nothing measured for it, as a clean stop can.
+    public let frontmostApp: AppRef?
+    /// The target app of the result's `measured`: the owner of the window under the first target
+    /// for `pointer`, of keyboard focus for `keyboard`, and on `denied_app` the app that caused the
+    /// abort. `nil` when it was not measured.
+    public let targetApp: AppRef?
     public let outcome: ActionOutcome
 
-    init(receipt: IntentReceipt, outcome: ActionOutcome, time: Timestamp) {
+    init(receipt: IntentReceipt, outcome: ActionOutcome, measured: Measured?, time: Timestamp) {
         let intent = receipt.intent
         self.init(
             time: time, intentTime: intent.time, nodeAddress: intent.nodeAddress, principal: intent.principal,
-            holderID: intent.holderID, operationID: intent.operationID, tool: intent.tool, outcome: outcome)
+            holderID: intent.holderID, operationID: intent.operationID, tool: intent.tool,
+            frontmostApp: measured?.frontmostApp, targetApp: measured?.targetApp, outcome: outcome)
     }
 
     private init(
         time: Timestamp, intentTime: Timestamp, nodeAddress: NodeAddress, principal: Principal, holderID: HolderID,
-        operationID: OperationID, tool: ToolName, outcome: ActionOutcome
+        operationID: OperationID, tool: ToolName, frontmostApp: AppRef?, targetApp: AppRef?, outcome: ActionOutcome
     ) {
         self.time = time
         self.intentTime = intentTime
@@ -83,11 +91,18 @@ public struct ActionLogOutcome: Hashable, Sendable {
         self.holderID = holderID
         self.operationID = operationID
         self.tool = tool
+        self.frontmostApp = frontmostApp
+        self.targetApp = targetApp
         self.outcome = outcome
     }
 
     fileprivate static func decode(_ reader: ObjectReader) throws(ArgumentError) -> ActionLogOutcome {
         let tool = try reader.required("tool", Decode.effectTool)
+        let frontmostApp = try reader.required("frontmost_app", Decode.nullable(Decode.appRef))
+        let targetApp = try reader.required("target_app", Decode.nullable(Decode.appRef))
+        guard frontmostApp != nil || targetApp == nil else {
+            throw ArgumentError(at: JSONPointer.root.appending("target_app"), "is measured only with frontmost_app")
+        }
         return ActionLogOutcome(
             time: try reader.required("time", Decode.timestamp),
             intentTime: try reader.required("intent_time", Decode.timestamp),
@@ -95,6 +110,7 @@ public struct ActionLogOutcome: Hashable, Sendable {
             principal: try reader.required("principal", Decode.principal),
             holderID: try reader.required("holder_id", Decode.identifier(HolderID.self)),
             operationID: try reader.required("operation_id", Decode.identifier(OperationID.self)), tool: tool,
+            frontmostApp: frontmostApp, targetApp: targetApp,
             outcome: try reader.required("outcome", ActionOutcome.decode))
     }
 }
@@ -164,7 +180,7 @@ public enum ActionOutcome: Hashable, Sendable, JSONRepresentable {
     fileprivate static func decode(_ value: JSONValue, _ path: JSONPointer) throws(ArgumentError) -> ActionOutcome {
         let reader = try ObjectReader(value, at: path, allowing: ["status", "events_posted", "code"])
         let status = try reader.required("status", Decode.oneOf(OperationStatus.self))
-        let count = try reader.required("events_posted", Decode.integer(0...Decode.maxExactInteger))
+        let count = try reader.required("events_posted", Decode.integer(0...JSONValue.maxExactInteger))
         let code = try reader.optional("code", Decode.oneOf(ToolErrorCode.self))
         let outcome: ActionOutcome? =
             switch (status, code) {
@@ -332,6 +348,8 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
             object["time"] = outcome.time.jsonValue
             object["intent_time"] = outcome.intentTime.jsonValue
             object["tool"] = .string(outcome.tool.rawValue)
+            object["frontmost_app"] = outcome.frontmostApp?.jsonValue ?? .null
+            object["target_app"] = outcome.targetApp?.jsonValue ?? .null
             object["outcome"] = outcome.outcome.jsonValue
         case .refusal(let refusal):
             object.merge(refusal.jsonMembers) { $1 }
@@ -358,7 +376,8 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
         let specific: Set<String> =
             switch kind {
             case .intent: ["holder_id", "operation_id", "tool", "frame_id", "frame_sha256", "frontmost_app", "action"]
-            case .outcome: ["holder_id", "operation_id", "intent_time", "tool", "outcome"]
+            case .outcome:
+                ["holder_id", "operation_id", "intent_time", "tool", "frontmost_app", "target_app", "outcome"]
             case .refusal: ActionLogRefusal.memberNames
             }
         let reader = try ObjectReader(value, at: .root, allowing: common.union(specific))
@@ -439,9 +458,6 @@ public enum ActionLogLineError: Error, Hashable, Sendable, CustomStringConvertib
 }
 
 extension Decode {
-    /// The largest integer a double holds exactly.
-    fileprivate static let maxExactInteger = 9_007_199_254_740_991
-
     fileprivate static func effectTool(_ value: JSONValue, _ path: JSONPointer) throws(ArgumentError) -> ToolName {
         let tool = try oneOf(ToolName.self)(value, path)
         guard tool.isEffect else { throw ArgumentError(at: path, "must be pointer or keyboard") }
