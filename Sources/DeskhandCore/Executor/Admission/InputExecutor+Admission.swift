@@ -201,18 +201,23 @@ extension InputExecutor {
             frameID: call.arguments.frameID, frameSHA256: live.frame.sha256, frontmostApp: measured.frontmostApp,
             action: call.arguments.loggedAction)
         let log = seams.log
-        let committed = await awaitBounded(within: waitLimit) { () async -> IntentReceipt? in
+        let pending = PendingIntent()
+        let committed = await logAppend { () async -> IntentReceipt? in
+            let receipt: IntentReceipt?
             do throws(ActionLogFailure) {
-                return try await log.commitIntent(intent)
+                receipt = try await log.commitIntent(intent)
             } catch {
-                return nil
+                receipt = nil
             }
+            if let refusal = pending.appendReturned() { await self.logRefusal(refusal) }
+            return receipt
         }
-        guard let receipt = committed ?? nil else {
-            seams.observer.actionLogDidAppend(succeeded: false)
-            return refused(.logUnavailable(measured: measured))
+        guard let receipt = committed else {
+            var refusal = Refusal(
+                .logUnavailable(measured: measured), frontmostApp: frontmost, frameSHA256: live.frame.sha256)
+            refusal.afterIntent = pending
+            return .refused(refusal)
         }
-        seams.observer.actionLogDidAppend(succeeded: true)
 
         guard call.connection.isOpen else {
             return .dropped(Refusal(.cancelled, frontmostApp: frontmost, frameSHA256: live.frame.sha256))
@@ -253,7 +258,7 @@ extension InputExecutor {
         let error = ToolError(
             refusal.reason, message: refusal.message, state: refusal.reason.reportedState(otherwise: snapshot.state),
             operationID: call.arguments.operationID, operation: refusal.operation.map { .existing($0) })
-        await logRefusal(refusalEntry(call, refusal, at: snapshot))
+        await logRefusal(refusalEntry(call, refusal, at: snapshot), after: refusal.afterIntent)
         return .error(error)
     }
 

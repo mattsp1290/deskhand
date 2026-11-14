@@ -82,6 +82,7 @@ public actor InputExecutor {
     var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
+    var logAttempts = ActionLogAttempts()
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release.
@@ -172,27 +173,41 @@ public actor InputExecutor {
         seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
     }
 
-    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``.
-    func logRefusal(_ entry: ActionLogRefusal?) async {
+    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``. The
+    /// entry of a call whose intent append has not returned waits for that append instead.
+    func logRefusal(_ entry: ActionLogRefusal?, after intent: PendingIntent? = nil) async {
         guard let entry else { return }
+        if let intent, intent.holdRefusal(entry) { return }
         let log = seams.log
-        await logAppend {
+        await logAppend { () async -> Void? in
             do throws(ActionLogFailure) {
-                try await log.commitRefusal(entry)
-                return true
+                return try await log.commitRefusal(entry)
             } catch {
-                return false
+                return nil
             }
         }
     }
 
     /// Runs one append to the action log within ``waitLimit`` and reports how it went, for the
-    /// `log_unavailable` condition (contract 11.3). `false` when it failed or did not answer in time.
+    /// `log_unavailable` condition (contract 11.3). `nil` when it failed or did not answer in time.
+    /// An append that answers late reports then, unless a newer one already did.
     @discardableResult
-    func logAppend(_ append: @escaping @Sendable () async -> Bool) async -> Bool {
-        let succeeded = await awaitBounded(within: waitLimit, append) ?? false
+    func logAppend<T: Sendable>(_ append: @escaping @Sendable () async -> T?) async -> T? {
+        let attempt = logAttempts.start()
+        let answer = await awaitBounded(within: waitLimit, append) { late in
+            await self.reportLogAppend(attempt, succeeded: late != nil, answered: true)
+        }
+        guard let answer else {
+            reportLogAppend(attempt, succeeded: false, answered: false)
+            return nil
+        }
+        reportLogAppend(attempt, succeeded: answer != nil, answered: true)
+        return answer
+    }
+
+    private func reportLogAppend(_ attempt: Int, succeeded: Bool, answered: Bool) {
+        guard logAttempts.decides(attempt, answered: answered) else { return }
         seams.observer.actionLogDidAppend(succeeded: succeeded)
-        return succeeded
     }
 
     /// `user_active` before admission, at the last look, before every event and at every poll

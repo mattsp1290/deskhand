@@ -12,6 +12,10 @@ extension ActionLogClient {
     /// Commits the intent entry (contract 12.3, step 2). The receipt is the only way to obtain an
     /// ``IntentReceipt``, so an effect whose intent was not committed has nothing to post with. On a
     /// throw the call is refused with ``ActionLogFailure/toolError(measured:state:operationID:)``.
+    ///
+    /// The executor waits for it only so long, and a line it stopped waiting for may still be
+    /// committed afterwards. The call's `log_unavailable` refusal entry is therefore written only
+    /// once this returns, so it follows such an intent in the log instead of preceding it.
     public func commitIntent(_ intent: ActionLogIntent) async throws(ActionLogFailure) -> IntentReceipt {
         try await append(ActionLogLine(.intent(intent)))
         return IntentReceipt(intent: intent)
