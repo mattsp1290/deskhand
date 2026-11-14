@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deskhand.invalid/schemas/tools/keyboard.output.json",
+  "title": "keyboard structuredContent",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "../defs.json#/$defs/effect_result" },
+    { "$ref": "../defs.json#/$defs/tool_error" }
+  ]
+}

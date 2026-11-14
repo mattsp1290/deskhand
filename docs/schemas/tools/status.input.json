@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deskhand.invalid/schemas/tools/status.input.json",
+  "title": "status arguments",
+  "description": "Report deskhand's state. Optionally acquire, renew or release the lease in the same call.",
+  "type": "object",
+  "properties": {
+    "lease": {
+      "description": "A lease operation to perform before the status snapshot is taken. Its outcome is reported in lease_result and never turns the call into an error.",
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": ["acquire", "renew", "release"]
+        },
+        "holder_id": { "$ref": "../defs.json#/$defs/holder_id" },
+        "ttl_ms": {
+          "description": "Requested lease lifetime from now, for acquire and renew. Ignored for release.",
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 120000,
+          "default": 30000
+        }
+      },
+      "required": ["op", "holder_id"],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

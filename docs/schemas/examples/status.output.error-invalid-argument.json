@@ -1,0 +1,8 @@
+{
+  "code": "invalid_argument",
+  "message": "lease.ttl_ms must be between 5000 and 120000.",
+  "state": "ok",
+  "details": {
+    "argument": "/lease/ttl_ms"
+  }
+}
