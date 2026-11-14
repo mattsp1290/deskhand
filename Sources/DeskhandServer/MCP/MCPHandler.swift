@@ -34,15 +34,16 @@ public struct MCPHandler: RequestHandler {
             case .failure(let error): return internalError(error.description, id: id)
             }
         case .callTool(let tool, let arguments):
-            return await callTool(tool, arguments, principal: request.principal, id: id)
+            let caller = ToolCaller(principal: request.principal, nodeAddress: request.nodeAddress)
+            return await callTool(tool, arguments, caller: caller, id: id)
         }
     }
 
     /// From here on the status is `200` and a refusal is an `isError` result (contract 2.4).
-    private func callTool(_ tool: ToolName, _ arguments: ToolArguments, principal: Principal, id: JSONRPCID) async
+    private func callTool(_ tool: ToolName, _ arguments: ToolArguments, caller: ToolCaller, id: JSONRPCID) async
         -> HandlerResponse
     {
-        let runner = ToolRunner(dispatcher: dispatcher, principal: principal)
+        let runner = ToolRunner(dispatcher: dispatcher, caller: caller)
         let outcome = await runner.run(tool, arguments)
         if let body = try? JSONRPCEnvelope.result(outcome.result(), id: id) { return .json(body) }
         let fallback = ToolOutcome.failure(await runner.refusal(.unencodableResult, tool, arguments))

@@ -29,11 +29,15 @@ public struct MCPRequestHeaders: Hashable, Sendable {
 /// and `Accept`. Nothing in the body has been looked at.
 public struct AuthenticatedRequest: Sendable {
     public let principal: Principal
+    /// The connection's source address, which the action log records (contract 12.10). `nil` when
+    /// the socket did not report an IP address.
+    public let nodeAddress: NodeAddress?
     public let headers: MCPRequestHeaders
     public let body: [UInt8]
 
-    public init(principal: Principal, headers: MCPRequestHeaders, body: [UInt8]) {
+    public init(principal: Principal, nodeAddress: NodeAddress? = nil, headers: MCPRequestHeaders, body: [UInt8]) {
         self.principal = principal
+        self.nodeAddress = nodeAddress
         self.headers = headers
         self.body = body
     }

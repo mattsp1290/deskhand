@@ -83,56 +83,59 @@ final class FakeDispatcher: ToolDispatcher {
         }
     }
 
-    func status(_ arguments: StatusArguments, principal: Principal) async throws(ToolError) -> StatusResult {
-        try await answer(.status(arguments), principal) {
+    func status(_ arguments: StatusArguments, caller: ToolCaller) async throws(ToolError) -> StatusResult {
+        try await answer(.status(arguments), caller.principal) {
             if case .status(let result) = $0 { return result }
             return nil
         }
     }
 
-    func displays(principal: Principal) async throws(ToolError) -> DisplaysResult {
-        try await answer(.displays, principal) {
+    func displays(caller: ToolCaller) async throws(ToolError) -> DisplaysResult {
+        try await answer(.displays, caller.principal) {
             if case .displays(let result) = $0 { return result }
             return nil
         }
     }
 
-    func screenshot(_ arguments: ScreenshotArguments, principal: Principal) async throws(ToolError)
+    func screenshot(_ arguments: ScreenshotArguments, caller: ToolCaller) async throws(ToolError)
         -> CapturedScreenshot
     {
-        try await answer(.screenshot(arguments), principal) {
+        try await answer(.screenshot(arguments), caller.principal) {
             if case .screenshot(let result) = $0 { return result }
             return nil
         }
     }
 
-    func pointer(_ arguments: PointerArguments, principal: Principal) async throws(ToolError) -> EffectResult {
-        try await answer(.pointer(arguments), principal) {
-            if case .effect(let result) = $0 { return result }
-            return nil
+    func effect(_ arguments: EffectCallArguments, received: JSONObject, caller: ToolCaller) async -> EffectAnswer {
+        let call: DispatchedCall =
+            switch arguments {
+            case .pointer(let pointer): .pointer(pointer)
+            case .keyboard(let keyboard): .keyboard(keyboard)
+            }
+        do throws(ToolError) {
+            return .completed(
+                try await answer(call, caller.principal) {
+                    if case .effect(let result) = $0 { return result }
+                    return nil
+                })
+        } catch {
+            return .error(error)
         }
     }
 
-    func keyboard(_ arguments: KeyboardArguments, principal: Principal) async throws(ToolError) -> EffectResult {
-        try await answer(.keyboard(arguments), principal) {
-            if case .effect(let result) = $0 { return result }
-            return nil
-        }
-    }
-
-    func lease(_ arguments: LeaseArguments, principal: Principal) async throws(ToolError) -> LeaseToolResult {
-        try await answer(.lease(arguments), principal) {
+    func lease(_ arguments: LeaseArguments, caller: ToolCaller) async throws(ToolError) -> LeaseToolResult {
+        try await answer(.lease(arguments), caller.principal) {
             if case .lease(let result) = $0 { return result }
             return nil
         }
     }
 
-    func refusal(_ refusal: ToolRefusal, tool: ToolName, handles: EffectHandles, principal: Principal) async
+    func refusal(_ refusal: ToolRefusal, tool: ToolName, handles: EffectHandles, caller: ToolCaller) async
         -> ToolError
     {
         record.withLock {
             $0.calls.append(.refusal(refusal, tool, handles))
-            $0.principals.append(principal)
+            $0.principals.append(caller.principal)
         }
         switch refusal {
         case .invalidArguments(let error):
