@@ -16,6 +16,9 @@ struct TestPKI: Sendable {
         case noExtendedKeyUsage
         /// EKU clientAuth but another subject.
         case wrongSubject
+        /// `valid` re-issued: the same subject and EKU with a new key and serial, so the same
+        /// principal after the caller's certificate is rotated.
+        case reissued
     }
 
     struct Identity: Sendable {
@@ -73,6 +76,7 @@ struct TestPKI: Sendable {
             (.serverAuthOnly, "client-server-eku", "/O=forge/CN=crew-executor", "server_eku_only", 5),
             (.noExtendedKeyUsage, "client-no-eku", "/O=forge/CN=crew-executor", "no_eku", 6),
             (.wrongSubject, "client-wrong-subject", "/O=forge/CN=someone-else", "client", 7),
+            (.reissued, "client-reissued", "/O=forge/CN=crew-executor", "client", 8),
         ]
         var clients: [Client: Identity] = [:]
         for (client, name, subject, section, serial) in leaves {
