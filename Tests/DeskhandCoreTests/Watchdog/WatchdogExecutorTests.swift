@@ -57,7 +57,7 @@ struct WatchdogExecutorTests {
     func interventionDuringTyping() async throws {
         let mac = FakeMac()
         let watch = try ExecutorWatch(.personOnly, mac: mac)
-        let touched = Touch()
+        let touched = WatchdogTouch()
         let hid = watch.hid
         mac.change {
             $0.afterPost[3] = { world, now in
@@ -123,11 +123,39 @@ struct WatchdogExecutorTests {
         #expect(await watch.watchdog.evaluate() == ExecutorFixture.t0.instant(afterMilliseconds: 30_000))
     }
 
+    @Test("the end of an earlier lease, forwarded first, does not hide the person from a call under a later one")
+    func staleLeaseEndHidesNothing() async throws {
+        var current = ExecutorFixture.acquired()
+        let release = LeaseArguments(holderID: ExecutorFixture.holder, command: .release)
+        let acquire = LeaseArguments(holderID: ExecutorFixture.holder, command: .acquire(ttlMs: 30_000))
+        _ = current.apply(release, principal: ExecutorFixture.principal, state: .ok, now: ExecutorFixture.t0)
+        _ = current.apply(acquire, principal: ExecutorFixture.principal, state: .ok, now: ExecutorFixture.t0)
+        guard case .held(let held) = current.lease else { throw WatchdogFakeFault() }
+        let stale = ExecutorFixture.acquired(ttlMs: 1000, at: ExecutorFixture.t0.advanced(byMilliseconds: -5000))
+        guard case .expired(let ended) = stale.state(at: ExecutorFixture.t0) else { throw WatchdogFakeFault() }
+        #expect(ended.serial != held.serial)
+
+        // The executor's own checks see nobody; only the watchdog's poll sees the person, after it
+        // has forwarded the end of the lease its stale snapshot still shows.
+        let mac = FakeMac()
+        mac.change { $0.lease = current }
+        let harness = try Harness(mac: mac)
+        let watchdog = Watchdog(
+            owner: StaleLeaseOwner(mac: mac, lease: stale), executor: harness.executor,
+            activity: StaticActivity(idleMs: 7), scheduler: ManualScheduler())
+        mac.change { $0.onSleep = { await watchdog.executionDidChange(executing: true) } }
+        let answer = await harness.executor.perform(
+            try harness.keyboard(["type": "press", "key": "k", "hold_ms": 500]))
+        #expect(answer.code == .userActive)
+        #expect(answer.details == ["idle_ms": 7])
+        #expect(mac.read(\.sleeps).count == 1)
+    }
+
     /// The person touches the Mac 40 ms before the executor's `sleep`-th wait ends, so the check after
     /// that wait is the first to see it.
-    static func touchDuringSleep(_ sleep: Int, _ watch: ExecutorWatch) -> Touch {
-        let touched = Touch()
-        let sleeps = Touch()
+    static func touchDuringSleep(_ sleep: Int, _ watch: ExecutorWatch) -> WatchdogTouch {
+        let touched = WatchdogTouch()
+        let sleeps = WatchdogTouch()
         let hid = watch.hid
         let mac = watch.mac
         mac.change {
@@ -142,7 +170,7 @@ struct WatchdogExecutorTests {
     }
 
     static func expectWithinAbortBound(
-        since touched: Touch, mac: FakeMac, sourceLocation: SourceLocation = #_sourceLocation
+        since touched: WatchdogTouch, mac: FakeMac, sourceLocation: SourceLocation = #_sourceLocation
     ) throws {
         let input = try #require(touched.instant, "the person never touched the Mac", sourceLocation: sourceLocation)
         let stoppedAfter = input.duration(to: mac.reading.monotonic)
@@ -152,7 +180,7 @@ struct WatchdogExecutorTests {
 }
 
 /// When the person touched the Mac, and a counter for the hooks that decide when.
-final class Touch: Sendable {
+final class WatchdogTouch: Sendable {
     private let state = Mutex<(instant: ContinuousClock.Instant?, count: Int)>((nil, 0))
 
     var instant: ContinuousClock.Instant? { state.withLock(\.instant) }
@@ -167,6 +195,28 @@ final class Touch: Sendable {
         }
     }
 }
+
+/// The fake Mac as an owner whose snapshot still shows `lease`, as a snapshot read before a newer
+/// lease was acquired would.
+final class StaleLeaseOwner: WatchdogStateOwner {
+    let mac: FakeMac
+    let lease: LeaseManager
+
+    init(mac: FakeMac, lease: LeaseManager) {
+        self.mac = mac
+        self.lease = lease
+    }
+
+    func snapshot() -> DeskSnapshot {
+        var snapshot = mac.snapshot()
+        snapshot.lease = lease
+        return snapshot
+    }
+
+    func reduceNow(allowanceChanged: Bool) async {}
+}
+
+struct WatchdogFakeFault: Error {}
 
 @Suite("Watchdog: polling the allowance file")
 struct PollingFileChangeSourceTests {

@@ -30,6 +30,12 @@ struct PersonActivityTests {
             name: "any origin, inside the echo tolerance", signal: .anyOrigin(.milliseconds(460)), ownPostMsAgo: 500,
             idleMs: nil),
         Reading(
+            name: "any origin, at the end of the echo tolerance", signal: .anyOrigin(.milliseconds(450)),
+            ownPostMsAgo: 500, idleMs: nil),
+        Reading(
+            name: "any origin, just past the echo tolerance", signal: .anyOrigin(.milliseconds(449)),
+            ownPostMsAgo: 500, idleMs: 449),
+        Reading(
             name: "any origin, the signal has not caught up with deskhand's post",
             signal: .anyOrigin(.milliseconds(2000)), ownPostMsAgo: 1000, idleMs: nil),
         Reading(
@@ -44,6 +50,29 @@ struct PersonActivityTests {
             reading.signal, lastOwnPost: reading.ownPostMsAgo.map { now.advanced(by: .milliseconds(-$0)) }, now: now,
             echoTolerance: .milliseconds(50), lookback: .milliseconds(ContractConstants.userActivityLookbackMs))
         #expect(idle == reading.idleMs.map { .milliseconds($0) })
+    }
+
+    @Test(
+        "the echo tolerance changes what is reported, never whether it is activity",
+        arguments: [Int64(0), 50, 500, 5000])
+    func toleranceKeepsTheVerdict(toleranceMs: Int64) {
+        let now = WatchdogFixture.at(60_000).monotonic
+        let lookback = Duration.milliseconds(ContractConstants.userActivityLookbackMs)
+        func isActivity(_ idle: Duration?) -> Bool { idle.map { $0 < lookback } ?? true }
+        for idleMs in stride(from: Int64(0), through: 6000, by: 50) {
+            for ownPostMsAgo in [nil] + stride(from: Int64(0), through: 6000, by: 250).map(Optional.some) {
+                let reading = IdleSignal.anyOrigin(.milliseconds(idleMs))
+                let lastOwnPost = ownPostMsAgo.map { now.advanced(by: .milliseconds(-$0)) }
+                let strict = PersonIdleRule.personIdle(
+                    reading, lastOwnPost: lastOwnPost, now: now, echoTolerance: .zero, lookback: lookback)
+                let tolerant = PersonIdleRule.personIdle(
+                    reading, lastOwnPost: lastOwnPost, now: now, echoTolerance: .milliseconds(toleranceMs),
+                    lookback: lookback)
+                #expect(
+                    isActivity(strict) == isActivity(tolerant),
+                    "idle \(idleMs), post \(String(describing: ownPostMsAgo))")
+            }
+        }
     }
 
     @Test("an idle time just short of the lookback stays under it")

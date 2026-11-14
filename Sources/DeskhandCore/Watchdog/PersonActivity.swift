@@ -51,6 +51,11 @@ public enum PersonIdleRule {
     /// separated: inside `lookback` that is activity, and beyond it nobody produced any input at
     /// all. With such a signal an effect within `lookback` of deskhand's last post is therefore
     /// refused or aborted.
+    ///
+    /// `echoTolerance` therefore never decides whether there is activity, only what it reports:
+    /// inside `lookback` the answer is activity either way, as the measured idle time when the
+    /// input is the person's and as `nil` (`idle_ms` 0) when it cannot be told, and beyond
+    /// `lookback` it is the idle time either way.
     public static func personIdle(
         _ signal: IdleSignal, lastOwnPost: ContinuousClock.Instant?, now: ContinuousClock.Instant,
         echoTolerance: Duration, lookback: Duration
@@ -75,8 +80,10 @@ public enum PersonIdleRule {
 /// watchdog's poll.
 public struct PersonActivitySource: UserActivitySource {
     /// How long after deskhand reports a post the idle signal may still show that post as the
-    /// latest input. It must cover the time from the check before an event to its post, and the
-    /// platform's latency; the spike measures both.
+    /// latest input. The executor reports every event, releases included, with a reading taken
+    /// after the post returns, so an event never carries a later instant than its report, and this
+    /// covers only the platform's latency from the post returning to the signal counting the
+    /// event; the spike measures it.
     public static let defaultEchoTolerance: Duration = .milliseconds(50)
 
     private let signal: any IdleSignalSource
