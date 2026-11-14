@@ -211,12 +211,7 @@ extension InputExecutor {
     /// Contract 12.4 steps 2 to 5, or 12.3 steps 7 to 9 for a completed operation: releases, the
     /// final record, leaving the section, the outcome entry and the answer.
     private func end(_ execution: inout Execution, _ ending: Ending) async -> EffectAnswer {
-        if !execution.pressed.isEmpty {
-            let state = seams.state
-            _ = seams.releases.release(
-                execution.pressed, from: &ledger, poster: seams.poster,
-                authorization: { state.snapshot().cleanupAuthorization })
-        }
+        releaseOperationInput(execution.pressed)
         let snapshot = seams.state.snapshot()
         let measured = execution.lastLookMeasured ?? execution.admissionMeasured
         let outcome = self.outcome(of: ending, execution, measured: measured, state: snapshot.state)

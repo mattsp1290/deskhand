@@ -38,7 +38,7 @@ public actor InputExecutor {
             state: any StateSource, frames: any FrameSource, patches: any TargetPatchVerifier,
             identity: any IdentityMeasurer, activity: any UserActivitySource, poster: any EventPoster,
             keyCodes: any KeyCodeMapper, log: any ActionLogClient, timer: any ExecutionTimer = TaskSleepTimer(),
-            releases: any ReleaseHandler = LedgerReleaseHandler(), observer: any ExecutorObserver,
+            releases: any ReleaseHandler = HeldInputReleaser(), observer: any ExecutorObserver,
             operationStore: any OperationStoreLoader
         ) {
             self.state = state
@@ -61,6 +61,8 @@ public actor InputExecutor {
     /// `nil` when it could not be loaded; every effect is then `internal_error` (contract 12.3).
     var store: OperationStore?
     var ledger: HeldInputLedger
+    /// When to try the owed releases again, and which already went out (contract 11.2).
+    var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
     /// What the watchdog asked to stop the call in the section with, until that call leaves.
     var interruption: Interruption?
@@ -108,21 +110,6 @@ public actor InputExecutor {
             return .found(record.view)
         }
         return .notFound
-    }
-
-    /// Posts the releases the ledger still owes, if cleanup is authorized (contract 11.2, 12.8):
-    /// after an abort whose releases had to wait, a failed release, or a start with entries left.
-    /// Only while no call is in the admission section, so it never releases a running operation's
-    /// input.
-    public func releaseOwedInput() -> OwedRelease {
-        guard section.isIdle else { return .operationInSection }
-        let owed = ledger.pending()
-        guard !owed.isEmpty else { return .nothingOwed }
-        let state = seams.state
-        let outcome = seams.releases.release(
-            owed, from: &ledger, poster: seams.poster, authorization: { state.snapshot().cleanupAuthorization })
-        seams.observer.cleanupPendingDidChange(!ledger.pending().isEmpty)
-        return .attempted(outcome)
     }
 
     /// Loads the record file again after a failed write, and reads the ledger again, while no call
