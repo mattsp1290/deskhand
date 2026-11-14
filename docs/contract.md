@@ -2,8 +2,8 @@
 
 | Item | Value |
 | --- | --- |
-| Document version | `0.10-draft` |
-| `contract_version` reported by `status` | `0.10-draft` |
+| Document version | `0.11-draft` |
+| `contract_version` reported by `status` | `0.11-draft` |
 | MCP protocol revision | `2026-07-28` |
 | Schemas | `docs/schemas/` (JSON Schema Draft 2020-12) |
 | Source requests | deskhand-r-nkjj, crew-r-yqso, birbhomes-r-5elb, birbhomes-r-ttg5 |
@@ -91,8 +91,9 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   old, deskhand closes it after the response in flight has been sent. It never
   cuts a call short to enforce the cap. A caller MUST be ready to reconnect
   between requests.
-- Closing the connection before the response arrives cancels the call. For an
-  effect call this aborts the input sequence; see
+- Closing the connection before the response arrives cancels the call. An
+  effect call that is executing is aborted, and one that has not been
+  admitted yet is never admitted ([section 9.5](#95-order-of-refusals)). See
   [section 4.3](#43-operation_id).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
@@ -485,7 +486,7 @@ What a call with an `operation_id` that already has a record returns:
 | none yet: the first call is still being admitted | `operation_in_progress` | `operation_id_conflict` |
 | `accepted` or `executing` | `operation_in_progress` | `operation_id_conflict` |
 | `completed` | the stored success, with `replayed: true` | `operation_id_conflict` |
-| `aborted` or `failed` | the stored error, with `replayed: true` | `operation_id_conflict` |
+| `aborted` or `failed` | the stored error, with `replayed: true` and `current_state` | `operation_id_conflict` |
 | `aborted_by_restart` | `interrupted`, `operation.status` `aborted_by_restart` | `operation_id_conflict` |
 | `failed_before_execution` | `interrupted`, `operation.status` `failed_before_execution` | `operation_id_conflict` |
 
@@ -514,6 +515,8 @@ Results and input:
   same way.
 - When the caller closes the connection mid-call, the operation is aborted and
   recorded with code `cancelled`. Repeating the `operation_id` returns it.
+- A call whose connection closes before it is admitted is dropped. Nothing is
+  posted and no record is kept.
 
 Records are kept for a configured window and up to a configured number per
 principal. The defaults are 24 hours and 10,000, and `status.limits` reports
@@ -627,7 +630,9 @@ The `lease` member of a `lease` result has the same shape and is never
 
 - No result carries a `holder_id`. deskhand never tells one caller the label
   of another. Crew shares one principal, and the label is the only thing
-  that separates its internal callers.
+  that separates its internal callers. The schemas forbid a `holder_id`
+  member in the lease view, in the `status` result and in the `lease`
+  result.
 - `{held_by_caller: false}` does not say whether the lease is free. A holder
   finds that out by calling `lease` with `acquire`, which answers
   `lease_held_by_other` and `expires_in_ms` when it is not.
@@ -669,12 +674,17 @@ The lookup answers in every state, is never held up by an executing effect,
 does not need the lease and does not count toward the action ceiling. It
 returns the record's `status` and `events_posted`, not the stored result. A
 call with that key that is being admitted at that moment is reported as
-`accepted` with 0 events, so `null` always means that no such call is in
-progress.
+`accepted` with 0 events.
+
+`null` means "no record now": deskhand has no record for that key, and no
+call with that key is inside the admission section at this moment. It says
+nothing about a request that is still on its way to deskhand. A caller
+treats `null` as final only when it has no request for that `operation_id`
+still in transit ([section 12.5](#125-repeats-and-stored-results)).
 
 | Member | Meaning |
 | --- | --- |
-| `contract_version` | `0.10-draft` for this document. |
+| `contract_version` | `0.11-draft` for this document. |
 | `mcp_protocol_version` | `2026-07-28`. |
 | `server_version` | The deskhand build. |
 | `mac` | This Mac's configured name. |
@@ -685,7 +695,7 @@ progress.
 | `conditions` | Active conditions that are not states ([section 11](#11-conditions-that-are-not-states)). |
 | `armed_until` | When arming expires, or `null`. |
 | `lease` | [Section 5.4](#54-what-status-shows). `null` exactly when the call named no `holder_id`. |
-| `operation` | Present exactly when the call had an `operation` argument: `{status, events_posted}` of that record, or `null` when deskhand has no record for it. `null` means that no input was ever posted for that `operation_id`, or that its record has passed the retention window. |
+| `operation` | Present exactly when the call had an `operation` argument: `{status, events_posted}` of that record, or `null` when deskhand has no record for it now. No input has been posted for that `operation_id` so far, or its record has passed the retention window. When `null` is final is in [section 12.5](#125-repeats-and-stored-results). |
 | `display_config_generation` | The current display configuration generation. |
 | `limits` | The limits in force ([section 16](#16-constants)), including the configured ones. |
 
@@ -756,7 +766,7 @@ All coordinates are integers in the frame pixel space of `frame_id`
 | --- | --- | --- |
 | `move` | `x`, `y` | Moves the pointer. Nothing is pressed. |
 | `click` | `x`, `y`, `button` (`left`), `count` (1), `modifiers` (`[]`) | Moves, presses the modifiers, presses and releases `button` `count` times as one multi-click, releases the modifiers. `count` is 1, 2 or 3. |
-| `drag` | `path`, `button` (`left`), `modifiers` (`[]`), `duration_ms` (500) | Moves to `path[0]`, presses the modifiers, presses `button`, moves through every later point in order over `duration_ms`, releases `button` at the last point, releases the modifiers. `path` has 2 to 32 points. `duration_ms` is 50 to 5000. |
+| `drag` | `path`, `button` (`left`), `modifiers` (`[]`), `duration_ms` (500) | Moves to `path[0]`, presses the modifiers, presses `button`, moves through every later point in order, taking at least `duration_ms`, releases `button` at the last point, releases the modifiers. `path` has 2 to 32 points. `duration_ms` is 50 to 5000. |
 | `scroll` | `x`, `y`, `dx` (0), `dy` (0), `modifiers` (`[]`) | Moves, presses the modifiers, scrolls, releases the modifiers. At least one of `dx`, `dy` is non-zero. Each is -10,000 to 10,000. |
 
 Defaults are in parentheses. `button` is `left`, `right` or `middle`.
@@ -769,6 +779,12 @@ Defaults are in parentheses. `button` is `left`, `right` or `middle`.
   app actually scrolls is up to the app.
 - **Press and hold.** A `drag` whose two points are equal holds the button at
   that point for `duration_ms`.
+- **`duration_ms` is a minimum.** It is the least time from button down to
+  button up. deskhand moves the pointer at most 8 frame pixels per event and
+  checks the window under each point before it moves there
+  ([section 6.9](#69-app-policy)), so a long path takes as long as those
+  checks need. The bounds of [section 13](#13-timing-bounds) hold for the
+  whole drag, however long it takes.
 - **No input is held between calls.** There is no separate press or release
   action in v0. See [section 6.6](#66-held-input).
 
@@ -808,7 +824,7 @@ Inside one action, deskhand holds exactly this input:
 | --- | --- | --- |
 | `pointer` `move`; `keyboard` `type` | nothing beyond each event pair | |
 | `pointer` `click`, `scroll` | the modifiers | after the last click or scroll event |
-| `pointer` `drag` | the modifiers and the button, for `duration_ms` | at the last point |
+| `pointer` `drag` | the modifiers and the button, for at least `duration_ms` | at the last point |
 | `keyboard` `press` | the modifiers and the key, for `hold_ms` | after `hold_ms` |
 
 Modifiers are pressed in the order `control`, `option`, `shift`, `command` and
@@ -831,7 +847,7 @@ exception is a release that cannot be posted yet; deskhand then reports the
 | `status` | Always `completed`. |
 | `events_posted` | Number of input events posted. |
 | `replayed` | `true` when this is the stored result of an earlier call. |
-| `measured` | Facts deskhand measured at the app-policy check, immediately before the first event. |
+| `measured` | Facts deskhand measured at the last look, the app-policy check immediately before the first event ([section 12.3](#123-write-ordering)). |
 | `completed_at` | When the last event was posted. |
 
 `measured` holds `frontmost_app`, `target_app`, `window_title`, `global_point`
@@ -845,23 +861,31 @@ and `measured_at`, and `drag_end` for a `drag`.
 | `global_point` | Where the first target point mapped. | `null`. |
 | `drag_end` | `drag` only: `target_app`, `window_title` and `global_point` for the last point of `path`. | absent. |
 
-- On a success `frontmost_app` and `target_app` always carry a `bundle_id`,
-  and for `pointer` `global_point` is never `null`. The schemas enforce this.
-  A call for which deskhand could not measure them is refused
-  ([section 6.9](#69-app-policy)).
+- On a success `frontmost_app`, `target_app` and `drag_end.target_app`
+  always carry a `bundle_id`, and for `pointer` `global_point` is never
+  `null`. The schemas enforce this. A call for which deskhand could not
+  measure them is refused ([section 6.9](#69-app-policy)).
 - `window_title` is `null` when the window has no title, on every
   `denied_app`, and whenever the app is on the Mac's capture exclusion list.
-  A title that the frame hides is never sent on the wire.
+  A title that the frame hides is never sent on the wire. The same rules
+  cover `drag_end.window_title`.
+- `drag_end` is present whenever `measured` is present for a `drag`, with one
+  exception: a `denied_app` never has it, because `measured` then describes
+  only the check that failed. The schema enforces the exception.
 - Titles are cut to 512 Unicode scalar values. That is what the schema's
   `maxLength` counts; a cut by grapheme clusters could exceed it.
 
-deskhand takes `measured` at the app-policy check that precedes the first
-event (step 14 of [section 9.5](#95-order-of-refusals)). It runs that check
-again before every event, including the first
-([section 12.3](#123-write-ordering)). If a check fails after admission, the
-call is aborted with `denied_app`. `measured` is then what deskhand saw at
-the failing check: `target_app` is the app that caused the abort and
-`global_point` is the point that was being checked.
+deskhand runs the app-policy check three times or more: before admission
+(step 14 of [section 9.5](#95-order-of-refusals)), at the last look
+immediately before the first event, and before every later event
+([section 12.3](#123-write-ordering)). Which of them `measured` comes from
+depends on the result:
+
+| Result | `measured` is taken at |
+| --- | --- |
+| A success, and every error of an admitted call other than `denied_app` and `interrupted` | The last look. It shows what was true when the first event went out, or was about to. The last look takes these facts even when it fails for another cause. |
+| `log_unavailable` | Step 14. The call was refused before admission and never reached the last look. |
+| `denied_app`, before or after admission | The check that failed. `target_app` is the app that caused the refusal and `global_point` is the point that was being checked. |
 
 `measured` is therefore present on `denied_app`, on `log_unavailable`, and on
 the result of every admitted call, success or error, including a replay of
@@ -923,6 +947,17 @@ these is `denied_app` with `details.denied_by` `policy`:
 `measured` then reports what deskhand has. An app it could not determine is
 `{"bundle_id": null, "team_id": null, "name": ""}`.
 
+**The menu bar is a spike item.** An allowlist entry names a bundle
+identifier, so a process that has none can never be allowlisted. If the
+process that owns the menu bar window has none on the installed macOS, a
+click on an allowed app's own menu titles is always `denied_app`. That fails
+closed, so it is not a safety problem, but it would put menu titles out of
+reach of `pointer`. The spike (deskhand-r-waw0) records which process owns
+the menu bar, the Dock and the desktop, and whether each has a bundle
+identifier. If the menu bar's owner has none, v1.0 either says that menu
+titles are out of reach in v0 or defines the owner of a menu-bar point as
+the frontmost app. Until then the rule above stands.
+
 The other checks fail closed in the same way. A target patch that cannot be
 captured again is `stale_frame` with reason `pixels_changed`
 ([section 8.4](#84-target-patch-check)). An idle signal that cannot be read,
@@ -951,6 +986,13 @@ window and its indicator belong to deskhand's bundle, which is always denied.
   topmost window under the point it is about to move to. If that check
   fails, the pointer does not move there: the drag is aborted with
   `denied_app` while the pointer is still over an allowed window.
+- These checks take time, so `duration_ms` is a minimum
+  ([section 6.4](#64-pointer)). A long path takes longer.
+- The window that carries the drag image follows the pointer and is not the
+  drop target, so the check under the next point looks through it. How
+  deskhand recognizes that window is chosen by the spike. A window that it
+  cannot recognize as a drag image is treated like any other window, so the
+  check still fails closed.
 - The release that ends a drag, completed or aborted, is posted where the
   pointer is. A release never moves the pointer.
 - On `denied_app`, `details.point_index` names the point of `path` that the
@@ -1210,10 +1252,11 @@ Schema: `defs.json#/$defs/tool_error`.
 | --- | --- | --- |
 | `code` | always | One of the codes in [section 9.3](#93-tool-error-codes). |
 | `message` | always | For people and models. Not stable. Never parse it. |
-| `state` | always | The highest-precedence state when the error was produced. |
+| `state` | always | The highest-precedence state when the error was produced. On a replay it is the state stored with the result, not the state now. |
 | `operation_id` | effect tools, when it parsed | Echoed. |
 | `operation` | effect tools, when a record exists for this `operation_id` | `{status, events_posted}`. Its presence means a call with this `operation_id` was admitted and input may have been posted. Its absence means nothing was ever posted for it. One exception: on `operation_in_progress` and `operation_id_conflict` it can describe a first call that is still being admitted (`accepted`, 0 events). |
 | `replayed` | exactly on the result of an admitted call | `false` when the result is first returned, `true` when it is the stored result returned to a repeat. |
+| `current_state` | exactly when `replayed` is `true` | The highest-precedence state when this response was produced. `state` says what held when the earlier call ended, and `current_state` says what holds now ([section 12.5](#125-repeats-and-stored-results)). |
 | `retry_after_ms` | `rate_limited` | The earliest useful retry. |
 | `measured` | `denied_app`, `log_unavailable`, and errors of admitted calls other than `interrupted` | [Section 6.7](#67-effect-results). |
 | `details` | per code | See the table below. |
@@ -1235,11 +1278,16 @@ schema enforces this. Other codes have no `details`.
 The schema also enforces these rules:
 
 - A code that is not in the table never has `details`.
-- When `code` is the name of a state, `state` is that same state.
+- When `code` is the name of a state, `state` is that same state. This holds
+  on a replay too, because a replay keeps the stored `state`: a replayed
+  `secure_input` abort has `state` `secure_input`, and the state now is in
+  `current_state`.
+- `current_state` is present exactly when `replayed` is `true`.
 - `operation_in_progress`, `operation_id_conflict`, `interrupted` and
   `cancelled` always carry `operation_id` and `operation`. `interrupted` and
   `cancelled` always have `replayed` `true`.
-- On `denied_app`, `measured.window_title` is `null`.
+- On `denied_app`, `measured.window_title` is `null` and `measured.drag_end`
+  is absent.
 - Each tool's output schema accepts only the codes that
   [section 9.3](#93-tool-error-codes) lists for that tool.
 
@@ -1340,8 +1388,9 @@ correct the call.
 ### 9.5 Order of refusals
 
 When several refusals apply, deskhand returns the first in this order. The
-state comes first for every tool except `status`, as the shared contract
-requires.
+state comes first for every tool except `status` and `lease`. The shared
+contract requires that for every tool except `status`, and amendment 4 adds
+`lease` to the exception.
 
 `status` and `lease`: `invalid_argument` only. A lease operation that is
 refused is not an error ([section 5.1](#51-operations)).
@@ -1398,6 +1447,12 @@ never queues an effect and never runs two.
 - So the record lookup of step 4 and the creation of the record are never
   separated by another call's admission. A repeated `operation_id` is
   performed once, however close together the two calls arrive.
+- A call whose connection is closed is never admitted. deskhand looks at the
+  caller's connection when the call enters the section at step 3, and again
+  immediately before it creates the record
+  ([section 12.3](#123-write-ordering)). If the caller has closed it, the
+  call leaves the section, posts nothing and leaves no record. Nobody is
+  left to answer.
 - `lease`, `status`, `displays` and `screenshot` do not enter the section and
   are never answered `busy`.
 
@@ -1407,13 +1462,14 @@ also describes a call that is still being admitted
 ([section 4.3](#43-operation_id)). From step 5 on no record exists, so there
 is no `operation`.
 
-A call that passes all fifteen is admitted: its record is created and
-execution starts. After that only an abort or a fault can end it early, with
-the code of whatever caused it: a state's name, `user_active`, `denied_app`
-(the app check is repeated before every event, including the first),
-`stale_frame` (the patch check was too old when the first event was due),
-`lease_expired` or `lease_not_held` (the lease ended), `cancelled` (the
-caller hung up, so only a later repeat sees it) or `internal_error`.
+A call that passes all fifteen, and whose connection is still open, is
+admitted: its record is created and execution starts. After that only an
+abort or a fault can end it early, with the code of whatever caused it: a
+state's name, `user_active`, `denied_app` (the app check is repeated before
+every event, including the first), `stale_frame` (the patch check was too
+old when the first event was due), `lease_expired` or `lease_not_held` (the
+lease ended), `cancelled` (the caller hung up, so only a later repeat sees
+it) or `internal_error`.
 
 **The action ceiling.** Each Mac has one counter, across all principals and
 all holders. Releasing the lease or changing `holder_id` does not reset it.
@@ -1437,7 +1493,7 @@ highest first:
 | --- | --- | --- | --- | --- |
 | 1 | `gated` | The LAN-gate allowance is missing, invalid, not yet valid or expired. | The allowance file ([section 14](#14-allowance-file-format)). | yes |
 | 2 | `paused` | The kill switch was used and nobody has armed deskhand since. | deskhand's own kill switch: the menu bar item or the global hot key. | yes |
-| 3 | `disarmed` | deskhand is not armed. It starts this way, and returns to it when arming runs out, when a person disarms it and when the kill switch is used. | deskhand's own arming timer. | yes |
+| 3 | `disarmed` | deskhand is not armed. It starts this way, and returns to it when arming runs out, when a person disarms it, when the kill switch is used and, by default, when `gated` begins ([section 10.4](#104-gated-paused-and-disarmed)). | deskhand's own arming timer. | yes |
 | 4 | `not_console` | deskhand's login session does not own the console: another account is in front, or the console shows the login window. | Platform console-ownership signal. For the login window: platform login-window signal, chosen by the spike. | no |
 | 5 | `locked` | The screen of deskhand's session is locked. | Platform lock signal, chosen by the spike. | no |
 | 6 | `display_asleep` | Any active display is asleep. | Platform display-sleep signal. | no |
@@ -1447,8 +1503,9 @@ highest first:
 | 10 | `ok` | None of the above holds. | | |
 
 `status.state` is the active state with the highest precedence, and
-`status.active_states` lists all of them. Every tool except `status` fails
-with the name of `status.state` unless it is `ok`.
+`status.active_states` lists all of them. Every tool except `status` and
+`lease` fails with the name of `status.state` unless it is `ok`. What `lease`
+does in each state is in [section 5.2](#52-allowed-states).
 
 `gated` is amendment 2 and is pending approval
 ([section 17](#17-changes-from-the-shared-contract)).
@@ -1681,8 +1738,8 @@ the login-window signal disagree, deskhand reports `not_console` anyway. A
 Mac where nobody is logged in runs no deskhand and answers nothing
 ([section 2.1](#21-endpoint)).
 
-**Effect on calls:** none of its own. Every tool except `status` is already
-refused with `not_console`, or with a state of higher precedence. The
+**Effect on calls:** none of its own. Every tool except `status` and `lease`
+is already refused with `not_console`, or with a state of higher precedence. The
 condition tells the caller why, without an eleventh state. It also blocks
 releases ([section 12.8](#128-cleanup-authorization)): deskhand posts no
 input of any kind at the login window.
@@ -1791,7 +1848,12 @@ An effect call goes through these steps in this order.
 2. The intent entry is committed to the action log (check 15). If it cannot
    be committed, the call is refused with `log_unavailable`, nothing is
    posted and no record exists.
-3. The record is created as `accepted`. The call is now admitted.
+3. deskhand looks at the caller's connection. If the caller has closed it,
+   the call ends here: nothing is posted and no record is created. The
+   action log gets a refusal entry with the outcome `cancelled`
+   ([section 12.10](#1210-action-log-entries)), so the intent entry of step
+   2 does not stand alone. Otherwise the record is created as `accepted`,
+   and the call is now admitted.
 4. The record is written as `executing` and flushed to stable storage
    (`fsync`). This happens before the first event is posted.
 5. **The last look.** Immediately before the first event, with nothing
@@ -1804,16 +1866,26 @@ An effect call goes through these steps in this order.
      ([section 6.9](#69-app-policy));
    - for `pointer`, the capture that the patch check used is at most
      `PATCH_CHECK_MAX_AGE_MS` (250 ms) old
-     ([section 8.4](#84-target-patch-check)).
+     ([section 8.4](#84-target-patch-check));
+   - the named holder still holds the lease;
+   - the caller's connection is still open.
 
    If any of these fails, the operation is aborted with the code of the
-   cause and `events_posted` 0. Nothing was posted.
+   cause and `events_posted` 0. Nothing was posted. A closed connection is
+   `cancelled`.
 6. The events are posted. Before every event deskhand repeats the state,
-   deadline, activity and app-policy checks of step 5
-   ([section 12.4](#124-aborts)). Before each key-down or button-down event
-   the held-input ledger is written and flushed; after each matching up
-   event it is cleared and flushed
-   ([section 12.7](#127-held-input-ledger)).
+   deadline, activity, app-policy, lease and connection checks of step 5
+   ([section 12.4](#124-aborts)). For every event, the first included, the
+   order is fixed:
+   1. For a key-down or button-down event, the held-input ledger entry is
+      written and flushed ([section 12.7](#127-held-input-ledger)).
+   2. The checks run.
+   3. The event is posted.
+
+   Nothing lies between the checks and the post: no ledger write and no
+   `fsync`. If the checks fail, the event is not posted, and the ledger
+   entry that was written for it is cleared without a release. After each
+   key-up or button-up event the matching entry is cleared and flushed.
 7. When the action is over, or after an abort and its releases, the final
    status, `events_posted` and the result are written and flushed. The call
    then leaves the admission section.
@@ -1838,8 +1910,9 @@ result a later repeat returns.
 ### 12.4 Aborts
 
 An executing operation ends early for one of these causes. The executor
-looks for the first six before every event, including the first, and while
-it waits ([section 13](#13-timing-bounds)).
+looks for the first seven before every event, including the first, and
+while it waits ([section 13](#13-timing-bounds)). The fourth applies to the
+first event only.
 
 | Cause | Code | `operation.status` |
 | --- | --- | --- |
@@ -1893,10 +1966,20 @@ The table in [section 4.3](#43-operation_id) says what a repeated
 - When an operation ends, deskhand stores the `structuredContent` it is
   about to return in the record, before it sends the response.
 - A repeat with the same digest gets that stored result with `replayed` set
-  to `true`. On a stored error, `code`, `operation`, `measured` and
-  `details` are as stored. `state` is the state now, which is always `ok`
-  because a stored result is only returned in `ok`. `message` may be worded
-  differently.
+  to `true`. On a stored error, `code`, `state`, `operation`, `measured` and
+  `details` are as stored. `state` is therefore the state that held when the
+  earlier call ended, not the state now: a replayed `secure_input` abort
+  still has `state` `secure_input`. `message` may be worded differently.
+- A replayed error also gains `current_state`, the state at the moment of
+  the replay. A stored result is only returned while the state is `ok`,
+  because step 1 of [section 9.5](#95-order-of-refusals) comes before step
+  4, so in this version `current_state` is always `ok`. A caller reads the
+  member and does not assume its value.
+- `interrupted` has no stored result. deskhand builds it from the record
+  when the repeat arrives, so its `state` and its `current_state` are both
+  the state at that moment.
+- A stored success has no `state` and gains no `current_state`. `replayed`
+  `true` is its only difference.
 - A replay posts nothing, measures nothing, needs neither the lease nor a
   live frame, and does not count toward the action ceiling.
 - While the first call is still being admitted, or is `accepted` or
@@ -1912,7 +1995,7 @@ read-only lookup, `status` with `operation: {holder_id, operation_id}`
 
 | Lookup result | Meaning |
 | --- | --- |
-| `operation` is `null` | The call was never admitted, or it never arrived. No input was posted for it. Nothing will be, unless the caller sends the call again. |
+| `operation` is `null` | No record now, and no call with this key is being admitted at this moment. No input has been posted for it so far. Whether that is final depends on the caller's own request: see "When `null` is final" below. |
 | `status` `accepted` or `executing` | It is still being admitted or is running. Look again. A call that is still being admitted can yet be refused, and the next lookup is then `null`. |
 | any final status | It is over. `events_posted` says how much went out. |
 
@@ -1921,6 +2004,39 @@ repeat is not: the first call was refused before admission (`busy`,
 `rate_limited`, `stale_frame`) or was lost on the way. A repeat of that call
 would be admitted as a new call and would post its input later, in a
 different context. crew-r-yqso forbids exactly that: "never retried".
+
+**When `null` is final.** The lookup cannot see a request that is still on
+its way: one that the network is holding up, or one that deskhand has read
+and has not yet brought to step 3 of
+[section 9.5](#95-order-of-refusals). Such a request has no record, and it
+can still be admitted after a lookup has answered `null`. So `null` by
+itself means "no record now". A caller MUST NOT record "nothing was posted"
+while a request of its own for that `operation_id` may still be in transit.
+
+`null` is final once one of these is true of the caller's request for that
+`operation_id`. Nothing will then be posted for it unless the caller sends
+the call again.
+
+- **The request completed.** The caller received its response.
+- **Its connection is closed.** Closing the connection cancels the call
+  ([section 2.1](#21-endpoint)), and deskhand never admits a call whose
+  connection is closed. It looks at the connection when the call enters the
+  admission section, again before it creates the record, and before every
+  event ([section 12.3](#123-write-ordering)). So the caller closes the
+  connection that carried the call first, and then looks the call up on
+  another connection.
+- **Its frame is no longer the latest.** After it sent the call and before
+  the lookup, the caller received a new screenshot of the same display
+  under the same `holder_id`. The lost call names the older frame, so step
+  9 refuses it with `stale_frame` whenever it arrives
+  ([section 8.3](#83-frame-staleness)).
+
+"Closed" means that the close has reached the Mac: the caller shut the
+connection down and the Mac acknowledged it, or the Mac closed it. The
+lookup travels on another connection and can overtake a close that is still
+in flight. While the path is stalled and the close is unacknowledged, the
+request can still be admitted, and `null` is not yet final. A caller in
+that position records the outcome as uncertain and looks again later.
 
 Repeating the call stays allowed, and it is the only way to get the stored
 result itself. Inside the retention window a repeat of an admitted call
@@ -1966,8 +2082,11 @@ released.
    and button-up events that match the entries, and nothing else.
 6. A crash during cleanup leaves the remaining entries for the next start.
 
-An entry is cleared only after its release has been posted. If posting a
-release fails, the entry stays and deskhand tries again. While an entry
+An entry is cleared only after its release has been posted. The one
+exception is an entry whose down event was never posted, because the checks
+that follow the write failed ([section 12.3](#123-write-ordering)): nothing
+is down, so it is cleared without a release. If posting a release fails,
+the entry stays and deskhand tries again. While an entry
 remains and no operation is executing, the `cleanup_pending` condition is
 set ([section 11.2](#112-cleanup_pending)).
 
@@ -2470,8 +2589,8 @@ request text more exact are listed as clarifications in
   ([section 14](#14-allowance-file-format)). It has the highest precedence,
   it is reported by `status` and used as an error code like every other
   state, and it drops the lease ([section 10](#10-states)). The rule that
-  every tool except `status` fails with the state's name is unchanged and
-  covers it.
+  every tool except `status` fails with the state's name covers it, as
+  amended by amendment 4, which makes `lease` a second exception.
 - **Rationale.** birbhomes-r-ttg5 already requires the refusal, and none of
   the nine states describes it. Reusing one would mislead: `disarmed` tells
   a person to arm deskhand, which would not help. Answering nothing would
@@ -2488,7 +2607,7 @@ request text more exact are listed as clarifications in
 | deskhand-r-nkjj | The "States" list of the shared contract gains `gated`: ten values in place of nine. |
 | crew-r-yqso | The same list. Under "Availability", `gated` is one more tool error that the model can read, alongside away, locked, disarmed and paused. |
 | birbhomes-r-5elb | The same list. Nothing in the network path changes. |
-| birbhomes-r-ttg5 | The refusal "when it is absent or expired" is the state `gated`, and the allowance has the format of [section 14](#14-allowance-file-format). The acceptance item "stops serving within the gate's expiry" is met by `gated`: deskhand keeps answering `status` and refuses everything else ([section 15.1](#151-gate-stop)). |
+| birbhomes-r-ttg5 | The refusal "when it is absent or expired" is the state `gated`, and the allowance has the format of [section 14](#14-allowance-file-format). The acceptance item "stops serving within the gate's expiry" is met by `gated`: deskhand keeps answering `status` and `lease`, refuses `acquire` and `renew` inside the `lease` result, and refuses every other tool ([section 15.1](#151-gate-stop)). |
 
 ### 17.3 Amendment 3: no node-IP allowlist inside deskhand
 
@@ -2573,7 +2692,10 @@ no approval note, and they are listed so that nobody finds them by surprise.
    that a click or keystroke whose acknowledgement was lost "is recorded as
    uncertain and never retried". `status` with `operation` lets Crew resolve
    the uncertainty without sending the call again
-   ([section 12.5](#125-repeats-and-stored-results)).
+   ([section 12.5](#125-repeats-and-stored-results)). Crew closes the
+   connection of the lost call before it asks. Until that close has reached
+   the Mac, a `null` answer is "no record now" and the outcome stays
+   uncertain.
 
 ## 18. Verified against the specification on 2026-11-14
 
@@ -2654,24 +2776,30 @@ alone would accept a trailing newline.
 | `tools/<tool>.input.json` | The `arguments` of each of the six tools: `status`, `displays`, `screenshot`, `pointer`, `keyboard`, `lease`. |
 | `tools/<tool>.output.json` | The `structuredContent` of each tool: its success shape, or `tool_error` limited to the codes that tool can return. |
 | `allowance.json` | The contents of the LAN-gate allowance file ([section 14](#14-allowance-file-format)). Self-contained, and not served by `tools/list`. |
+| `wire/jsonrpc-request.json`, `wire/jsonrpc-notification.json` | A request and a notification as a caller sends them ([section 2.3](#23-request-headers), [section 3](#3-mcp-methods)). |
+| `wire/jsonrpc-response.json`, `wire/jsonrpc-error.json` | The envelope of a successful response, and a JSON-RPC error with the codes of [section 9.4](#94-json-rpc-errors). |
+| `wire/server-discover-result.json`, `wire/tools-list-result.json`, `wire/tools-call-result.json` | The `result` of each method ([section 3](#3-mcp-methods)). None of the `wire/` files is served by `tools/list`. |
 | `examples/<tool>.<input\|output>.<name>.json` | Instances that validate against the schema named by the first two parts. |
 | `examples/invalid/<tool>.<input\|output>.<name>.json` | Instances that MUST be rejected by that schema. |
 | `examples/allowance.<name>.json`, `examples/invalid/allowance.<name>.json` | Instances that validate against `allowance.json`, and instances that it MUST reject. |
+| `examples/invalid/<wire schema>.<name>.json` | Instances that the `wire/` schema of that name MUST reject, for example `jsonrpc-request.empty-params.json`. |
 | `examples/wire/*.json` | Whole JSON-RPC messages. Every request carries `params._meta["io.modelcontextprotocol/protocolVersion"]`. In `tools-call.<tool>.<name>.<request\|response>.json`, `params.arguments` and `result.structuredContent` validate against the tool's schemas. |
 
-Three rules of this document are checked by deskhand and cannot be stated in
+Four rules of this document are checked by deskhand and cannot be stated in
 a schema: `ttl_ms` is absent on a `lease` `release` (input schemas stay
-flat), an image has at most 3,588,000 pixels (a schema cannot multiply), and
-a timestamp of 29 February falls in a leap year (the `date-time` format,
-which a validator MUST assert, catches it).
+flat), an image has at most 3,588,000 pixels (a schema cannot multiply),
+`measured.drag_end` is present for a `drag` (an output schema does not see
+the action), and a timestamp of 29 February falls in a leap year (the
+`date-time` format, which a validator MUST assert, catches it).
 
 ## Appendix A. Decisions made in this draft
 
 The plan did not settle these. They are listed so the owner and Crew can
 object before v1.0. Items 1 to 24 come from the wire surface (0.1-draft),
-items 25 to 46 from the behavior sections (0.9-draft) and items 47 to 66 from
-the foundation review (0.10-draft). Items 1, 11, 12, 27 and 46 were changed
-by that review.
+items 25 to 46 from the behavior sections (0.9-draft), items 47 to 66 from
+the foundation review (0.10-draft) and items 67 to 73 from its re-review
+(0.11-draft). Items 1, 11, 12, 27 and 46 were changed by the review, and
+items 37, 46, 50 and 53 by the re-review.
 
 1. Lease operations are a sixth tool, `lease` (amendment 4). `status` is a
    pure read with no `lease` argument. A refused lease operation is reported
@@ -2746,7 +2874,10 @@ by that review.
     releases. The number of events per action is not fixed.
 36. The intent entry is logged before the record is created, and the final
     record, with the stored result, is durable before the response is sent.
-37. On a replayed error, `state` is the state at the time of the replay.
+37. On a replayed error, `state` is the state stored with the result, and
+    `current_state` is the state at the time of the replay. (Until
+    0.10-draft `state` was the state at the replay, which broke the rule
+    that a state's code carries that state.)
 38. The retention window runs from admission. The record cap counts a
     principal's records across all of its `holder_id` values.
 39. A failed record or ledger write stops the event it was guarding, and the
@@ -2767,7 +2898,7 @@ by that review.
     deskhand keeps running as `gated`. `SIGTERM` ends the process within 1 s,
     records the operation in flight as `aborted_by_restart` with an exact
     count, and sends that call no response.
-46. `contract_version` follows the document version and is `0.10-draft`. The
+46. `contract_version` follows the document version and is `0.11-draft`. The
     `status` output schema fixes it as a constant.
 47. `status` reports the lease only as `held_by_caller` plus its times, and
     only for a `holder_id` that the call names. No result carries a
@@ -2781,7 +2912,8 @@ by that review.
     cannot state it.
 50. `status` with `operation` is a read-only record lookup. It reports a
     call that is being admitted as `accepted` with 0 events, and returns
-    `status` and `events_posted` but not the stored result.
+    `status` and `events_posted` but not the stored result. `null` means
+    "no record now" and is final only under item 68.
 51. One admission section per Mac, entered by an atomic test-and-set and
     held until the final record write. A call that finds it held gets
     `operation_in_progress`, `operation_id_conflict` or `busy` at once,
@@ -2790,10 +2922,10 @@ by that review.
 52. `operation_in_progress` and `operation_id_conflict` carry `operation`
     as `accepted` with 0 events for a first call that is still being
     admitted.
-53. The last look: state, deadline, activity and app policy are checked
-    again immediately before the first event, and a patch check older than
-    `PATCH_CHECK_MAX_AGE_MS` (250 ms) ends the call with `stale_frame` and
-    0 events.
+53. The last look: state, deadline, activity, app policy, the lease and the
+    caller's connection are checked again immediately before the first
+    event, and a patch check older than `PATCH_CHECK_MAX_AGE_MS` (250 ms)
+    ends the call with `stale_frame` and 0 events.
 54. App identity is (bundle identifier, team identifier). Apple's own
     software has no team identifier and needs an allowlist entry that says
     so. An unidentifiable app, a point with no window and an unreadable
@@ -2830,3 +2962,25 @@ by that review.
     `private`. `server/discover` sends no `instructions`. A notification is
     answered `202` only after the version header checks. A timestamp that is
     not a real UTC instant, including a leap second, is invalid.
+67. A replayed error carries `current_state`. No other result has it. In
+    this version it is always `ok`, because a stored result is only returned
+    in `ok`.
+68. deskhand never admits a call whose connection is closed, and it checks
+    the connection at the last look and before every event. A lookup's
+    `null` is final once the caller's own request has completed, once its
+    connection is closed and the close has reached the Mac, or once a newer
+    screenshot has made its frame stale. The third way is this document's
+    addition; it follows from the `not_latest` rule.
+69. `duration_ms` of a drag is a minimum. How deskhand looks through the
+    drag-image window is a spike item.
+70. `measured` on a success, and on an error of an admitted call, is taken
+    at the last look. `log_unavailable` reports step 14 and `denied_app`
+    reports the check that failed. `drag_end` is absent on `denied_app` and
+    present on every other `measured` of a drag, and its app is identified
+    on a success.
+71. For every event the order is ledger write, checks, post. A ledger entry
+    whose down event was never posted is cleared without a release.
+72. The schemas forbid a `holder_id` member in the lease view, the `status`
+    result and the `lease` result.
+73. Whether `pointer` can reach the menu bar depends on which process owns
+    it, which the spike records.

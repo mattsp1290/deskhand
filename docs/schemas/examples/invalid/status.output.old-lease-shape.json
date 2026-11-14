@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.10-draft",
+  "contract_version": "0.11-draft",
   "mcp_protocol_version": "2026-07-28",
   "server_version": "0.1.0",
   "mac": "lunus-macbook-pro",
@@ -11,6 +11,7 @@
   "armed_until": "2026-11-14T16:00:00Z",
   "lease": {
     "holder_id": "crew:inst-7f3a:desk-lunus",
+    "held_by_caller": true,
     "acquired_at": "2026-11-14T15:02:11.482Z",
     "expires_at": "2026-11-14T15:02:41.482Z",
     "expires_in_ms": 30000

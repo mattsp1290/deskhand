@@ -23,6 +23,10 @@ adding a schema or an example needs no edit here:
              must validate too.
   Invalid    examples/invalid/<stem>.<name>.json must be rejected. Every schema
              except defs.json needs at least one.
+  Required   Dropping any one member from a valid example, wire message, call
+             argument or tool result must make it invalid, unless the member is
+             listed in OPTIONAL_MEMBERS. So a `required` that is deleted from a
+             schema fails here, and a new optional member is declared there.
   Wire       examples/wire/*.json are whole JSON-RPC 2.0 messages. Each name
              must match one of the conventions in WIRE_RULES and is validated
              against the wire/ schemas, and tools/call arguments and
@@ -35,9 +39,12 @@ adding a schema or an example needs no edit here:
              per-tool codes (9.3 "Tools") match the schemas both ways; the
              9.2 tool_error tables match the schema's if/then rules; the
              constants of section 16 match every schema keyword, example
-             `limits` and prose figure that carries them; the header's versions
-             match every contract_version and protocol version; every JSON
-             block validates; every intra-doc #anchor resolves.
+             `limits` and prose figure that carries them, wherever the figure
+             is repeated; the HTTP status and JSON-RPC code pairs of 2.3 and
+             2.4 match 9.4; a status result's state heads its active_states for
+             every state; the header's versions match every contract_version
+             and protocol version; every JSON block validates; every intra-doc
+             #anchor resolves.
 
 Date-time formats are asserted (rfc3339-validator), so 29 February of a common
 year fails. Any other JSON file under examples/ is an error, so nothing is
@@ -85,6 +92,33 @@ WIRE_RULES = [
     (re.compile(r"^error\.[a-z0-9-]+\.response\.json$"), "error"),
     (re.compile(r"^[a-z0-9-]+\.notification\.json$"), "notification"),
 ]
+
+# Members that a valid instance may lack, by schema: a path from the root of
+# the instance, with * for an array index. Every other member of every valid
+# instance must be required: dropping it must make the instance invalid. An
+# isError result is looked up under TOOL_ERROR whatever the tool. An entry that
+# no instance uses fails too, so the list cannot go stale.
+TOOL_ERROR = "tool_error"
+OPTIONAL_MEMBERS = {
+    "tools/keyboard.input.json": {"permitted_apps", "action/modifiers", "action/hold_ms"},
+    "tools/lease.input.json": {"ttl_ms"},
+    "tools/pointer.input.json": {"permitted_apps", "action/button", "action/count", "action/modifiers",
+                                 "action/duration_ms"},
+    "tools/screenshot.input.json": {"display_id", "region", "format", "max_long_edge"},
+    "tools/status.input.json": {"holder_id", "operation"},
+    "tools/pointer.output.json": {"measured/drag_end"},
+    "tools/status.output.json": {"operation"},
+    TOOL_ERROR: {"operation_id", "operation", "replayed", "measured", "measured/drag_end", "details/point_index"},
+    REQUEST: {"params/arguments"},
+    ERROR: {"error/data", "error/data/detail", "error/data/header"},
+}
+# Members whose contents another schema checks. The drop-one walk stops there.
+OPAQUE_MEMBERS = {
+    REQUEST: {"params/arguments"},
+    RESPONSE: {"result"},
+    RESULTS["tools/call"]: {"structuredContent"},
+    RESULTS["tools/list"]: {"tools/*/inputSchema", "tools/*/outputSchema"},
+}
 
 NUM = r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?"
 
@@ -167,9 +201,20 @@ UNSCHEMATIZED_CONSTANTS = {
 # status.limits members whose name is not the constant's name in lower case.
 LIMIT_PARTS = {"lease_ttl_min_ms": ("LEASE_TTL_MS", "min"), "lease_ttl_max_ms": ("LEASE_TTL_MS", "max")}
 
+# Large figures that a section may quote although section 16 does not give
+# them: (section number, unit, value) -> how many times. Amendment 1 was
+# approved with 3,750,000 pixels, and section 7 names the pixel count of a
+# 2560 x 1440 display. One more occurrence than listed fails.
+OTHER_FIGURES = {
+    ("7.", "pixels", 3686400): 1,
+    ("17.", "pixels", 3750000): 1,
+    ("17.1", "pixels", 3750000): 1,
+}
+
 # Prose that restates a constant: (section heading prefix, regex, parts). Each
-# regex group is compared with (constant, part); None skips a group. A site
-# that is not found fails, so rewording the prose means updating this list.
+# regex group is compared with (constant, part); None skips a group, and every
+# match in the section is compared. A site that is not found fails, so
+# rewording the prose means updating this list.
 PROSE_SITES = [
     ("2.4 ", rf"Header block is at most ({NUM}) bytes", [("MAX_REQUEST_HEADER_BYTES", "value")]),
     ("2.4 ", rf"Body is at most ({NUM}) bytes", [("MAX_REQUEST_BODY_BYTES", "value")]),
@@ -226,11 +271,12 @@ class Checker:
         self.root = docs / "schemas"
         self.fails: list[str] = []
         self.counts = dict.fromkeys(
-            ("schemas", "refs", "valid", "invalid", "wire", "bundled", "blocks", "constants"), 0)
+            ("schemas", "refs", "valid", "invalid", "wire", "dropped", "bundled", "blocks", "constants"), 0)
         self.covered: set[str] = set()  # schemas with a valid instance of any kind
         self.covered_examples: set[str] = set()  # schemas with a valid file under examples/
         self.covered_invalid: set[str] = set()
         self.instances: list[tuple[str, object]] = []  # valid tool outputs, for the version and limits checks
+        self.optional_used: set[tuple[str, str]] = set()
         self.kinds: dict[str, str] = {}  # tool -> Kind column of contract 3.2
 
     def fail(self, msg: str) -> None:
@@ -439,6 +485,50 @@ class Checker:
             self.covered.add(rel)
         return ok
 
+    def drop_one(self, where: str, rel: str, instance) -> None:
+        """Every member of a valid instance is required or is listed in OPTIONAL_MEMBERS."""
+        if rel not in self.validators:
+            return
+        key = rel
+        if rel.startswith(TOOLS_DIR + "/") and rel.endswith(".output.json") and "code" in instance:
+            key = TOOL_ERROR
+        optional, opaque = OPTIONAL_MEMBERS.get(key, set()), OPAQUE_MEMBERS.get(rel, set())
+
+        def label(path) -> str:
+            return "/".join("*" if isinstance(x, int) else x for x in path)
+
+        def walk(node, path):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    yield path + (k,)
+                    if label(path + (k,)) not in opaque:
+                        yield from walk(v, path + (k,))
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    yield from walk(v, path + (i,))
+
+        for path in list(walk(instance, ())):
+            mutant = copy.deepcopy(instance)
+            parent = mutant
+            for part in path[:-1]:
+                parent = parent[part]
+            del parent[path[-1]]
+            self.counts["dropped"] += 1
+            if all(e is not None for e in self.errors(rel, mutant)):
+                continue
+            if label(path) in optional:
+                self.optional_used.add((key, label(path)))
+            else:
+                self.fail(f"{where}: still validates against {rel} without /{'/'.join(map(str, path))}; "
+                          "make it required or add it to OPTIONAL_MEMBERS")
+
+    def check_optional_members(self) -> None:
+        for key, names in sorted(OPTIONAL_MEMBERS.items()):
+            for name in sorted(names):
+                if (key, name) not in self.optional_used:
+                    self.fail(f"OPTIONAL_MEMBERS lists {key} {name}, which no valid instance can lack "
+                              "(remove the entry, or add an example that has the member)")
+
     def check_examples(self) -> None:
         ex = self.root / "examples"
         known = {ex, ex / "invalid", ex / "wire"}
@@ -463,6 +553,7 @@ class Checker:
                 if want_valid:
                     if self.expect_valid(self.rel(p), rel, inst):
                         self.covered_examples.add(rel)
+                        self.drop_one(self.rel(p), rel, inst)
                         if rel.startswith(TOOLS_DIR + "/") and rel.endswith(".output.json"):
                             self.instances.append((self.rel(p), inst))
                     self.counts["valid"] += 1
@@ -489,7 +580,8 @@ class Checker:
     # Wire
 
     def check_request(self, where: str, doc, method: str | None = None) -> None:
-        self.expect_valid(where, REQUEST, doc)
+        if self.expect_valid(where, REQUEST, doc):
+            self.drop_one(where, REQUEST, doc)
         if not isinstance(doc, dict):
             return
         if method is not None and doc.get("method") != method:
@@ -504,6 +596,7 @@ class Checker:
         rel = RESULTS[method]
         if not self.expect_valid(where, rel, result):
             return
+        self.drop_one(where, rel, result)
         if method == "server/discover":
             if self.mcp_revision and result["supportedVersions"] != [self.mcp_revision]:
                 self.fail(f"{where}: supportedVersions {result['supportedVersions']} is not "
@@ -517,6 +610,7 @@ class Checker:
             self.fail(f"{where}: no schema {out}")
         elif self.expect_valid(f"{where} structuredContent", out, inst):
             self.instances.append((where, inst))
+            self.drop_one(f"{where} structuredContent", out, inst)
         content = result["content"]
         try:
             if json.loads(content[-1]["text"]) != inst:
@@ -568,19 +662,21 @@ class Checker:
                 rel = f"{TOOLS_DIR}/{tool}.input.json"
                 if rel not in self.schemas:
                     self.fail(f"{name}: no schema {rel}")
-                else:
-                    self.expect_valid(f"{name} arguments", rel, args)
+                elif self.expect_valid(f"{name} arguments", rel, args):
+                    self.drop_one(f"{name} arguments", rel, args)
             elif kind in ("response", "call-response"):
                 if not self.expect_valid(name, RESPONSE, doc):
                     continue
+                self.drop_one(name, RESPONSE, doc)
                 if kind == "response":
                     self.check_result(f"{name} result", METHOD_SLUGS[m.group(1)], doc["result"])
                 else:
                     self.check_result(f"{name} result", "tools/call", doc["result"], m.group(1))
             elif kind == "error":
-                self.expect_valid(name, ERROR, doc)
-            else:
-                self.expect_valid(name, NOTIFICATION, doc)
+                if self.expect_valid(name, ERROR, doc):
+                    self.drop_one(name, ERROR, doc)
+            elif self.expect_valid(name, NOTIFICATION, doc):
+                self.drop_one(name, NOTIFICATION, doc)
         for key, pair in sorted(pairs.items()):
             req, resp = pair.get("request"), pair.get("response")
             if isinstance(req, dict) and isinstance(resp, dict) and req.get("id") != resp.get("id"):
@@ -630,7 +726,9 @@ class Checker:
                 hints[hint] = v == "true"
             entry["annotations"] = hints
             result["tools"].append(entry)
-        self.expect_valid("tools/list result built from contract 3.2", RESULTS["tools/list"], result)
+        where = "tools/list result built from contract 3.2"
+        if self.expect_valid(where, RESULTS["tools/list"], result):
+            self.drop_one(where, RESULTS["tools/list"], result)
 
     def check_contract_blocks(self) -> None:
         for m in re.finditer(r"^```json\n(.*?)^```", self.md, re.S | re.M):
@@ -681,6 +779,50 @@ class Checker:
             if isinstance(vals, list) and len(vals) != len({json.dumps(v) for v in vals}):
                 self.fail(f"{DEFS}: duplicate values in {name}")
 
+    def check_status_states(self) -> None:
+        """A status result's state is the first of its active_states, for every state."""
+        rel = f"{TOOLS_DIR}/status.output.json"
+        base = next((i for _, i in self.instances if isinstance(i, dict) and i.get("state") == "ok"
+                     and "active_states" in i), None)
+        if rel not in self.validators or base is None:
+            self.fail(f"{rel}: no valid example with state ok to derive the state rules from")
+            return
+        blocking = self.schemas[DEFS].get("$defs", {}).get("blocking_state", {}).get("enum", [])
+
+        def valid(state, active) -> bool:
+            return all(e is None for e in self.errors(rel, {**base, "state": state, "active_states": active}))
+
+        for i, state in enumerate(blocking):
+            other = blocking[(i + 1) % len(blocking)]
+            if not valid(state, [state]):
+                self.fail(f"{rel}: state {state} with active_states [{state}] must validate")
+            for active in ([], [other], [other, state]):
+                if valid(state, active):
+                    self.fail(f"{rel}: state {state} with active_states {active} must be rejected")
+            if valid("ok", [state]):
+                self.fail(f"{rel}: state ok with active_states [{state}] must be rejected")
+
+    def check_http_codes(self) -> None:
+        """The HTTP status and JSON-RPC code pairs of 2.3 and 2.4 against the 9.4 table."""
+        table = {(int(code), int(http)) for code, http in
+                 re.findall(r"^\| `(-\d+)`[^|]*\| `(\d{3})` \|", self.section("9.4 JSON-RPC errors"), re.M)}
+        if not table:
+            self.fail("contract.md 9.4: no rows of the form | `<code>` ... | `<HTTP status>` |")
+            return
+        used = set()
+        for prefix in ("2.3 ", "2.4 "):
+            pairs = {(int(code), int(http)) for http, code in
+                     re.findall(r"`(\d{3})`, (?:JSON-RPC )?`(-\d+)`", self.section(prefix))}
+            if not pairs:
+                self.fail(f"contract.md {prefix.strip()}: no `<HTTP status>`, `<code>` pairs found")
+            for code, http in sorted(pairs - table):
+                self.fail(f"contract.md {prefix.strip()}: says {http} with {code}, which the 9.4 table does not list")
+            used |= pairs
+        codes = {code for code, _ in used}
+        for code, http in sorted(table - used):
+            if code in codes:
+                self.fail(f"contract.md 9.4: lists {http} with {code}, which no check of 2.3 or 2.4 returns")
+
     def check_prose(self) -> None:
         if not self.md:
             return
@@ -726,6 +868,7 @@ class Checker:
         compare("9.4 JSON-RPC error table", sorted(set(rpc)), "error.code", sorted(rpc_schema), ERROR)
 
         self.check_tool_codes(codes_text)
+        self.check_http_codes()
         self.check_error_rules(d)
         self.check_constants()
         self.check_versions()
@@ -903,14 +1046,15 @@ class Checker:
 
         for prefix, pattern, parts in PROSE_SITES:
             text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
-            m = re.search(pattern, text)
-            if not m:
+            found = list(re.finditer(pattern, text))
+            if not found:
                 self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update PROSE_SITES)")
-                continue
-            for group, part in zip(m.groups(), parts):
-                if part and number(group) != want(*part):
-                    self.fail(f"contract.md {prefix.strip()}: says {group} where section 16 gives "
-                              f"{part[0]} {part[1]} {want(*part)}")
+            for m in found:
+                for group, part in zip(m.groups(), parts):
+                    if part and number(group) != want(*part):
+                        self.fail(f"contract.md {prefix.strip()}: says {group} where section 16 gives "
+                                  f"{part[0]} {part[1]} {want(*part)}")
+        self.check_figures(want)
         for name, value in re.findall(rf"`([A-Z][A-Z_]+)` = ({NUM})", self.md):
             if name in consts and number(value) != want(name, "value"):
                 self.fail(f"contract.md: `{name}` = {value}, section 16 gives {want(name, 'value')}")
@@ -939,6 +1083,36 @@ class Checker:
                         self.fail(f"{where}: limits.{key} is {got}, contract.md 16 says {name} {part} is {exp}")
                     elif exp is None and "min" in c and not c["min"] <= got <= c["max"]:
                         self.fail(f"{where}: limits.{key} {got} is outside {name} {c['min']} to {c['max']}")
+
+    def check_figures(self, want) -> None:
+        """Every figure of a million or more that is given in bytes, pixels or characters, anywhere."""
+        image, body = want("MAX_IMAGE_BYTES", "value"), want("MAX_RESPONSE_BODY_BYTES", "value")
+        pixels = want("MAX_PIXELS", "value")
+        if None in (image, body, pixels):
+            return
+        allowed = {
+            "bytes": {image: "MAX_IMAGE_BYTES", body: "MAX_RESPONSE_BODY_BYTES"},
+            "pixels": {pixels: "MAX_PIXELS"},
+            "characters": {image * 4 // 3: "MAX_IMAGE_BYTES in base64"},
+        }
+        flat = re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", self.md)  # joins wrapped lines, keeps headings apart
+        left = dict(OTHER_FIGURES)
+        for m in re.finditer(r"(?<![\d,.])(\d{1,3}(?:,\d{3}){2,}) (?:base64 )?(bytes|pixels|characters)\b", flat):
+            value, unit = number(m.group(1)), m.group(2)
+            heading = (re.findall(r"^#+ (.+)$", flat[:m.start()], re.M) or [""])[-1]
+            other = (heading.split(" ")[0], unit, value)
+            if value in allowed[unit]:
+                continue
+            if left.get(other, 0) > 0:
+                left[other] -= 1
+                continue
+            self.fail(f"contract.md '{heading}': says {m.group(1)} {unit}; section 16 gives "
+                      + ", ".join(f"{v} ({n})" for v, n in allowed[unit].items())
+                      + (" (OTHER_FIGURES allows it fewer times)" if other in OTHER_FIGURES else ""))
+        for (section, unit, value), count in sorted(left.items()):
+            if count:
+                self.fail(f"OTHER_FIGURES lists {value} {unit} in section {section} {count} more time(s) than "
+                          "contract.md has it")
 
     def check_versions(self) -> None:
         if not self.doc_version:
@@ -983,6 +1157,8 @@ class Checker:
                 self.check_tools_list()
                 self.check_contract_blocks()
             self.check_coverage()
+            self.check_optional_members()
+            self.check_status_states()
             self.check_enums()
             self.check_prose()
         summary = ", ".join(f"{k} {v}" for k, v in self.counts.items())

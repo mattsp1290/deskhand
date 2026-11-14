@@ -8,6 +8,7 @@
     "events_posted": 20
   },
   "replayed": true,
+  "current_state": "ok",
   "measured": {
     "frontmost_app": {
       "bundle_id": "com.apple.TextEdit",

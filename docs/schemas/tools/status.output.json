@@ -12,8 +12,8 @@
       "type": "object",
       "properties": {
         "contract_version": {
-          "description": "Version of docs/contract.md this build implements. These schemas describe 0.10-draft.",
-          "const": "0.10-draft"
+          "description": "Version of docs/contract.md this build implements. These schemas describe 0.11-draft.",
+          "const": "0.11-draft"
         },
         "mcp_protocol_version": { "const": "2026-07-28" },
         "server_version": { "type": "string" },
@@ -80,8 +80,12 @@
         "limits"
       ],
       "not": {
-        "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
-        "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
+        "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result. No result carries a holder_id.",
+        "anyOf": [
+          { "required": ["code"] },
+          { "required": ["lease_result"] },
+          { "required": ["holder_id"] }
+        ]
       },
       "allOf": [
         {

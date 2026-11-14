@@ -24,6 +24,18 @@
       "x": 883.8114649681529,
       "y": 571.3432982917215
     },
+    "drag_end": {
+      "target_app": {
+        "bundle_id": "com.apple.TextEdit",
+        "team_id": null,
+        "name": "TextEdit"
+      },
+      "window_title": "notes.txt",
+      "global_point": {
+        "x": 1045.2382165605095,
+        "y": 747.4799605781866
+      }
+    },
     "measured_at": "2026-11-14T15:02:19.730Z"
   },
   "details": {

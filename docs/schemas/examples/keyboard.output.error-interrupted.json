@@ -7,5 +7,6 @@
     "status": "aborted_by_restart",
     "events_posted": 12
   },
-  "replayed": true
+  "replayed": true,
+  "current_state": "ok"
 }

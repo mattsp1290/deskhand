@@ -16,7 +16,10 @@
         "lease": { "$ref": "../defs.json#/$defs/lease_view" }
       },
       "required": ["lease_result", "lease"],
-      "not": { "required": ["code"] },
+      "not": {
+        "$comment": "No result carries a holder_id.",
+        "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+      },
       "if": {
         "properties": {
           "lease_result": {

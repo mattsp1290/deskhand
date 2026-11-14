@@ -3,5 +3,6 @@
   "message": "x",
   "state": "ok",
   "operation_id": "call_01HZX3M9R1",
-  "replayed": true
+  "replayed": true,
+  "current_state": "ok"
 }

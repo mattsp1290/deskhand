@@ -38,6 +38,15 @@ it; a new `allowance.json` has stem `allowance` and its examples are
 `examples/` fails the check, and so does an empty or missing `invalid/` or
 `wire/`. A schema's own `examples` keyword must validate too.
 
+## Required members
+
+The checker drops each member of every valid instance in turn: every example,
+wire message, set of call arguments and tool result. The instance must then be
+rejected, unless the member is listed in `OPTIONAL_MEMBERS` in the script. So
+deleting a `required` from a schema fails the check, and a new optional member
+is declared in that list. An entry that no instance uses fails too. The walk
+does not go inside a member that another schema checks (`OPAQUE_MEMBERS`).
+
 ## Wire examples
 
 | File name | Checked against |
@@ -68,8 +77,18 @@ The checker also compares `docs/contract.md` with the schemas:
   code carries that state) against the `if`/`then` rules of `tool_error`.
 - Every constant in section 16 against each schema keyword that carries it
   (`CONSTANT_SITES` in the script), against `limits` in the examples, and
-  against the prose that restates it (`PROSE_SITES`). A new constant must be
-  added to `CONSTANT_SITES` or `UNSCHEMATIZED_CONSTANTS`.
+  against the prose that restates it (`PROSE_SITES`, every match in the
+  section). A new constant must be added to `CONSTANT_SITES` or
+  `UNSCHEMATIZED_CONSTANTS`.
+- Every figure of a million or more that is given in bytes, pixels or
+  characters, anywhere in the document, against `MAX_IMAGE_BYTES`,
+  `MAX_RESPONSE_BODY_BYTES` and `MAX_PIXELS`. `OTHER_FIGURES` lists the few
+  that a section may quote for another reason.
+- The HTTP status and JSON-RPC code pairs of 2.3 and 2.4 against the 9.4
+  table.
+- For every state, that a `status` result whose `active_states` does not
+  begin with its `state` is rejected. The instances are built from a valid
+  example.
 - The header's document version against `contract_version` in every schema and
   example, and its MCP revision against `mcp_protocol_version`.
 - Every `json` code block validates against the matching schema, and every

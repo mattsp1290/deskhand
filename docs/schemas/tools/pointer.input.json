@@ -59,7 +59,7 @@
       "additionalProperties": false
     },
     "pointer_drag": {
-      "description": "Press the button at the first point, move through each later point in order, release at the last. A path of two identical points is a press-and-hold of duration_ms.",
+      "description": "Press the button at the first point, move through each later point in order, release at the last. A path of two identical points is a press-and-hold of duration_ms. duration_ms is a minimum for any other path.",
       "type": "object",
       "properties": {
         "type": { "const": "drag" },
@@ -78,7 +78,7 @@
           "default": []
         },
         "duration_ms": {
-          "description": "Time from button down to button up, spread evenly along the path.",
+          "description": "The least time from button down to button up, spread evenly along the path. A long path takes longer, because the pointer moves at most 8 frame pixels per event and each move is checked first.",
           "type": "integer",
           "minimum": 50,
           "maximum": 5000,
