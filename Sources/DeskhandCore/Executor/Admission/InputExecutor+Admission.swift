@@ -14,7 +14,11 @@ extension InputExecutor {
     /// Runs one `pointer` or `keyboard` call from refusal step 1 to its answer (contract 9.5,
     /// 12.3). Call it from the task of the request: a connection that closes before admission drops
     /// the call, and one that closes later aborts it with `cancelled`.
+    ///
+    /// Once ``stop()`` was called every call is ``EffectAnswer/dropped`` at once, as is the call
+    /// the stop ends (contract 15.2).
     public func perform(_ call: EffectCall) async -> EffectAnswer {
+        guard !stopRequested else { return .dropped }
         let snapshot = seams.state.snapshot()
         if let blocking = snapshot.state.blocking {
             return await refuse(call, Refusal(.blocked(blocking), operation: recordView(call.key, at: snapshot)))
@@ -39,6 +43,15 @@ extension InputExecutor {
             return .dropped
         }
         section = .admitting(SectionClaim(key: call.key, digest: call.digest))
+        callsAnswering += 1
+        let answer = await runSection(call, keyboardPlan: keyboardPlan)
+        callsAnswering -= 1
+        if callsAnswering == 0 { resumeStopWaiters() }
+        return answer
+    }
+
+    /// From the admission section's start to the call's answer, outcome entry included.
+    private func runSection(_ call: EffectCall, keyboardPlan: ActionPlan?) async -> EffectAnswer {
         switch await admit(call, keyboardPlan: keyboardPlan) {
         case .admitted(let execution):
             return await execute(execution)

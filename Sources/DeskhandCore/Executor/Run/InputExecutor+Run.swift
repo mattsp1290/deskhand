@@ -74,6 +74,8 @@ enum Ending: Sendable {
     case stopped(ToolErrorReason)
     /// A fault inside deskhand: `failed` with `internal_error`.
     case fault(String)
+    /// deskhand is stopping (contract 15.2): `aborted_by_restart` with the exact count.
+    case processStop
 }
 
 extension InputExecutor {
@@ -85,6 +87,7 @@ extension InputExecutor {
     /// Contract 12.3 steps 4 to 9 for an admitted call.
     func execute(_ admitted: Execution) async -> EffectAnswer {
         var execution = admitted
+        if stopRequested { return await endStopped(execution, .failedBeforeExecution) }
         do throws(OperationStoreError) {
             guard let store else { throw .unavailable }
             try store.markExecuting(execution.ticket)
@@ -107,6 +110,7 @@ extension InputExecutor {
     /// One event in the fixed order of contract 12.3 step 6: the ledger entry of a down event, the
     /// checks, the post, and the clear of an up event's entry.
     private func post(_ planned: PlannedEvent, _ execution: inout Execution) async -> Ending? {
+        if stopRequested { return .processStop }
         var press: PressEntry?
         if let input = planned.event.press {
             do throws(HeldInputLedgerError) {
@@ -226,6 +230,7 @@ extension InputExecutor {
                 of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
             if deadline > now { wait = min(wait, now.duration(to: deadline)) }
             await seams.timer.sleep(for: wait)
+            if stopRequested { return .processStop }
             if let ending = look(at: target, beforeDown: false, &execution).ending { return ending }
         }
     }
@@ -237,6 +242,9 @@ extension InputExecutor {
     /// written: the entry then says `failed` with the count posted, which is what the caller is
     /// answered, so the action log never holds an intent of posted input with no outcome.
     private func end(_ execution: inout Execution, _ ending: Ending) async -> EffectAnswer {
+        if case .processStop = ending {
+            return await endStopped(execution, .abortedByRestart(eventsPosted: execution.eventsPosted))
+        }
         releaseOperationInput(execution.pressed)
         let snapshot = seams.state.snapshot()
         let measured = execution.lastLookMeasured ?? execution.admissionMeasured
@@ -316,6 +324,11 @@ extension InputExecutor {
                 measured: measured)
         case .fault(let message):
             return .failed(ToolError(.internalError, message: message, state: state), measured: measured)
+        case .processStop:
+            // ``end(_:_:)`` hands a stop to ``endStopped(_:_:)``, which never finishes a record.
+            return .failed(
+                ToolError(.internalError, message: "deskhand stopped during this operation.", state: state),
+                measured: measured)
         }
     }
 }

@@ -1,0 +1,34 @@
+import Darwin
+import DeskhandPlatform
+import DeskhandTestSupport
+import Testing
+
+/// The signal wiring of the clean stop (contract 15.2): a signal delivered to this process runs the
+/// handler instead of its default action, which would end the test run.
+@Suite("Stop: the termination signal", .serialized)
+struct TerminationSignalTests {
+    /// Sends `number` to this process `count` times with a ``TerminationSignal`` installed, and
+    /// returns once the handler has run that often.
+    static func deliver(_ number: Int32, count: Int) async {
+        let (runs, handled) = AsyncStream<Void>.makeStream()
+        let signal = TerminationSignal(signal: number) { handled.yield() }
+        defer { signal.cancel() }
+        var iterator = runs.makeAsyncIterator()
+        for _ in 0..<count {
+            kill(getpid(), number)
+            _ = await iterator.next()
+        }
+    }
+
+    @Test("SIGUSR2 runs the handler, again on a second delivery, and the process lives on")
+    func userSignal() async {
+        await Self.deliver(SIGUSR2, count: 2)
+    }
+
+    @Test(
+        "SIGTERM runs the handler, again on a second delivery, and the process lives on",
+        .tags(.requiresMacSession), .macSessionTestsEnabled)
+    func termination() async {
+        await Self.deliver(SIGTERM, count: 2)
+    }
+}

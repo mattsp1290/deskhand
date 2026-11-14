@@ -20,7 +20,7 @@ func awaitBounded<T: Sendable>(within limit: Duration, _ operation: @escaping @S
 }
 
 /// Resumes a continuation with whichever answer comes first and ignores the rest.
-private final class FirstAnswer<T: Sendable>: Sendable {
+final class FirstAnswer<T: Sendable>: Sendable {
     private let continuation: Mutex<CheckedContinuation<T?, Never>?>
 
     init(_ continuation: CheckedContinuation<T?, Never>) { self.continuation = Mutex(continuation) }

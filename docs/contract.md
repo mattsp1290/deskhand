@@ -2449,6 +2449,14 @@ gate does not use this path. On `SIGTERM` deskhand:
 
 Steps 1 to 4 are done within `DEADLINE_BOUND_MS` of the signal.
 
+**Invocation.** launchd sends the signal when the LaunchAgent is unloaded
+(`launchctl bootout gui/<uid>/<label>`, or unregistering it through
+`SMAppService`); by hand it is `kill -TERM <pid>`. deskhand handles the signal
+itself instead of taking its default action, and exits with status 0 within
+`DEADLINE_BOUND_MS` of the signal. Whatever has not finished by then is left
+as it is and recovered at the next start ([section 12.9](#129-restart)), as
+after a kill. A second `SIGTERM` during the stop changes nothing.
+
 An effect call that was in flight gets no response: the caller sees the
 connection close and treats the outcome as unknown. Once deskhand is back,
 a repeat of the `operation_id` returns `interrupted` with the record's

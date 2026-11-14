@@ -85,7 +85,8 @@ public enum EffectAnswer: Sendable {
     /// A repeat of a final operation, answered from its record and posting nothing (contract 12.5).
     case replayed(OperationReplay, structuredContent: JSONValue)
     /// The connection closed before admission: nothing was posted, no record was kept, and nobody is
-    /// left to answer (contract 9.5).
+    /// left to answer (contract 9.5). Also every call once deskhand is stopping, including the one
+    /// the stop ended, whose record says how it ended (contract 15.2).
     case dropped
 
     /// `nil` only for ``dropped``.

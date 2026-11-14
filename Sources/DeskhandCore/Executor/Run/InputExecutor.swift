@@ -82,6 +82,15 @@ public actor InputExecutor {
     var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
+    /// Set by ``stop()`` and never cleared: every later call is dropped, and the call in the
+    /// section ends at its next check (contract 15.2).
+    var stopRequested = false
+    /// Calls that entered the admission section and have not answered yet: a call that left the
+    /// section is still writing its outcome entry, which a stop waits for.
+    var callsAnswering = 0
+    var stopWaiters: [CheckedContinuation<Void, Never>] = []
+    /// The operation the stop ended, once it ended.
+    var stoppedOperation: StoppedOperation?
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release.
