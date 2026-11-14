@@ -1,4 +1,5 @@
 import DeskhandCore
+import DeskhandTestSupport
 import Testing
 
 @Suite struct ActionLogEntryTests {
@@ -167,6 +168,56 @@ import Testing
             #expect(tampered != line)
             #expect(throws: ActionLogLineError.self) { try ActionLogLine(verifying: Array(tampered.utf8)) }
         }
+    }
+
+    /// Contract 12.10: a call refused before admission leaves one best-effort refusal entry, with
+    /// every member it could not supply well formed as `null`, and no text.
+    @Test func refusalEntriesRoundTripWithAndWithoutHandles() async throws {
+        let arguments = try LogSamples.keyboardArguments(LogSamples.typing("secret"))
+        let full = try #require(
+            ActionLogRefusal(
+                time: LogSamples.time, nodeAddress: LogSamples.node, principal: LogSamples.principal,
+                tool: .keyboard, holderID: arguments.holderID, operationID: arguments.operationID,
+                frameID: arguments.frameID, frameSHA256: LogSamples.frameSHA256,
+                action: .keyboard(LoggedKeyboardAction(arguments.action)), frontmostApp: LogSamples.textEdit,
+                code: .deniedApp))
+        let bare = try #require(
+            ActionLogRefusal(
+                time: LogSamples.time, nodeAddress: LogSamples.node, principal: LogSamples.principal,
+                tool: .pointer, holderID: nil, operationID: nil, frameID: nil, frameSHA256: nil, action: nil,
+                frontmostApp: nil, code: .invalidArgument))
+        let log = InMemoryActionLog()
+        for refusal in [full, bare] {
+            try await log.commitRefusal(refusal)
+            let line = try #require(await log.lines.last)
+            #expect(line.entry == .refusal(refusal))
+            #expect(line.entry.kind == .refusal)
+            #expect(try ActionLogLine(verifying: line.bytes) == line)
+            #expect(!LogSamples.text(line).contains("secret"))
+        }
+        #expect(LogSamples.text(try #require(await log.lines.last)).contains(#""holder_id":null"#))
+        #expect(
+            ActionLogRefusal(
+                time: LogSamples.time, nodeAddress: LogSamples.node, principal: LogSamples.principal, tool: .status,
+                holderID: nil, operationID: nil, frameID: nil, frameSHA256: nil, action: nil, frontmostApp: nil,
+                code: .invalidArgument) == nil)
+    }
+
+    /// The log's outcome is derived from what the record stores, so the two cannot disagree.
+    @Test func outcomesComeFromTheRecordsOutcome() {
+        let measured = Measured(
+            frontmostApp: LogSamples.textEdit, targetApp: LogSamples.textEdit, windowTitle: nil, globalPoint: nil,
+            measuredAt: LogSamples.time)
+        let stale = OperationOutcome.aborted(
+            ToolError(.staleFrame(.pixelsChanged(pointIndex: 0)), message: "", state: .ok, measured: measured))
+        #expect(ActionOutcome(stale, eventsPosted: 0) == .aborted(.staleFrame, eventsPosted: 0))
+        let paused = OperationOutcome.aborted(ToolError(.blocked(.paused), message: "", state: .paused))
+        #expect(ActionOutcome(paused, eventsPosted: 4) == .aborted(.state(.paused), eventsPosted: 4))
+        let failed = OperationOutcome.failed(ToolError(.internalError, message: "", state: .ok))
+        #expect(ActionOutcome(failed, eventsPosted: 2) == .failed(eventsPosted: 2))
+        #expect(ActionOutcome(.aborted(ToolError(.busy, message: "", state: .ok)), eventsPosted: 0) == nil)
+        #expect(AbortCause(code: .staleFrame)?.code == .staleFrame)
+        #expect(AbortCause(code: .rateLimited) == nil)
     }
 }
 

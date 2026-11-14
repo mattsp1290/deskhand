@@ -101,15 +101,33 @@ public struct ActionLogOutcome: Hashable, Sendable {
 
 /// How an admitted operation ended: its final record status (contract 12.2) and the code the call
 /// returned. A `completed` operation has no code.
+///
+/// Build it from what the record stores, with ``init(_:eventsPosted:)``, so the log's status, code
+/// and count cannot drift from the record's.
 public enum ActionOutcome: Hashable, Sendable, JSONRepresentable {
     case completed(eventsPosted: Int)
     case aborted(AbortCause, eventsPosted: Int)
     /// A fault inside deskhand: `internal_error`.
     case failed(eventsPosted: Int)
-    /// Found `accepted` after a restart: nothing was posted.
+    /// A clean stop (contract 15.2) found the operation `accepted`: nothing was posted. Only a clean
+    /// stop writes this, while the intent's receipt is still in memory. After a crash the receipt is
+    /// gone and the intent stays without an outcome entry; the record alone says what happened.
     case failedBeforeExecution
-    /// Found `executing` after a restart: `eventsPosted` is a lower bound.
+    /// A clean stop found the operation `executing`; the count is exact. As for
+    /// ``failedBeforeExecution``, a crash leaves the intent without an outcome entry.
     case abortedByRestart(eventsPosted: Int)
+
+    /// The entry for the outcome the executor gave ``OperationStore`` and the count the record holds.
+    /// `nil` for an abort with a code that no abort can have (contract 9.5): a fault in the executor.
+    public init?(_ outcome: OperationOutcome, eventsPosted: Int) {
+        switch outcome {
+        case .completed: self = .completed(eventsPosted: eventsPosted)
+        case .failed: self = .failed(eventsPosted: eventsPosted)
+        case .aborted(let error):
+            guard let cause = AbortCause(code: error.code) else { return nil }
+            self = .aborted(cause, eventsPosted: eventsPosted)
+        }
+    }
 
     public var status: OperationStatus {
         switch self {
@@ -162,14 +180,17 @@ public enum ActionOutcome: Hashable, Sendable, JSONRepresentable {
     }
 }
 
-/// Why an executing operation was aborted (contract 12.4), as the code the call returned.
+/// Why an executing operation was aborted (contract 9.5, 12.4), as the code the call returned.
 public enum AbortCause: Hashable, Sendable {
     case state(BlockingState)
+    /// The patch check was older than `PATCH_CHECK_MAX_AGE_MS` when the first event was due.
+    case staleFrame
     case userActive, deniedApp, leaseExpired, leaseNotHeld, cancelled
 
     public var code: ToolErrorCode {
         switch self {
         case .state(let state): ToolErrorCode(rawValue: state.rawValue)!
+        case .staleFrame: .staleFrame
         case .userActive: .userActive
         case .deniedApp: .deniedApp
         case .leaseExpired: .leaseExpired
@@ -178,8 +199,10 @@ public enum AbortCause: Hashable, Sendable {
         }
     }
 
-    init?(code: ToolErrorCode) {
+    /// `nil` for a code that does not end an executing operation.
+    public init?(code: ToolErrorCode) {
         switch code {
+        case .staleFrame: self = .staleFrame
         case .userActive: self = .userActive
         case .deniedApp: self = .deniedApp
         case .leaseExpired: self = .leaseExpired
@@ -192,14 +215,91 @@ public enum AbortCause: Hashable, Sendable {
     }
 }
 
+/// The refusal entry, written best effort when an effect call is refused before admission, for any
+/// code (contract 12.10). It lets an operator see what was tried against the app policy although no
+/// record exists. Every member the call could not supply well formed is `null`.
+public struct ActionLogRefusal: Hashable, Sendable {
+    public let time: Timestamp
+    public let nodeAddress: NodeAddress
+    public let principal: Principal
+    /// `pointer` or `keyboard`.
+    public let tool: ToolName
+    public let holderID: HolderID?
+    public let operationID: OperationID?
+    public let frameID: FrameID?
+    /// The frame's `sha256`, when deskhand still has the frame.
+    public let frameSHA256: SHA256Hex?
+    /// The action, when the arguments were valid. Typed text is its length only.
+    public let action: LoggedAction?
+    /// The frontmost app, when it was measured.
+    public let frontmostApp: AppRef?
+    public let code: ToolErrorCode
+
+    /// `nil` unless `tool` is an effect tool and `action`, when given, belongs to it.
+    public init?(
+        time: Timestamp, nodeAddress: NodeAddress, principal: Principal, tool: ToolName, holderID: HolderID?,
+        operationID: OperationID?, frameID: FrameID?, frameSHA256: SHA256Hex?, action: LoggedAction?,
+        frontmostApp: AppRef?, code: ToolErrorCode
+    ) {
+        guard tool.isEffect, action.map({ $0.tool == tool }) ?? true else { return nil }
+        self.time = time
+        self.nodeAddress = nodeAddress
+        self.principal = principal
+        self.tool = tool
+        self.holderID = holderID
+        self.operationID = operationID
+        self.frameID = frameID
+        self.frameSHA256 = frameSHA256
+        self.action = action
+        self.frontmostApp = frontmostApp
+        self.code = code
+    }
+
+    fileprivate var jsonMembers: JSONObject {
+        [
+            "time": time.jsonValue, "node_address": .string(nodeAddress.description),
+            "principal": .string(principal.certificateSubject), "tool": .string(tool.rawValue),
+            "holder_id": holderID.map { .string($0.rawValue) } ?? .null,
+            "operation_id": operationID.map { .string($0.rawValue) } ?? .null,
+            "frame_id": frameID.map { .string($0.rawValue) } ?? .null,
+            "frame_sha256": frameSHA256.map { .string($0.description) } ?? .null,
+            "action": action?.jsonValue ?? .null, "frontmost_app": frontmostApp?.jsonValue ?? .null,
+            "code": .string(code.rawValue),
+        ]
+    }
+
+    fileprivate static let memberNames: Set<String> = [
+        "time", "node_address", "principal", "tool", "holder_id", "operation_id", "frame_id", "frame_sha256",
+        "action", "frontmost_app", "code",
+    ]
+
+    fileprivate static func decode(_ reader: ObjectReader) throws(ArgumentError) -> ActionLogRefusal {
+        let tool = try reader.required("tool", Decode.effectTool)
+        let refusal = ActionLogRefusal(
+            time: try reader.required("time", Decode.timestamp),
+            nodeAddress: try reader.required("node_address", Decode.nodeAddress),
+            principal: try reader.required("principal", Decode.principal), tool: tool,
+            holderID: try reader.required("holder_id", Decode.nullable(Decode.identifier(HolderID.self))),
+            operationID: try reader.required("operation_id", Decode.nullable(Decode.identifier(OperationID.self))),
+            frameID: try reader.required("frame_id", Decode.nullable(Decode.identifier(FrameID.self))),
+            frameSHA256: try reader.required("frame_sha256", Decode.nullable(Decode.sha256)),
+            action: try reader.required("action", Decode.nullable(LoggedAction.decode(tool: tool))),
+            frontmostApp: try reader.required("frontmost_app", Decode.nullable(Decode.appRef)),
+            code: try reader.required("code", Decode.oneOf(ToolErrorCode.self)))
+        guard let refusal else { throw ArgumentError(at: .root, "tool and action do not agree") }
+        return refusal
+    }
+}
+
 public enum ActionLogEntryKind: String, CaseIterable, Hashable, Sendable {
-    case intent, outcome
+    case intent, outcome, refusal
 }
 
 /// One line of the action log.
 public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
     case intent(ActionLogIntent)
     case outcome(ActionLogOutcome)
+    case refusal(ActionLogRefusal)
 
     /// Written into every entry as `schema_version`. A reader refuses any other value.
     public static let schemaVersion = 1
@@ -208,6 +308,7 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
         switch self {
         case .intent: .intent
         case .outcome: .outcome
+        case .refusal: .refusal
         }
     }
 
@@ -232,6 +333,8 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
             object["intent_time"] = outcome.intentTime.jsonValue
             object["tool"] = .string(outcome.tool.rawValue)
             object["outcome"] = outcome.outcome.jsonValue
+        case .refusal(let refusal):
+            object.merge(refusal.jsonMembers) { $1 }
         }
         return .object(object)
     }
@@ -246,7 +349,7 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
     }
 
     static func decode(_ value: JSONValue) throws(ArgumentError) -> ActionLogEntry {
-        let common: Set = ["schema_version", "kind", "time", "node_address", "principal", "holder_id", "operation_id"]
+        let common: Set = ["schema_version", "kind", "time", "node_address", "principal"]
         guard case .object(let members) = value else { throw ArgumentError(at: .root, "must be an object") }
         _ = try Decode.integer(schemaVersion...schemaVersion)(
             members["schema_version"] ?? .null, JSONPointer.root.appending("schema_version"))
@@ -254,8 +357,9 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
             members["kind"] ?? .null, JSONPointer.root.appending("kind"))
         let specific: Set<String> =
             switch kind {
-            case .intent: ["tool", "frame_id", "frame_sha256", "frontmost_app", "action"]
-            case .outcome: ["intent_time", "tool", "outcome"]
+            case .intent: ["holder_id", "operation_id", "tool", "frame_id", "frame_sha256", "frontmost_app", "action"]
+            case .outcome: ["holder_id", "operation_id", "intent_time", "tool", "outcome"]
+            case .refusal: ActionLogRefusal.memberNames
             }
         let reader = try ObjectReader(value, at: .root, allowing: common.union(specific))
         switch kind {
@@ -274,6 +378,8 @@ public enum ActionLogEntry: Hashable, Sendable, JSONRepresentable {
                     action: try reader.required("action", LoggedAction.decode(tool: tool))))
         case .outcome:
             return .outcome(try ActionLogOutcome.decode(reader))
+        case .refusal:
+            return .refusal(try ActionLogRefusal.decode(reader))
         }
     }
 }
@@ -343,7 +449,7 @@ extension Decode {
     }
 
     fileprivate static func timestamp(_ value: JSONValue, _ path: JSONPointer) throws(ArgumentError) -> Timestamp {
-        guard let timestamp = Timestamp(logText: try string(value, path)) else {
+        guard let timestamp = Timestamp(canonical: try string(value, path)) else {
             throw ArgumentError(at: path, "must be a UTC timestamp as deskhand writes it")
         }
         return timestamp
@@ -362,6 +468,11 @@ extension Decode {
         return Principal(certificateSubject: subject)
     }
 
+    /// `null`, or a value `decode` accepts.
+    fileprivate static func nullable<T>(_ decode: @escaping ValueDecoder<T>) -> ValueDecoder<T?> {
+        { value, path throws(ArgumentError) in value == .null ? nil : try decode(value, path) }
+    }
+
     fileprivate static func sha256(_ value: JSONValue, _ path: JSONPointer) throws(ArgumentError) -> SHA256Hex {
         guard let digest = SHA256Hex(hex: try string(value, path)) else {
             throw ArgumentError(at: path, "must be 64 lowercase hex characters")
@@ -377,15 +488,5 @@ extension Decode {
         return AppRef(
             bundleID: try reader.required("bundle_id", nullableString),
             teamID: try reader.required("team_id", nullableString), name: try reader.required("name", string))
-    }
-}
-
-extension Timestamp {
-    /// Parses the exact text ``description`` writes: `YYYY-MM-DDTHH:MM:SS` plus `.fff` when the
-    /// milliseconds are not zero, then `Z`.
-    fileprivate init?(logText text: String) {
-        guard let instant = UTCInstant(rfc3339: text), instant.isWholeMillisecond else { return nil }
-        self = instant.timestampRoundedUp
-        guard description == text else { return nil }
     }
 }

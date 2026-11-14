@@ -1,3 +1,5 @@
+import DeskhandCore
+
 /// An action log held in memory, for tests. Like the writer daemon, it accepts a line only when it
 /// decodes to an entry and is spelled canonically.
 public actor InMemoryActionLog: ActionLogClient {

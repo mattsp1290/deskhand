@@ -1,4 +1,5 @@
 import DeskhandCore
+import DeskhandTestSupport
 import Testing
 
 @Suite struct ActionLogClientTests {

@@ -23,6 +23,13 @@ extension ActionLogClient {
     ) async throws(ActionLogFailure) {
         try await append(ActionLogLine(.outcome(ActionLogOutcome(receipt: receipt, outcome: outcome, time: now))))
     }
+
+    /// Writes the refusal entry of an effect call refused before admission (contract 12.10). Best
+    /// effort: a throw changes nothing for the call, which posted nothing. The caller only notes the
+    /// failure for the `log_unavailable` condition.
+    public func commitRefusal(_ refusal: ActionLogRefusal) async throws(ActionLogFailure) {
+        try await append(ActionLogLine(.refusal(refusal)))
+    }
 }
 
 /// Proof that an intent entry was committed. It has only the synthesized internal initializer, so
