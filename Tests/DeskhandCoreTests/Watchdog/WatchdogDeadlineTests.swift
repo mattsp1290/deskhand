@@ -59,20 +59,33 @@ struct WatchdogDeadlineTests {
     @Test("a renewal moves the deadline the watchdog wakes for")
     func renewalMovesTheWakeup() async {
         let clock = ManualScheduler()
-        let desk = FakeDesk(clock: clock, leaseTTLMs: 10_000)
+        let desk = FakeDesk(clock: clock, leaseTTLMs: 10_250)
         let executor = FakeExecutor(clock: clock)
-        let watchdog = Watchdog(
-            owner: desk, executor: executor, activity: StaticActivity(), scheduler: clock,
-            configuration: .init(allowanceReadInterval: .seconds(600)))
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(10_000).monotonic)
+        let watchdog = Watchdog(owner: desk, executor: executor, activity: StaticActivity(), scheduler: clock)
+        var woke = await Self.step(watchdog, clock: clock, until: 5000)
+        #expect(woke.last == 5000)
 
-        clock.advance(byMilliseconds: 5000)
-        desk.renewLease(ttlMs: 30_000)
+        desk.renewLease(ttlMs: 30_100)
         await watchdog.refreshState()
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(35_000).monotonic)
-        clock.advance(to: WatchdogFixture.at(10_000).monotonic)
-        _ = await watchdog.evaluate()
-        #expect(await executor.interruptions.isEmpty)
+        woke = await Self.step(watchdog, clock: clock, until: 36_000)
+        #expect(!woke.contains(10_250))
+        #expect(woke.contains(35_100))
+        let ended = await executor.firstInterrupt { if case .leaseEnded = $0 { true } else { false } }
+        #expect(ended == 35_100)
+        #expect(await executor.interrupts.allSatisfy { $0.1 >= 35_100 })
+    }
+
+    /// Moves the clock from one wakeup of the watchdog to the next, evaluating at each, up to
+    /// `endMs`, and returns the times it woke, in milliseconds since t0.
+    static func step(_ watchdog: Watchdog, clock: ManualScheduler, until endMs: Int64) async -> [Int64] {
+        var woke: [Int64] = []
+        var wakeup = await watchdog.evaluate()
+        while let next = wakeup, next <= WatchdogFixture.at(endMs).monotonic, !Task.isCancelled {
+            clock.advance(to: next)
+            woke.append(clock.elapsedMs)
+            wakeup = await watchdog.evaluate()
+        }
+        return woke
     }
 
     enum Ending: String, CaseIterable, Sendable {
@@ -92,7 +105,7 @@ struct WatchdogDeadlineTests {
 
         var wakeups: [Int64] = []
         var wakeup = await watchdog.evaluate()
-        while let next = wakeup, clock.elapsedMs < 4500 {
+        while let next = wakeup, clock.elapsedMs < 4500, !Task.isCancelled {
             clock.advance(to: next)
             wakeups.append(clock.elapsedMs)
             wakeup = await watchdog.evaluate()
@@ -123,26 +136,27 @@ struct WatchdogDeadlineTests {
         let signatures = FakeSignatures()
         signatures.set("/etc/deskhand", inode: 1)
         signatures.set("/etc/deskhand/allowance.json", inode: 2)
+        // Faster than the periodic read, so the poll is what notices.
         let poll = PollingFileChangeSource(
-            paths: ["/etc/deskhand", "/etc/deskhand/allowance.json"], scheduler: clock,
+            paths: ["/etc/deskhand", "/etc/deskhand/allowance.json"], interval: .milliseconds(250), scheduler: clock,
             signature: signatures.signature)
         let watchdog = Watchdog(
             owner: desk, executor: executor, activity: StaticActivity(), fileChanges: [poll], scheduler: clock)
         let running = Task { await watchdog.run() }
-        await clock.waitForSleepers(2)
+        await clock.waitUntil { $0.contains(WatchdogFixture.at(250).monotonic) }
 
         clock.advance(byMilliseconds: 200)
         signatures.set("/etc/deskhand/allowance.json", inode: nil)
         desk.change { $0.allowanceFile = .missing }
-        clock.advance(to: WatchdogFixture.at(500).monotonic)
+        clock.advance(to: WatchdogFixture.at(250).monotonic)
         await executor.waitForInterrupts(1)
 
         let stopped = await executor.firstInterrupt { $0 == .state(.gated) }
-        #expect(stopped == 500)
+        #expect(stopped == 250)
         #expect(try #require(stopped) - 200 <= Int64(ContractConstants.deadlineBoundMs))
         #expect(desk.read { $0.reductions.last.map { $0.1 } } == true, "the poll did not bypass the copy")
         running.cancel()
-        await running.value
+        _ = await finished(running)
     }
 
     @Test("a watch event stops the effect at once")
@@ -164,7 +178,7 @@ struct WatchdogDeadlineTests {
         #expect(await executor.firstInterrupt { $0 == .state(.gated) } == 200)
         #expect(desk.read { $0.leases.lease } == .none)
         running.cancel()
-        await running.value
+        _ = await finished(running)
     }
 
     @Test("a valid replacement only moves the deadline")
@@ -172,15 +186,17 @@ struct WatchdogDeadlineTests {
         let clock = ManualScheduler()
         let desk = FakeDesk(clock: clock, allowanceMs: 10_000)
         let executor = FakeExecutor(clock: clock)
-        let watchdog = Watchdog(
-            owner: desk, executor: executor, activity: StaticActivity(), scheduler: clock,
-            configuration: .init(allowanceReadInterval: .seconds(600)))
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(10_000).monotonic)
+        let watchdog = Watchdog(owner: desk, executor: executor, activity: StaticActivity(), scheduler: clock)
+        _ = await watchdog.evaluate()
+        #expect(Watchdog.deadline(of: desk.snapshot()) == WatchdogFixture.at(10_000).monotonic)
         clock.advance(byMilliseconds: 1000)
         desk.change { $0.allowanceFile = .valid(expiresAt: WatchdogFixture.at(4000).wall) }
         await watchdog.allowanceFileDidChange()
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(4000).monotonic)
-        #expect(await executor.interruptions.isEmpty)
+        #expect(Watchdog.deadline(of: desk.snapshot()) == WatchdogFixture.at(4000).monotonic)
+        let woke = await Self.step(watchdog, clock: clock, until: 4000)
+        #expect(woke.last == 4000)
+        #expect(await executor.interrupts.map(\.1) == [4000])
+        #expect(await executor.interruptions == [.state(.gated)])
     }
 }
 

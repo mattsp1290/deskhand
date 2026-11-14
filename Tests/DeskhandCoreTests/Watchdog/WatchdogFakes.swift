@@ -34,10 +34,10 @@ final class ManualScheduler: WatchdogScheduler {
         var sleepers: [Sleeper] = []
         var cancelled: Set<UInt64> = []
         var lastID: UInt64 = 0
-        var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     }
 
     private let state: Mutex<State>
+    private let waiters = Waiters()
 
     init(now: ContinuousClock.Instant = WatchdogFixture.t0.monotonic) { state = Mutex(State(now: now)) }
 
@@ -57,18 +57,12 @@ final class ManualScheduler: WatchdogScheduler {
         }
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                let (asleep, ready) = state.withLock { state in
-                    if deadline <= state.now || state.cancelled.contains(id) {
-                        return (false, [CheckedContinuation<Void, Never>]())
-                    }
+                let asleep = state.withLock { state in
+                    if deadline <= state.now || state.cancelled.contains(id) { return false }
                     state.sleepers.append(Sleeper(id: id, deadline: deadline, continuation: continuation))
-                    let count = state.sleepers.count
-                    let ready = state.waiters.filter { $0.count <= count }.map(\.continuation)
-                    state.waiters.removeAll { $0.count <= count }
-                    return (true, ready)
+                    return true
                 }
-                if !asleep { continuation.resume() }
-                for waiter in ready { waiter.resume() }
+                if asleep { waiters.changed() } else { continuation.resume() }
             }
         } onCancel: {
             let sleeper = state.withLock { state -> Sleeper? in
@@ -77,6 +71,7 @@ final class ManualScheduler: WatchdogScheduler {
                 return state.sleepers.remove(at: index)
             }
             sleeper?.continuation.resume()
+            waiters.changed()
         }
     }
 
@@ -90,20 +85,18 @@ final class ManualScheduler: WatchdogScheduler {
             return due.map(\.continuation)
         }
         for continuation in due { continuation.resume() }
+        waiters.changed()
     }
 
     func advance(byMilliseconds milliseconds: Int64) { advance(to: now.advanced(by: .milliseconds(milliseconds))) }
 
-    /// Returns once at least `count` tasks sleep on this clock.
-    func waitForSleepers(_ count: Int) async {
-        await withCheckedContinuation { continuation in
-            let ready = state.withLock { state in
-                guard state.sleepers.count < count else { return true }
-                state.waiters.append((count, continuation))
-                return false
-            }
-            if ready { continuation.resume() }
-        }
+    /// Returns once at least `count` tasks sleep on this clock, or the calling task is cancelled.
+    func waitForSleepers(_ count: Int) async { await waitUntil { $0.count >= count } }
+
+    /// Returns once the deadlines of the tasks asleep on this clock satisfy `condition`, or the
+    /// calling task is cancelled.
+    func waitUntil(_ condition: @escaping @Sendable ([ContinuousClock.Instant]) -> Bool) async {
+        await waiters.wait { [self] in condition(sleeperDeadlines) }
     }
 }
 
@@ -123,6 +116,7 @@ final class FakeDesk: WatchdogStateOwner {
 
     let clock: ManualScheduler
     let world: Mutex<World>
+    private let reduced = Waiters()
 
     /// Armed for `armedMs`, with an allowance that expires `allowanceMs` after t0 (none when `nil`),
     /// and a lease acquired at t0 for `leaseTTLMs` (none when `nil`).
@@ -165,7 +159,11 @@ final class FakeDesk: WatchdogStateOwner {
             _ = world.leases.expire(now: now)
             world.reductions.append((now.monotonic, allowanceChanged))
         }
+        reduced.changed()
     }
+
+    /// Returns once `count` reductions have run, or the calling task is cancelled.
+    func waitForReductions(_ count: Int) async { await reduced.wait { self.read(\.reductions.count) >= count } }
 
     func renewLease(ttlMs: Int) {
         let now = clock.reading
@@ -183,21 +181,26 @@ actor FakeExecutor: WatchdogExecutor {
     private(set) var interrupts: [(Interruption, Int64)] = []
     private(set) var cleanupRetries: [Int64] = []
     var nextRetry: ContinuousClock.Instant?
-    private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    /// What ``isExecuting`` answers.
+    private(set) var executing = false
+    private nonisolated let interruptCount = Mutex(0)
+    private nonisolated let arrivals = Waiters()
 
     init(clock: ManualScheduler) { self.clock = clock }
 
+    var isExecuting: Bool { executing }
+
+    func setExecuting(_ executing: Bool) { self.executing = executing }
+
     func interrupt(_ interruption: Interruption) {
         interrupts.append((interruption, clock.elapsedMs))
-        let ready = waiters.filter { $0.count <= interrupts.count }
-        waiters.removeAll { $0.count <= interrupts.count }
-        for waiter in ready { waiter.continuation.resume() }
+        interruptCount.withLock { $0 += 1 }
+        arrivals.changed()
     }
 
-    /// Returns once at least `count` interruptions arrived.
-    func waitForInterrupts(_ count: Int) async {
-        guard interrupts.count < count else { return }
-        await withCheckedContinuation { waiters.append((count, $0)) }
+    /// Returns once at least `count` interruptions arrived, or the calling task is cancelled.
+    nonisolated func waitForInterrupts(_ count: Int) async {
+        await arrivals.wait { self.interruptCount.withLock { $0 } >= count }
     }
 
     func retryCleanup(now: ClockReading) -> OwedRelease? {
@@ -277,38 +280,21 @@ struct OwnPosts {
 
 /// A file watch the test fires by hand.
 final class FakeFileWatch: FileChangeSource {
-    private struct State {
-        var streams: [AsyncStream<Void>.Continuation] = []
-        var waiters: [CheckedContinuation<Void, Never>] = []
-    }
-
-    private let state = Mutex(State())
+    private let streams = Mutex<[AsyncStream<Void>.Continuation]>([])
+    private let watchers = Waiters()
 
     func changes() -> AsyncStream<Void> {
         let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
-        let waiters = state.withLock { state in
-            state.streams.append(continuation)
-            defer { state.waiters = [] }
-            return state.waiters
-        }
-        for waiter in waiters { waiter.resume() }
+        streams.withLock { $0.append(continuation) }
+        watchers.changed()
         return stream
     }
 
-    /// Returns once something watches.
-    func waitUntilWatched() async {
-        await withCheckedContinuation { continuation in
-            let watched = state.withLock { state in
-                guard state.streams.isEmpty else { return true }
-                state.waiters.append(continuation)
-                return false
-            }
-            if watched { continuation.resume() }
-        }
-    }
+    /// Returns once something watches, or the calling task is cancelled.
+    func waitUntilWatched() async { await watchers.wait { !self.streams.withLock(\.isEmpty) } }
 
     func fire() {
-        for stream in state.withLock(\.streams) { stream.yield() }
+        for stream in streams.withLock({ $0 }) { stream.yield() }
     }
 }
 
@@ -417,4 +403,69 @@ final class MacOwner: WatchdogStateOwner {
     func snapshot() -> DeskSnapshot { mac.snapshot() }
 
     func reduceNow(allowanceChanged: Bool) async { count.withLock { $0 += 1 } }
+}
+
+/// The state's owner judging the allowance through the real ``AllowanceCache`` on a manual clock,
+/// so a reduction that does not drop the copy reads the file only when the copy is a second old.
+/// The owner can be late: each reduction then reaches the file `lateMs` after the watchdog asked.
+final class CacheDesk: WatchdogStateOwner {
+    struct World: Sendable {
+        var report: StateReport
+        var signals: StateSignals
+        var leases: LeaseManager
+        var cache: AllowanceCache
+        var lateMs: Int64 = 0
+        /// When each reduction reached the cache, in milliseconds since t0.
+        var reductions: [Int64] = []
+    }
+
+    static let valid = AllowanceSample.opened(contents: AllowanceSample.json(expiresAt: "\"2026-11-14T23:00:00Z\""))
+
+    let clock: ManualScheduler
+    let probe = FakeAllowanceProbe(CacheDesk.valid)
+    let world: Mutex<World>
+
+    /// Armed for an hour with a valid allowance, and a lease held for two minutes.
+    init(clock: ManualScheduler) {
+        self.clock = clock
+        let t0 = WatchdogFixture.t0
+        var signals = StateFixture.signals()
+        var cache = AllowanceCache(reader: AllowanceSample.reader(probe))
+        signals.allowance = cache.verdict(now: t0.wall, at: t0.monotonic)
+        let report = StateReducer.reduce(
+            previous: .startup, signals: signals, command: .arm(for: .seconds(3600)), now: t0
+        ).report
+        world = Mutex(
+            World(
+                report: report, signals: signals, leases: ExecutorFixture.acquired(ttlMs: 120_000, at: t0),
+                cache: cache))
+    }
+
+    func removeFile() { probe.set(.fileFailed(directory: AllowanceSample.rootDirectory, error: .notFound)) }
+
+    func setLate(_ milliseconds: Int64) { world.withLock { $0.lateMs = milliseconds } }
+
+    var fileReads: Int { probe.calls.count }
+
+    func snapshot() -> DeskSnapshot {
+        let reading = clock.reading
+        return world.withLock {
+            DeskSnapshot(reading: reading, report: $0.report, lease: $0.leases, policy: ExecutorFixture.policy)
+        }
+    }
+
+    func reduceNow(allowanceChanged: Bool) async {
+        let late = world.withLock(\.lateMs)
+        if late > 0 { clock.advance(byMilliseconds: late) }
+        let now = clock.reading
+        world.withLock { world in
+            if allowanceChanged { world.cache.invalidate() }
+            world.signals.allowance = world.cache.verdict(now: now.wall, at: now.monotonic)
+            let step = StateReducer.reduce(previous: world.report, signals: world.signals, now: now)
+            world.report = step.report
+            for case .dropLease(let state) in step.effects { _ = world.leases.drop(because: state, now: now) }
+            _ = world.leases.expire(now: now)
+            world.reductions.append(clock.elapsedMs)
+        }
+    }
 }

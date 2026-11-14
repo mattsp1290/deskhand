@@ -128,9 +128,10 @@ struct PersonActivityTests {
         if let personAt { events.append((personAt, true)) }
         events.sort { $0.at < $1.at }
 
+        await executor.setExecuting(true)
         await watchdog.executionDidChange(executing: true)
         var wakeup = await watchdog.evaluate()
-        while clock.elapsedMs <= pattern.end, await executor.interrupts.isEmpty {
+        while clock.elapsedMs <= pattern.end, await executor.interrupts.isEmpty, !Task.isCancelled {
             let nextEvent = events.first.map { WatchdogFixture.at($0.at).monotonic }
             let next = [nextEvent, wakeup].compactMap { $0 }.min()!
             clock.advance(to: next)
@@ -185,9 +186,10 @@ struct PersonActivityTests {
             owner: FakeDesk(clock: clock), executor: executor,
             activity: PersonActivitySource(signal: hid, posts: PostTimestampRecorder()) { clock.now },
             scheduler: clock)
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(1000).monotonic)
+        #expect(await watchdog.evaluate() == WatchdogFixture.at(500).monotonic)
         #expect(hid.reads == 0)
 
+        await executor.setExecuting(true)
         await watchdog.executionDidChange(executing: true)
         #expect(hid.reads == 1)
         #expect(await watchdog.evaluate() == WatchdogFixture.at(100).monotonic)
@@ -195,10 +197,35 @@ struct PersonActivityTests {
         _ = await watchdog.evaluate()
         #expect(hid.reads == 2)
 
+        await executor.setExecuting(false)
         await watchdog.executionDidChange(executing: false)
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(1000).monotonic)
+        #expect(await watchdog.evaluate() == WatchdogFixture.at(500).monotonic)
         #expect(hid.reads == 2)
         #expect(await executor.interruptions.isEmpty)
+    }
+
+    @Test("whether an effect executes is asked of the executor, so reports out of order change nothing")
+    func executionIsAsked() async {
+        let clock = ManualScheduler()
+        let hid = FakeHID(.personOnly) { clock.now }
+        let executor = FakeExecutor(clock: clock)
+        let watchdog = Watchdog(
+            owner: FakeDesk(clock: clock), executor: executor,
+            activity: PersonActivitySource(signal: hid, posts: PostTimestampRecorder()) { clock.now },
+            scheduler: clock)
+        await executor.setExecuting(true)
+        // The end of an earlier operation, delivered after the start of this one.
+        await watchdog.executionDidChange(executing: true)
+        await watchdog.executionDidChange(executing: false)
+        clock.advance(byMilliseconds: 100)
+        #expect(await watchdog.evaluate() == WatchdogFixture.at(200).monotonic)
+        #expect(hid.reads == 3)
+
+        await executor.setExecuting(false)
+        await watchdog.executionDidChange(executing: true)
+        clock.advance(byMilliseconds: 100)
+        _ = await watchdog.evaluate()
+        #expect(hid.reads == 3)
     }
 }
 

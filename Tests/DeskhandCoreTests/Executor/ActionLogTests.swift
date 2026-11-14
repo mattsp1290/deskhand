@@ -203,9 +203,9 @@ struct ActionLogTests {
         let executor = harness.executor
         let task = Task { await executor.perform(call) }
         box.hold(task)
-        let answer = await task.value
-        #expect(answer.code == .cancelled)
-        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 1))
+        let answer = await finished(task)
+        #expect(answer?.code == .cancelled)
+        #expect(answer?.operation == OperationView(status: .aborted, eventsPosted: 1))
         #expect(mac.released == [.named(.k)])
         let entries = await harness.logEntries
         #expect(entries.map(\.kind) == [.intent, .outcome])

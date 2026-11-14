@@ -33,8 +33,8 @@ struct ConcurrencyTests {
         #expect(try await harness.status() == .found(accepted))
 
         await gate.open()
-        let answer = await first.value
-        #expect(answer.result?.eventsPosted == 3)
+        let answer = await finished(first)
+        #expect(answer?.result?.eventsPosted == 3)
         guard case .replayed = await executor.perform(call) else {
             Issue.record("a repeat after the first call ended is not its replay")
             return
