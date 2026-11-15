@@ -34,6 +34,7 @@ let package = Package(
         ),
         .target(
             name: "DeskhandTestSupport",
+            dependencies: ["DeskhandCore"],
             path: "Tests/DeskhandTestSupport"
         ),
         .testTarget(
