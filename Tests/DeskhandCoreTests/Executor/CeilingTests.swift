@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// The action ceiling (contract 9.5): admitted calls and `denied_app` / `denied_shortcut` refusals
-/// count; nothing else does, a replay included.
 @Suite("Executor: the action ceiling", .timeLimit(.minutes(1)))
 struct CeilingTests {
     @Test(

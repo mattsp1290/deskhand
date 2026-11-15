@@ -2,7 +2,6 @@ import DeskhandCore
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct ActionLogRedactionTests {
-    /// Fake secrets a caller might type. Distinctive, so no fragment occurs in an entry by chance.
     static let typedTexts = [
         "Hunter2-Zq9-correct-horse",
         "pässwörd ünïcødé 🔑 ключ",
@@ -27,7 +26,6 @@ import Testing
             lines[0].entry.jsonValue["action"] == ["type": "type", "text_length": JSONValue(text.unicodeScalars.count)])
     }
 
-    /// The same, before encoding: no string anywhere inside the entry value holds the text.
     @Test(arguments: typedTexts) func typedTextIsNotStoredInTheEntry(text: String) throws {
         let intent = try LogSamples.intent(keyboard: LogSamples.typing(text))
         let strings = Self.strings(in: intent)

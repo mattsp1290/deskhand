@@ -42,9 +42,6 @@ extension InputExecutor {
         return releaseOwed(context: CleanupContext(snapshot), at: snapshot.reading.monotonic)
     }
 
-    /// Contract 12.4 step 2 for the operation that is ending: releases what it pressed and has not
-    /// let up, newest first, if cleanup is authorized. Otherwise they wait in the ledger, and
-    /// leaving the section reports `cleanup_pending`.
     func releaseOperationInput(_ pressed: [HeldInput]) {
         let state = seams.state
         let snapshot = state.snapshot()
@@ -65,8 +62,6 @@ extension InputExecutor {
         return ledger.isAvailable ? .nothingOwed : .ledgerUnreadable
     }
 
-    /// The poster a release handler gets, which tells the observer of every release it posts, at
-    /// the time it went out.
     private func releasePoster() -> ReleaseOnlyPoster {
         let (state, observer) = (seams.state, seams.observer)
         return ReleaseOnlyPoster(seams.poster) { observer.didPostEvent(at: state.snapshot().reading.monotonic) }

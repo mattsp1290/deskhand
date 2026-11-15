@@ -2,7 +2,6 @@ import DeskhandCore
 import Foundation
 import Synchronization
 
-/// A fresh directory for one test, removed when `body` returns.
 func withTemporaryDirectory(_ body: (String) throws -> Void) throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("deskhand-storage-\(UUID().uuidString)").path
@@ -22,16 +21,12 @@ struct StorageTestFailure: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-/// A ``StorageFlush`` that makes the real flushes, except the ones `fault` fails without flushing.
 final class ScriptedFlush: StorageFlush {
     enum Call: Hashable, Sendable {
-        /// ``StorageFlush/fullFlush(_:)``: `F_FULLFSYNC` on Darwin.
         case full
-        /// ``StorageFlush/flush(_:)``: `fsync`.
         case plain
     }
 
-    /// The errno that the `index`-th call of a kind fails with, counting from 0, or `nil`.
     private let fault: @Sendable (_ call: Call, _ index: Int) -> Int32?
     private let log = Mutex<[Call]>([])
 
@@ -39,12 +34,10 @@ final class ScriptedFlush: StorageFlush {
         self.fault = fault
     }
 
-    /// Fails every call of `call`'s kind with `code`, or only the one at `index`.
     static func failing(_ call: Call, with code: Int32, at index: Int? = nil) -> ScriptedFlush {
         ScriptedFlush { made, madeIndex in made == call && (index == nil || index == madeIndex) ? code : nil }
     }
 
-    /// Every call so far, in order.
     var calls: [Call] { log.withLock { $0 } }
 
     func fullFlush(_ descriptor: Int32) throws(StorageError) {

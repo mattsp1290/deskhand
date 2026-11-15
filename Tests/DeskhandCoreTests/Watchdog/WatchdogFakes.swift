@@ -6,10 +6,8 @@ import Testing
 enum WatchdogFixture {
     static let t0 = ExecutorFixture.t0
 
-    /// Both clocks `milliseconds` after ``t0``.
     static func at(_ milliseconds: Int64) -> ClockReading { t0.advanced(byMilliseconds: milliseconds) }
 
-    /// The reading whose monotonic clock shows `instant`, with the wall clock moved as far.
     static func reading(at instant: ContinuousClock.Instant) -> ClockReading {
         let milliseconds = Int64((t0.monotonic.duration(to: instant) / .milliseconds(1)).rounded(.down))
         return ClockReading(wall: t0.wall.adding(milliseconds: milliseconds), monotonic: instant)
@@ -20,8 +18,6 @@ enum WatchdogFixture {
     }
 }
 
-/// A monotonic clock that moves only when the test moves it. A sleeper wakes when the clock passes
-/// its deadline or its task is cancelled; ``waitForSleepers(_:)`` waits until that many are asleep.
 final class ManualScheduler: WatchdogScheduler {
     private struct Sleeper {
         let id: UInt64
@@ -45,7 +41,6 @@ final class ManualScheduler: WatchdogScheduler {
 
     var reading: ClockReading { WatchdogFixture.reading(at: now) }
 
-    /// Milliseconds since ``WatchdogFixture/t0``.
     var elapsedMs: Int64 { WatchdogFixture.milliseconds(since: WatchdogFixture.t0.monotonic, to: now) }
 
     var sleeperDeadlines: [ContinuousClock.Instant] { state.withLock { $0.sleepers.map(\.deadline) } }
@@ -75,7 +70,6 @@ final class ManualScheduler: WatchdogScheduler {
         }
     }
 
-    /// Moves the clock to `instant`, never back, and wakes every sleeper it reached.
     func advance(to instant: ContinuousClock.Instant) {
         let due = state.withLock { state in
             state.now = max(state.now, instant)
@@ -90,19 +84,13 @@ final class ManualScheduler: WatchdogScheduler {
 
     func advance(byMilliseconds milliseconds: Int64) { advance(to: now.advanced(by: .milliseconds(milliseconds))) }
 
-    /// Returns once at least `count` tasks sleep on this clock, or the calling task is cancelled.
     func waitForSleepers(_ count: Int) async { await waitUntil { $0.count >= count } }
 
-    /// Returns once the deadlines of the tasks asleep on this clock satisfy `condition`, or the
-    /// calling task is cancelled.
     func waitUntil(_ condition: @escaping @Sendable ([ContinuousClock.Instant]) -> Bool) async {
         await waiters.wait { [self] in condition(sleeperDeadlines) }
     }
 }
 
-/// The state's owner on a manual clock: a report, the signals it was reduced from, the lease, and
-/// the allowance file, which a reduction reads into the signals when told the file changed or when
-/// its copy is a second old (contract 14.4).
 final class FakeDesk: WatchdogStateOwner {
     struct World: Sendable {
         var report: StateReport
@@ -110,7 +98,6 @@ final class FakeDesk: WatchdogStateOwner {
         var leases: LeaseManager
         var allowanceFile: AllowanceVerdict
         var allowanceReadAt: ContinuousClock.Instant
-        /// Each reduction's time and whether it bypassed the copy.
         var reductions: [(ContinuousClock.Instant, Bool)] = []
     }
 
@@ -118,8 +105,6 @@ final class FakeDesk: WatchdogStateOwner {
     let world: Mutex<World>
     private let reduced = Waiters()
 
-    /// Armed for `armedMs`, with an allowance that expires `allowanceMs` after t0 (none when `nil`),
-    /// and a lease acquired at t0 for `leaseTTLMs` (none when `nil`).
     init(clock: ManualScheduler, armedMs: Int64 = 3_600_000, allowanceMs: Int64? = 600_000, leaseTTLMs: Int? = nil) {
         self.clock = clock
         let t0 = WatchdogFixture.t0
@@ -162,7 +147,6 @@ final class FakeDesk: WatchdogStateOwner {
         reduced.changed()
     }
 
-    /// Returns once `count` reductions have run, or the calling task is cancelled.
     func waitForReductions(_ count: Int) async { await reduced.wait { self.read(\.reductions.count) >= count } }
 
     func renewLease(ttlMs: Int) {
@@ -175,13 +159,11 @@ final class FakeDesk: WatchdogStateOwner {
     }
 }
 
-/// Records what the watchdog asks of the executor, with the manual clock's time of each request.
 actor FakeExecutor: WatchdogExecutor {
     let clock: ManualScheduler
     private(set) var interrupts: [(Interruption, Int64)] = []
     private(set) var cleanupRetries: [Int64] = []
     var nextRetry: ContinuousClock.Instant?
-    /// What ``isExecuting`` answers.
     private(set) var executing = false
     private nonisolated let interruptCount = Mutex(0)
     private nonisolated let arrivals = Waiters()
@@ -198,7 +180,6 @@ actor FakeExecutor: WatchdogExecutor {
         arrivals.changed()
     }
 
-    /// Returns once at least `count` interruptions arrived, or the calling task is cancelled.
     nonisolated func waitForInterrupts(_ count: Int) async {
         await arrivals.wait { self.interruptCount.withLock { $0 } >= count }
     }
@@ -214,12 +195,9 @@ actor FakeExecutor: WatchdogExecutor {
 
     var interruptions: [Interruption] { interrupts.map(\.0) }
 
-    /// When the first interruption satisfying `matches` arrived, in milliseconds since t0.
     func firstInterrupt(where matches: (Interruption) -> Bool) -> Int64? { interrupts.first { matches($0.0) }?.1 }
 }
 
-/// The Mac's input hardware as the idle signal sees it: the person's latest input, and, for a
-/// signal that counts them, deskhand's own events.
 final class FakeHID: IdleSignalSource {
     enum Kind: Sendable {
         case personOnly
@@ -237,7 +215,6 @@ final class FakeHID: IdleSignalSource {
     private let state: Mutex<State>
     private let clock: @Sendable () -> ContinuousClock.Instant
 
-    /// The person last touched the Mac a minute before `clock()` first reads.
     init(_ kind: Kind, clock: @escaping @Sendable () -> ContinuousClock.Instant) {
         self.clock = clock
         state = Mutex(State(kind: kind, person: clock().advanced(by: .seconds(-60))))
@@ -266,8 +243,6 @@ final class FakeHID: IdleSignalSource {
     }
 }
 
-/// deskhand's posts as the platform would report them: to the post recorder through the
-/// executor's observer, and to the hardware.
 struct OwnPosts {
     let recorder = PostTimestampRecorder()
     let hid: FakeHID
@@ -278,7 +253,6 @@ struct OwnPosts {
     }
 }
 
-/// A file watch the test fires by hand.
 final class FakeFileWatch: FileChangeSource {
     private let streams = Mutex<[AsyncStream<Void>.Continuation]>([])
     private let watchers = Waiters()
@@ -290,7 +264,6 @@ final class FakeFileWatch: FileChangeSource {
         return stream
     }
 
-    /// Returns once something watches, or the calling task is cancelled.
     func waitUntilWatched() async { await watchers.wait { !self.streams.withLock(\.isEmpty) } }
 
     func fire() {
@@ -298,7 +271,6 @@ final class FakeFileWatch: FileChangeSource {
     }
 }
 
-/// `lstat` signatures the test sets per path.
 final class FakeSignatures: Sendable {
     private let signatures = Mutex<[String: PathSignature]>([:])
     private let lookups = Mutex(0)
@@ -321,9 +293,6 @@ final class FakeSignatures: Sendable {
     }
 }
 
-/// The real executor on a fake Mac, built with a ``PersonActivitySource`` over a fake idle signal
-/// and an observer that reports every post to the recorder and the hardware, with a watchdog over
-/// both. The watchdog's owner is the fake Mac, whose clock moves by the executor's waits.
 struct ExecutorWatch {
     let mac: FakeMac
     let hid: FakeHID
@@ -368,7 +337,6 @@ struct ExecutorWatch {
             connection: FakeConnection())
     }
 
-    /// The person touches the Mac `milliseconds` from the fake Mac's now, which moves there.
     func personActs(afterMilliseconds milliseconds: Int64) -> ContinuousClock.Instant {
         mac.advance(byMilliseconds: milliseconds)
         let instant = mac.reading.monotonic
@@ -377,7 +345,6 @@ struct ExecutorWatch {
     }
 }
 
-/// The fake Mac's observer, with each post also reported as the platform would report it.
 struct ReportingObserver: ExecutorObserver {
     let mac: FakeMac
     let posts: OwnPosts
@@ -391,7 +358,6 @@ struct ReportingObserver: ExecutorObserver {
     func cleanupPendingDidChange(_ pending: Bool) { mac.cleanupPendingDidChange(pending) }
 }
 
-/// The fake Mac as the watchdog's state owner: its state changes only when the test changes it.
 final class MacOwner: WatchdogStateOwner {
     let mac: FakeMac
     private let count = Mutex(0)
@@ -405,9 +371,6 @@ final class MacOwner: WatchdogStateOwner {
     func reduceNow(allowanceChanged: Bool) async { count.withLock { $0 += 1 } }
 }
 
-/// The state's owner judging the allowance through the real ``AllowanceCache`` on a manual clock,
-/// so a reduction that does not drop the copy reads the file only when the copy is a second old.
-/// The owner can be late: each reduction then reaches the file `lateMs` after the watchdog asked.
 final class CacheDesk: WatchdogStateOwner {
     struct World: Sendable {
         var report: StateReport
@@ -415,7 +378,6 @@ final class CacheDesk: WatchdogStateOwner {
         var leases: LeaseManager
         var cache: AllowanceCache
         var lateMs: Int64 = 0
-        /// When each reduction reached the cache, in milliseconds since t0.
         var reductions: [Int64] = []
     }
 
@@ -425,7 +387,6 @@ final class CacheDesk: WatchdogStateOwner {
     let probe = FakeAllowanceProbe(CacheDesk.valid)
     let world: Mutex<World>
 
-    /// Armed for an hour with a valid allowance, and a lease held for two minutes.
     init(clock: ManualScheduler) {
         self.clock = clock
         let t0 = WatchdogFixture.t0

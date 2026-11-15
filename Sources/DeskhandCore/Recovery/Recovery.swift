@@ -68,7 +68,6 @@ public struct Recovery: Sendable {
                 nil
             }
         let report = RecoveryReport(
-            // The executor's initializer loads the store once, synchronously.
             operationRecords: records.firstLoad!, heldInputLedger: ledgerRecovery, cleanup: cleanup,
             effectRefusal: effectRefusal)
         return RecoveredStart(executor: executor, world: world, report: report)

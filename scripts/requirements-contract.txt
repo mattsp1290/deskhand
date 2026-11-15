@@ -1,10 +1,7 @@
 # For scripts/check-contract.py. referencing ships with jsonschema; it is pinned
 # too because the script imports it directly. rfc3339-validator makes jsonschema
 # assert the date-time format (without it the format is silently skipped), and
-# six is its only dependency. attrs, jsonschema-specifications (the metaschemas
-# that check_schema uses) and rpds-py are jsonschema's and referencing's own
-# dependencies, pinned so that a new release of one cannot change the check.
-# The versions are the ones the Python 3.13 CI job resolved.
+# six is its only dependency.
 attrs==26.1.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1

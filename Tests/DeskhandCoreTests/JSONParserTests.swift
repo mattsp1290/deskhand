@@ -37,8 +37,6 @@ import Testing
         #expect(error.offset == 9)
     }
 
-    /// A literal with a non-zero digit that a double cannot hold, by overflow or underflow, is not
-    /// I-JSON: `1e-400` is not the integer 0.
     @Test(arguments: ["1e-400", "-1e-400", "0.1e-399", "4.9e-324", "1e400"])
     func rejectsNumbersADoubleCannotHold(text: String) throws {
         let error = try #require(throws: JSONParseError.self) { try JSONValue(parsing: text) }
@@ -71,8 +69,6 @@ import Testing
         #expect(surrogateBytes.kind == .invalidUnicode && surrogateBytes.location == JSONPointer(["0"]))
     }
 
-    /// Contract 2.4: the server must tell a strict-JSON fault inside `params.arguments` from one
-    /// elsewhere, so a request body is parsed to the end with every such fault located.
     @Test func aRequestBodyReportsStrictFaultsWithTheirLocation() throws {
         let body =
             #"{"method": "tools/call", "params": {"name": "keyboard", "arguments": {"a": 1, "a": 2, "t": "\ud800"}}}"#

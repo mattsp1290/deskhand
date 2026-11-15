@@ -3,7 +3,6 @@ import Foundation
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct FileOperationStorageTests {
-    /// A fresh directory per test; removed when the test's closure returns.
     static func withDirectory(_ body: (String) throws -> Void) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("deskhand-operations-\(UInt64.random(in: 0...UInt64.max))").path
@@ -53,7 +52,6 @@ import Testing
         }
     }
 
-    /// The directory is checked first: a stranger owns neither it nor the file.
     @Test func refusesAStoreOwnedBySomeoneElse() throws {
         try Self.withDirectory { directory in
             let path = directory + "/operations.jsonl"
@@ -81,13 +79,10 @@ import Testing
         }
     }
 
-    /// B3: a failed `F_FULLFSYNC` on the `accepted` entry is a failed write. It is not hidden by an
-    /// `fsync` that succeeds, and the store latches unavailable.
     @Test(arguments: [EIO, ENOSPC])
     func aFullFlushErrorMakesTheStoreUnavailable(_ code: Int32) throws {
         try Self.withDirectory { directory in
             let path = directory + "/operations.jsonl"
-            // The load's rewrite makes two flushes; the admission's append makes the third.
             let flusher = ScriptedFlush.failing(.full, with: code, at: 2)
             let store = try OperationStore(
                 storage: FileOperationStorage(path: path, flusher: flusher), now: Sample.start)

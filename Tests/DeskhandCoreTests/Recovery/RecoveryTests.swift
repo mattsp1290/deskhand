@@ -2,13 +2,11 @@ import DeskhandCore
 import Foundation
 import Testing
 
-/// A start after a crash or a stop, on real files (contract 10.1, 11.2, 12.7 to 12.9).
 @Suite("Recovery: restart", .timeLimit(.minutes(1)))
 struct RecoveryTests {
     static let accepted = Sample.key("op-accepted")
     static let executing = Sample.key("op-executing")
     static let completed = Sample.key("op-completed")
-    /// In press order.
     static let left: [HeldInput] = [.modifierKey(.command), .modifierKey(.shift), .button(.left), .named(.a)]
 
     @Test("an executing record becomes aborted_by_restart with its count, an accepted one failed_before_execution")
@@ -31,7 +29,6 @@ struct RecoveryTests {
             #expect(acceptedView == .found(OperationView(status: .failedBeforeExecution, eventsPosted: 0)))
             #expect(completedView == .found(OperationView(status: .completed, eventsPosted: 2)))
 
-            // Written durably: the next load finds nothing left unfinished.
             let now = rig.mac.reading.wall
             let reloaded = try OperationStore(storage: FileOperationStorage(path: rig.journalPath), now: now)
             #expect(reloaded.restartedAtLoad.isEmpty)
@@ -100,13 +97,9 @@ struct RecoveryTests {
         }
     }
 
-    /// Where the first start dies.
     enum CrashPoint: CaseIterable, CustomStringConvertible {
-        /// Writing back the restart rules: the new journal never lands.
         case journalRewrite
-        /// At the second release, after the first went out and its entry was cleared.
         case secondRelease
-        /// After the first release went out, before the clear of its entry reached the disk.
         case firstClear
 
         var description: String {
@@ -160,7 +153,6 @@ struct RecoveryTests {
                 Issue.record("the second start did not finish cleanup: \(second.report)")
                 return
             }
-            // A release whose clear never landed goes out again: an extra key-up does no harm.
             let expected = (point == .firstClear ? [Self.left.last!] : []) + Self.left.reversed()
             #expect(rig.mac.released == expected)
             #expect(try rig.ledgerOnDisk().isEmpty)
@@ -171,7 +163,6 @@ struct RecoveryTests {
         }
     }
 
-    /// A store that cannot be loaded.
     enum StoreFault: CaseIterable, CustomStringConvertible {
         case corruptJournal, journalTooOpen, journalWrongOwner
         case corruptLedger, ledgerTooOpen, ledgerWrongOwner
@@ -239,7 +230,6 @@ struct RecoveryTests {
                 await #expect(throws: OperationStoreError.unavailable) {
                     try await executor.operationStatus(for: Self.executing)
                 }
-                // A release needs no record.
                 #expect(rig.mac.released == Self.left.reversed())
             } else {
                 let view = try await executor.operationStatus(for: Self.executing)
@@ -249,7 +239,6 @@ struct RecoveryTests {
                     return
                 }
                 #expect(rig.mac.released.isEmpty)
-                // What the ledger holds is not known, so input may still be down.
                 #expect(rig.mac.read(\.cleanupPending).last == true)
                 #expect(!rig.mac.read(\.cleanupPending).contains(false))
                 #expect(await executor.owesReleases)
@@ -323,7 +312,6 @@ struct RecoveryTests {
             #expect(states.contains(.disarmed))
             #expect(!states.contains(.paused))
 
-            // Nothing read yet means every blocking condition holds (contract 10.1: fail closed).
             guard case .attempted(.deferred(let blockers)) = started.report.cleanup else {
                 Issue.record("released before the Mac was read: \(started.report)")
                 return
@@ -343,7 +331,6 @@ struct RecoveryTests {
             let ticket = try Sample.admit(store, Self.executing, at: now)
             try store.markExecuting(ticket)
             try store.interrupt(ticket, eventsPosted: 5)
-            // The stop's releases had to wait for a lock.
             try rig.leaveInLedger(Self.left)
 
             let started = await rig.start()

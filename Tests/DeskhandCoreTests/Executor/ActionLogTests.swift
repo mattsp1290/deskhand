@@ -1,13 +1,8 @@
 import DeskhandCore
 import Testing
 
-/// The action log around an effect (contract 11.3, 12.3, 12.10): every admitted call gets its
-/// outcome entry, no append can hold the section or the answer for ever, and a caller hanging up
-/// does not cancel an append.
 @Suite("Executor: the action log", .timeLimit(.minutes(1)))
 struct ActionLogTests {
-    /// Runs `call` until it reaches `gate`, which holds it, then lets every wait limit pass and
-    /// returns the answer: `nil` when the call never answered.
     static func answer(of call: EffectCall, on harness: Harness, after gate: Gate, limits: ManualWaitLimits) async
         -> EffectAnswer?
     {
@@ -21,8 +16,6 @@ struct ActionLogTests {
     @Test("a final record write that fails still gets an outcome entry: failed, with the events posted")
     func finalRecordWriteFails() async throws {
         let loader = FakeStoreLoader()
-        // The load's replace crosses boundaries 0 to 3, admission 4 and 5, executing 6 and 7, and
-        // the final record's append is 8.
         loader.faultAt = 8
         let harness = try Harness(loader: loader)
         let call = try harness.keyboard(["type": "type", "text": "hi"])
@@ -154,7 +147,6 @@ struct ActionLogTests {
         let first = Task { await executor.perform(firstCall) }
         var arrivals = gate.arrived.makeAsyncIterator()
         _ = await arrivals.next()
-        // The second call reaches its own outcome entry only if it was admitted and ran.
         let second = Task { await executor.perform(secondCall) }
         _ = await arrivals.next()
         let answers = await limits.passing { (await finished(first), await finished(second)) }

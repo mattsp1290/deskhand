@@ -16,7 +16,6 @@ public struct ActionCeiling: Sendable {
     public static let windowMs: Int64 = 60_000
 
     public let actionsPerMinute: Int
-    /// Counted times in the window, oldest first.
     private var counted: [Timestamp] = []
 
     /// A ceiling below one call a minute is taken as one.
@@ -51,11 +50,6 @@ public struct ActionCeiling: Sendable {
         return true
     }
 
-    /// Drops what no longer counts at `now`.
-    ///
-    /// A counted time later than `now` means the clock was stepped back. It is moved to `now`, so the
-    /// step never lets extra calls through and delays the next one by at most one window. A step
-    /// forward ends the window early by the size of the step.
     private mutating func forget(before now: Timestamp) {
         counted = counted.map { min($0, now) }.filter {
             now.millisecondsSinceEpoch - $0.millisecondsSinceEpoch < Self.windowMs

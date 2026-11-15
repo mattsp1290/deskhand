@@ -4,7 +4,6 @@ import DeskhandCore
 /// target would need a Package.swift `resources` or `exclude` entry. Test-only: the paths name no
 /// real credentials.
 enum ConfigFixtures {
-    /// A complete configuration for `lunus-macbook-pro`, every optional member spelled out.
     static let example = """
         {
           "version": 1,
@@ -45,7 +44,6 @@ enum ConfigFixtures {
         }
         """
 
-    /// The required members only, for `m1max2021`.
     static let minimal: JSONValue = [
         "version": 1,
         "mac": "m1max2021",
@@ -61,13 +59,10 @@ enum ConfigFixtures {
         "allowance": ["path": "/var/run/birbhomes/allowance.json"],
     ]
 
-    /// `minimal` with the value at `path` replaced, or removed when `value` is `nil`.
     static func minimal(setting path: [String], to value: JSONValue?) -> JSONValue {
         setting(minimal, path, to: value)
     }
 
-    /// `document` with the value at `path` replaced, or removed when `value` is `nil`. Missing
-    /// objects along the path are created.
     static func setting(_ document: JSONValue, _ path: [String], to value: JSONValue?) -> JSONValue {
         setting(document, path[...], to: value)
     }

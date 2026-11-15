@@ -2,11 +2,8 @@ import DeskhandCore
 import Foundation
 import Testing
 
-/// A store that could not be read, at start or after a failed write, is read again by the cleanup
-/// retries the watchdog runs, with no call (contract 11.2, 12.3, 12.9 step 5).
 @Suite("Recovery: stores read again without a call", .timeLimit(.minutes(1)))
 struct UnreadableStoreTests {
-    /// In press order.
     static let left: [HeldInput] = [.modifierKey(.shift), .button(.left)]
 
     @Test("a ledger unreadable at start reports cleanup_pending; once repaired, the retries release what it holds")
@@ -28,7 +25,6 @@ struct UnreadableStoreTests {
             let watchdog = Watchdog(
                 owner: MacOwner(mac: rig.mac), executor: executor, activity: StaticActivity(),
                 scheduler: ManualScheduler())
-            // Still unreadable: read again at once on the change of state, then once a second.
             _ = await watchdog.evaluate()
             let triedAt = rig.mac.reading.monotonic
             #expect(await executor.nextCleanupRetry(at: rig.mac.reading) == triedAt.advanced(by: .seconds(1)))

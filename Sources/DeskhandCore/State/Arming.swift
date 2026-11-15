@@ -14,7 +14,6 @@ public enum Arming: Hashable, Sendable {
         return now.wallTime(at: until)
     }
 
-    /// Arming as of `now`: an arming period that has run out is `disarmed`.
     func settled(at now: ClockReading) -> Arming {
         if case .armed(let until) = self, now.monotonic >= until { return .disarmed }
         return self
@@ -28,8 +27,6 @@ public enum Arming: Hashable, Sendable {
         }
     }
 
-    /// `refusal` is why the person's command cannot be accepted now, if it cannot; it only ever
-    /// stops arming, never disarming or the kill switch.
     func applying(_ command: ArmingCommand?, refusal: ArmingRefusal?, now: ClockReading) -> Arming {
         let current = settled(at: now)
         switch (command, current) {

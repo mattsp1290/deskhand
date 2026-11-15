@@ -25,7 +25,6 @@ import Testing
     private static let atExpiry = StateFixture.at(3_600_000)
     private static let later = StateFixture.at(3_660_000)
 
-    /// Contract 10.4 and Appendix A 26.
     static let rows: [Row] = [
         Row("disarmed stays disarmed", .disarmed, nil, at: t0, .disarmed),
         Row("arming from disarmed", .disarmed, .arm(for: F.armingPeriod), at: t0, .armed(until: until)),
@@ -68,7 +67,6 @@ import Testing
         #expect(report.activeStates(at: row.at).states == expected)
     }
 
-    /// Contract 10.1: deskhand starts `disarmed`, and nothing from a previous run seeds it.
     @Test func firstReadingIsDisarmedWithNoEffects() {
         let (report, effects) = F.reduce(.startup, F.signals())
         #expect(report.state(at: F.t0) == .disarmed)
@@ -77,8 +75,6 @@ import Testing
         #expect(effects.isEmpty)
     }
 
-    /// Contract 10.4: the kill switch makes `paused` and `disarmed` hold together, with no
-    /// `armed_until`, and does everything leaving `ok` does.
     @Test func killSwitchPausesAndDisarms() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         #expect(armed.state(at: F.t0) == .ok)
@@ -89,8 +85,6 @@ import Testing
         #expect(effects == [.cancelInFlight(.paused), .releaseHeldInput, .invalidateFrames, .dropLease(.paused)])
     }
 
-    /// Contract 10.4 and Appendix A 27: by default `gated` ends arming, so when the allowance returns
-    /// the state is `disarmed` until a person arms again.
     @Test func gatedEndsArmingByDefault() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         let gated = F.reduce(armed, F.signals(holding: [.gated]), configuration: .standard)
@@ -107,7 +101,6 @@ import Testing
         #expect(rearmed.report.state(at: F.at(2)) == .ok)
     }
 
-    /// A person can still arm while `gated`; only `gated` beginning ends arming.
     @Test func armingDuringGatedStands() {
         let gatedSignals = F.signals(holding: [.gated])
         let disarmed = F.report(arming: .disarmed, signals: gatedSignals)
@@ -119,8 +112,6 @@ import Testing
         #expect(back.report.state(at: F.at(2000)) == .ok)
     }
 
-    /// With `gated_ends_arming` false, `gated` and arming are independent: if the allowance returns
-    /// before arming runs out, the state is `ok` again with nobody at the Mac.
     @Test func gatedLeavesArmingAloneWhenConfigured() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         let gated = F.reduce(armed, F.signals(holding: [.gated]))
@@ -137,7 +128,6 @@ import Testing
         #expect(ranOut.effects == [.dropLease(.disarmed)])
     }
 
-    /// Contract 10.4, "Only a person arms".
     @Test func onlyAPersonArms() {
         let disarmed = F.report(arming: .disarmed, signals: F.signals())
         let cases: [(OwnInputActivity, ArmingRefusal?)] = [
@@ -177,7 +167,6 @@ import Testing
         #expect(F.reduce(paused, F.signals(ownInput: busy), .arm(for: F.armingPeriod)).report.arming == .paused)
     }
 
-    /// A report read after `armed_until` is not `ok`, whoever holds it, without a reduction.
     @Test func aHeldReportStopsBeingOKWhenArmingRunsOut() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         #expect(armed.state(at: F.at(3_599_999)) == .ok)
@@ -186,8 +175,6 @@ import Testing
         #expect(armed.validUntil(at: F.t0) == F.armedUntil)
     }
 
-    /// The allowance's expiry is compared with the clock on every read of a report, and ends arming
-    /// as `gated` beginning does.
     @Test func aHeldReportTurnsGatedWhenTheAllowanceExpires() {
         let expiry = F.at(10_000)
         let signals = StateSignals(
@@ -206,7 +193,6 @@ import Testing
         #expect(independent.activeStates(at: expiry).inPrecedenceOrder == [.gated])
     }
 
-    /// The deadline of an effect is the earliest of the allowance, the lease and the arming.
     @Test func effectDeadlineIsTheEarliestEnd() {
         let signals = StateSignals(
             allowance: .valid(expiresAt: F.at(20_000).wall), readings: F.signals().readings,
@@ -222,7 +208,6 @@ import Testing
         #expect(report.effectDeadline(of: lease, leases: manager, at: F.t0) == F.at(10_000).monotonic)
     }
 
-    /// Arming is measured on the monotonic clock: setting the wall clock back does not lengthen it.
     @Test func aWallClockStepDoesNotLengthenArming() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         let steppedBack = ClockReading(wall: F.at(-86_400_000).wall, monotonic: F.at(3_600_000).monotonic)

@@ -132,7 +132,6 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
             measuredAt: measuredAt)
     }
 
-    /// The frontmost app, the target app and the app at the end of a drag all carry a `bundle_id`.
     fileprivate var identifiesEveryApp: Bool {
         frontmostApp.bundleID != nil && targetApp?.bundleID != nil
             && (dragEnd.map { $0.targetApp.bundleID != nil } ?? true)

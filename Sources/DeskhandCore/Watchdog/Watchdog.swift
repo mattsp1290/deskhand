@@ -53,13 +53,10 @@ public actor Watchdog {
         }
     }
 
-    /// The two loops of ``run()``.
     private enum Loop {
         case owner, executor
     }
 
-    /// One loop's sleep: until its wakeup, or until it is rung. A ring while the loop is awake makes
-    /// its next sleep return at once, so a change it may have missed is evaluated.
     private struct Alarm {
         var sleeper: CheckedContinuation<Void, Never>?
         var rangWhileAwake = false
@@ -76,8 +73,6 @@ public actor Watchdog {
 
     private var nextActivityPoll: ContinuousClock.Instant?
     private var nextAllowanceRead: ContinuousClock.Instant?
-    /// One reduction of the owner's at a time; a read of the file asked for meanwhile is carried
-    /// into another pass.
     private var reducing = false
     private var allowanceChangePending = false
     private var alarms: [Loop: Alarm] = [.owner: Alarm(), .executor: Alarm()]
@@ -190,8 +185,6 @@ public actor Watchdog {
         }
     }
 
-    /// The owner's side: a read of the allowance file when the periodic read is due, a reduction
-    /// when a deadline has passed. Returns when it is next due.
     private func readIfDue() async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
@@ -202,12 +195,10 @@ public actor Watchdog {
             ring(.executor)
         }
         let after = owner.snapshot()
-        // A reduction another task started is still running and carries the read asked for here.
         if reducing { return after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval) }
         return [nextAllowanceRead, deadlineWakeup(of: after)].compactMap { $0 }.min()
     }
 
-    /// The executor's side at `snapshot`'s reading. Returns when it is next due.
     private func act(on snapshot: DeskSnapshot) async -> ContinuousClock.Instant? {
         let now = snapshot.reading
         for interruption in Self.interruptions(at: snapshot) { await executor.interrupt(interruption) }
@@ -223,26 +214,17 @@ public actor Watchdog {
         return [cleanupRetry, nextActivityPoll, deadlineWakeup(of: snapshot)].compactMap { $0 }.min()
     }
 
-    /// When to act on the deadline next: at the deadline, or, once it has passed and the owner has
-    /// not settled it, ``Configuration/deadlineRetryInterval`` from now.
     private func deadlineWakeup(of snapshot: DeskSnapshot) -> ContinuousClock.Instant? {
         guard let deadline = Self.deadline(of: snapshot) else { return nil }
         let now = snapshot.reading.monotonic
         return deadline > now ? deadline : now.advanced(by: configuration.deadlineRetryInterval)
     }
 
-    /// The same rule as the executor's checks (contract 13.2): input within
-    /// `USER_ACTIVITY_LOOKBACK_MS`, or an idle time that cannot be told, is activity.
     private func personInterruption() -> Interruption? {
         guard let idle = activity.idleMilliseconds() else { return .userActive(idleMs: 0) }
         return idle < ContractConstants.userActivityLookbackMs ? .userActive(idleMs: max(0, idle)) : nil
     }
 
-    /// Has the owner reduce, reading the allowance file again when `allowanceChanged`. Returns at
-    /// once while another reduction runs, which then makes one more pass for a read asked for
-    /// meanwhile. The next periodic read is scheduled from the start of the pass that reads, before
-    /// waiting on the owner, so an owner that calls ``refreshState()`` from inside its reduction
-    /// does not start another.
     private func reduce(allowanceChanged: Bool) async {
         allowanceChangePending = allowanceChangePending || allowanceChanged
         guard !reducing else { return }
@@ -258,7 +240,6 @@ public actor Watchdog {
         reducing = false
     }
 
-    /// Returns at `wakeup`, when the loop is rung, or when the task is cancelled.
     private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?) async {
         if alarms[loop, default: Alarm()].rangWhileAwake {
             alarms[loop, default: Alarm()].rangWhileAwake = false
@@ -289,7 +270,6 @@ public actor Watchdog {
         sleeper.resume()
     }
 
-    /// A timer from an earlier sleep is ignored.
     private func endSleep(_ loop: Loop, generation: UInt64) {
         guard generation == alarms[loop, default: Alarm()].generation,
             let sleeper = alarms[loop, default: Alarm()].sleeper

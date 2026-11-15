@@ -2,8 +2,6 @@ import DeskhandCore
 import Foundation
 import Testing
 
-/// Each valid output example, rebuilt from the result models. Timestamps are milliseconds since the
-/// epoch of the example's RFC 3339 strings.
 private enum Examples {
     static let holder = HolderID("crew:inst-7f3a:desk-lunus")!
     static let frame = FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!
@@ -42,15 +40,12 @@ private enum Examples {
         LeaseToolResult(result: LeaseResult(operation: op, outcome: outcome), lease: view)
     }
 
-    /// The drag of `pointer.input.drag.json`.
     static let drag: PointerAction = {
-        // A fixture that does not decode fails every test that reads it, so a trap here is enough.
         let arguments = try! Fixtures.json("examples/pointer.input.drag.json").objectValue!
         return try! PointerArguments(arguments: arguments).action
     }()
     static let move = PointerAction.move(FramePoint(x: 1204, y: 778))
 
-    /// The facts of the user_active abort of a drag: the last look, `drag_end` included.
     static let dragMeasured = Measured(
         frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt", globalPoint: pointerPoint,
         dragEnd: DragEnd(
@@ -306,14 +301,12 @@ private enum Examples {
         let denied = ToolError(
             .deniedApp(.policy, measured: Examples.dragMeasured, pointIndex: 3), message: "", state: .ok,
             measured: Examples.dragMeasured)
-        // Contract 9.2: on denied_app `measured` describes only the check that failed.
         #expect(denied.jsonValue["measured"]?["drag_end"] == nil)
         #expect(denied.jsonValue["measured"]?["window_title"] == .null)
         #expect(denied.jsonValue["measured"]?["global_point"] == Examples.pointerPoint.jsonValue)
         #expect(denied.jsonValue["details"] == ["denied_by": "policy", "point_index": 3])
     }
 
-    /// Contract 9.2: `current_state` is present exactly when `replayed` is `true`.
     @Test func currentStateComesOnlyWithAReplay() {
         let view = OperationView(status: .aborted, eventsPosted: 2)
         let first = ToolError(.blocked(.locked), message: "", state: .locked, operation: .result(view))
@@ -326,8 +319,6 @@ private enum Examples {
         #expect(existing.jsonValue["replayed"] == nil && existing.jsonValue["current_state"] == nil)
     }
 
-    /// `defs.json`: a state's own code carries that state. Re-review A, finding 6: an abort for a
-    /// lease that `disarmed` dropped is built while `gated` may already be the state.
     @Test(arguments: BlockingState.allCases)
     func aStateCodeCarriesItsOwnState(_ blocked: BlockingState) {
         for given in DeskhandState.allCases {
@@ -350,8 +341,6 @@ private enum Examples {
             measuredAt: Examples.at(0))
     }
 
-    /// Contract 6.7 (D7): a success names every app with a `bundle_id`; a `pointer` success has a
-    /// global point and `drag_end` exactly for a drag; a `keyboard` success has neither.
     @Test func aSuccessHasEveryFactItNeeds() {
         #expect(SuccessMeasured(pointer: Self.measured(), action: Examples.move) != nil)
         #expect(SuccessMeasured(pointer: Self.measured(dragEnd: Self.preview), action: Examples.drag) != nil)
@@ -400,7 +389,6 @@ private enum Examples {
             frontmostApp: Examples.textEdit, targetApp: nil, windowTitle: long, globalPoint: nil,
             measuredAt: Examples.at(0))
         #expect(measured.windowTitle?.unicodeScalars.count == 512)
-        // 300 graphemes of two scalars each: a cut by characters would keep 600 scalars.
         let combining = try #require(
             policy.windowTitle(String(repeating: "e\u{301}", count: 300), of: Examples.textEdit))
         let end = DragEnd(targetApp: Examples.textEdit, windowTitle: combining, globalPoint: Examples.pointerPoint)

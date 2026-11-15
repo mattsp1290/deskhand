@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Contract 11.2 and Appendix A item 33: deskhand tries pending cleanup again on every change of
-/// state and at least once a second.
 @Suite("Release: the retry schedule", .timeLimit(.minutes(1)))
 struct CleanupRetryScheduleTests {
     static let start = ExecutorFixture.t0.monotonic

@@ -192,8 +192,6 @@ extension PointerAction {
     /// executor moves the pointer through the same samples, checking each before it moves there.
     public var policySamples: [(pointIndex: Int, point: FramePoint)] {
         guard case .drag(let drag) = self else { return [(0, points[0])] }
-        // Rounding moves each end of a step by at most half a pixel per axis, so a step of
-        // `limit - sqrt(2)` stays within `limit` once rounded.
         let step = Double(ContractConstants.dragPolicySamplePx) - 2.0.squareRoot()
         var samples = [(pointIndex: 0, point: drag.path[0])]
         for index in drag.path.indices.dropFirst() {

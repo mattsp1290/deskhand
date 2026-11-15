@@ -2,8 +2,6 @@ import DeskhandCore
 import Foundation
 import Testing
 
-/// The ledger on a real ``DurableFile`` (A1): the same owner, mode, link and flush rules as the
-/// operation records.
 @Suite(.timeLimit(.minutes(1))) struct FileHeldInputStoreTests {
     @Test func replacesAtomicallyWithOwnerOnlyPermissions() throws {
         try withTemporaryDirectory { directory in
@@ -30,8 +28,6 @@ import Testing
         }
     }
 
-    /// A missing directory is not an empty ledger: the ledger does not load, so no press is guarded
-    /// by a file that cannot exist.
     @Test func aMissingDirectoryFailsTheLoad() throws {
         try withTemporaryDirectory { directory in
             try expectReadFailed(
@@ -39,8 +35,6 @@ import Testing
         }
     }
 
-    /// Re-reviews A3 and B4: whoever can write the directory could remove the ledger, which would
-    /// then load empty with input still down.
     @Test func refusesALedgerInADirectoryOthersCanWrite() throws {
         try withTemporaryDirectory { directory in
             let path = directory + "/held-input.json"
@@ -58,7 +52,6 @@ import Testing
         }
     }
 
-    /// A ledger others can write could be emptied, leaving input down with no `cleanup_pending`.
     @Test(arguments: [0o666, 0o644, 0o620])
     func refusesALedgerWithWiderPermissions(_ mode: Int) throws {
         try withTemporaryDirectory { directory in
@@ -79,7 +72,6 @@ import Testing
         }
     }
 
-    /// B3 through the ledger: a failed `F_FULLFSYNC` is a failed write, so the down is not posted.
     @Test func aFullFlushErrorFailsThePress() throws {
         try withTemporaryDirectory { directory in
             let path = directory + "/held-input.json"
@@ -102,13 +94,9 @@ import Testing
         }
     }
 
-    /// A2 on a real file: the clear's rename lands and the directory flush then fails. The press
-    /// that follows is refused until the ledger is reloaded from the file.
     @Test func aFailedDirectoryFlushAfterTheRenameMakesTheLedgerUnavailable() throws {
         try withTemporaryDirectory { directory in
             let path = directory + "/held-input.json"
-            // Each write flushes the temporary file, then the directory: the clear's directory
-            // flush is the fourth.
             let flusher = ScriptedFlush.failing(.full, with: EIO, at: 3)
             var ledger = try HeldInputLedger(store: FileHeldInputStore(path: path, flusher: flusher))
             let left = HeldInput.button(.left)

@@ -63,10 +63,8 @@ public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
     #if canImport(Darwin)
         /// `O_SEARCH` includes `O_DIRECTORY`.
         private static let directoryOpen = O_SEARCH | O_NOFOLLOW | O_CLOEXEC
-        /// The permission deskhand's user needs on the allowance directory.
         static let directoryAccess = "search"
     #elseif canImport(Glibc)
-        // `O_PATH`, which Swift's Glibc module exports only under its internal name.
         private static let directoryOpen = __O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
         static let directoryAccess = "search"
     #else
@@ -142,13 +140,10 @@ public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
     }
 }
 
-/// `read(2)`, which ``POSIXAllowanceFileProbe`` hides behind its own `read`.
 private func systemRead(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
     read(descriptor, buffer, count)
 }
 
-/// The log line for a directory that cannot be opened, naming the permission it needs when that
-/// is the reason.
 func allowanceDirectoryFailure(errno code: Int32) -> String {
     let base = "the allowance directory cannot be opened (errno \(code))"
     guard code == EACCES else { return base }

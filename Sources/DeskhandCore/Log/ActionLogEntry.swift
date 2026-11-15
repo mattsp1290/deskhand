@@ -432,7 +432,6 @@ public struct ActionLogLine: Hashable, Sendable {
 
     public init(_ entry: ActionLogEntry) {
         self.entry = entry
-        // Every number in an entry is an integer, so canonicalization cannot meet a non-finite value.
         bytes = try! entry.jsonValue.canonicalBytes() + [UInt8(ascii: "\n")]
     }
 
@@ -504,7 +503,6 @@ extension Decode {
         return Principal(certificateSubject: subject)
     }
 
-    /// `null`, or a value `decode` accepts.
     fileprivate static func nullable<T>(_ decode: @escaping ValueDecoder<T>) -> ValueDecoder<T?> {
         { value, path throws(ArgumentError) in value == .null ? nil : try decode(value, path) }
     }

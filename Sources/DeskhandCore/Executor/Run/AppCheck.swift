@@ -1,17 +1,11 @@
-/// Which apps one app-policy check measures (contract 6.7, 6.9, 12.3).
 enum CheckScope: Hashable, Sendable {
-    /// Refusal step 14: every sample of a `pointer` action.
     case admission
-    /// The last look: the first target, and the last point of a `drag` for `drag_end`.
     case lastLook
-    /// Before a later event, or at a poll while input is held.
     case event(CheckTarget)
 }
 
-/// What an effect acts on, as its app-policy checks see it.
 enum CheckedAction: Sendable {
     case keyboard
-    /// `isDrag`: the last point is measured too, for `drag_end`.
     case pointer(PointerTargets, isDrag: Bool)
 
     init(_ arguments: EffectCallArguments, targets: PointerTargets?) {
@@ -27,15 +21,9 @@ enum CheckedAction: Sendable {
     }
 }
 
-/// The identities an operation was started with (bean bhwb), which every check after the last look
-/// holds it to: for `keyboard` the owner of keyboard focus, and the frontmost app as
-/// ``accepts(frontmost:)`` decides. A change aborts with `denied_app` even when the new app is
-/// allowed, so input never reaches an app nobody measured before the event that reaches it.
 struct IdentityBinding: Hashable, Sendable {
     private(set) var frontmost: AppIdentity
     let keyboardFocus: AppIdentity?
-    /// `pointer`: the owner of the window under the point of the latest button-down this operation
-    /// posted, as the check before that event measured it and the app policy allowed it.
     private(set) var activatable: AppIdentity?
 
     init(frontmost: AppIdentity, keyboardFocus: AppIdentity?) {
@@ -43,57 +31,35 @@ struct IdentityBinding: Hashable, Sendable {
         self.keyboardFocus = keyboardFocus
     }
 
-    /// Whether `observed` may be the frontmost app now (coordinator decision, bean bhwb).
-    ///
-    /// A button-down on a window of an app in the background activates that app. So once a
-    /// `pointer` operation has posted a button-down, the frontmost app may switch to the app that
-    /// owns the policy-checked window under that event's point: the same ``AppIdentity`` that check
-    /// measured, which ``activatable`` holds. Activation can land after any later event, so the
-    /// switch is accepted at whichever check sees it, and the binding then follows it. Any other
-    /// switch is refused: before a button-down, to any other app however allowed, back to the app
-    /// it left, and every switch during a `keyboard` call, which posts no button-down.
     func accepts(frontmost observed: AppIdentity) -> Bool {
         observed == frontmost || observed == activatable
     }
 
-    /// Follows a switch ``accepts(frontmost:)`` allowed, so the app left is no longer accepted.
     mutating func follow(frontmost observed: AppIdentity) {
         if accepts(frontmost: observed) { frontmost = observed }
     }
 
-    /// A button-down was posted over a window of `owner`, which its check allowed.
     mutating func didPostButtonDown(over owner: AppIdentity) { activatable = owner }
 }
 
-/// One app-policy check: what was measured, and the `denied_app` it ends in, if any.
 struct AppCheck: Sendable {
     let frontmost: ObservedApp
-    /// `keyboard` only.
     let keyboardFocus: ObservedApp?
-    /// `pointer` only: the owner of the window under the first point checked, which for a check
-    /// before an event is that event's own point.
     let pointOwner: ObservedApp?
-    /// The facts of contract 6.7, with the titles the app policy shows. `nil` for a check before a
-    /// later event.
     let measured: Measured?
-    /// `denied_app`, whose `measured` describes the check that failed.
     let denial: ToolErrorReason?
 
     private struct Subject {
         let app: ObservedApp
-        /// The pointer target whose window this is; `nil` for the frontmost app and keyboard focus.
         let point: PointerTarget?
     }
 
-    /// Measures and decides. `binding` is the last look's, for every check after it.
     static func run(
         _ scope: CheckScope, action: CheckedAction, permittedApps permitted: Set<BundleID>?, binding: IdentityBinding?,
         snapshot: DeskSnapshot, identity: any IdentityMeasurer
     ) -> AppCheck {
         let now = snapshot.reading.wall
         let policy = snapshot.policy
-        // A window of an app the policy refuses has no title in `measured`, also when the check
-        // ends for a cause that outranks `denied_app` (contract 6.7 nulls it on `denied_app`).
         func title(of window: ObservedWindow) -> WindowTitle? {
             guard policy.refusal(of: window.owner.policyIdentity) == nil else { return nil }
             return policy.windowTitle(window.title, of: window.owner.appRef)
@@ -161,8 +127,6 @@ struct AppCheck: Sendable {
         if case .deny(let denial) = policy.evaluate(
             frontmost: frontmost.policyIdentity, target: effectTarget, permittedApps: permitted)
         {
-            // `evaluate` refuses the first subject in this same order, by the Mac's policy before
-            // `permitted_apps`, so the first subject its rule refuses is the one it reported.
             let culprit = subjects.first { subject in
                 let app = subject.app.policyIdentity
                 switch denial.deniedBy {
@@ -186,7 +150,6 @@ struct AppCheck: Sendable {
             frontmost: frontmost, keyboardFocus: focus, pointOwner: pointOwner, measured: measured, denial: nil)
     }
 
-    /// The identities the rest of the operation must keep, from a last look that passed.
     var binding: IdentityBinding {
         IdentityBinding(frontmost: frontmost.policyIdentity, keyboardFocus: keyboardFocus?.policyIdentity)
     }

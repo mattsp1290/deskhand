@@ -26,7 +26,5 @@ public struct Principal: Hashable, Sendable, CustomStringConvertible {
 }
 
 extension String {
-    /// Equality of Unicode scalar sequences, with no canonical equivalence: how deskhand compares
-    /// every name and enumerated value it reads from a caller.
     func hasSameScalars(as other: String) -> Bool { unicodeScalars.elementsEqual(other.unicodeScalars) }
 }

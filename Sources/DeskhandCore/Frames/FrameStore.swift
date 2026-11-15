@@ -161,7 +161,6 @@ public struct FrameStore: Sendable {
         let now: Timestamp
     }
 
-    /// The rules after `unknown`, in the order `details.reason` reports them.
     private static let staleness: [(reason: StaleFrameReason, holds: @Sendable (Candidate) -> Bool)] = [
         (.displayChanged, { $0.frame.displayConfigGeneration != $0.displayConfigGeneration }),
         (.notLatest, { !$0.isLatest }),
@@ -197,7 +196,5 @@ public struct FrameStore: Sendable {
 }
 
 extension Frame {
-    /// A frame stamped after `now` is kept by pruning: only the validity check treats a stepped-back
-    /// clock as fatal, so a fresh capture is not discarded before anyone asks for it.
     fileprivate func isCapturedAfter(_ now: Timestamp) -> Bool { capturedAt > now }
 }

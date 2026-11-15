@@ -1,24 +1,18 @@
 import DeskhandCore
 import Testing
 
-/// Cuts a run at every write boundary, by a write error or by a crash, then restarts on whatever
-/// survived and checks the recovered records against what the run was told (contract 12.3, 12.9).
 @Suite(.timeLimit(.minutes(1))) struct OperationStoreFaultTests {
-    /// What the executor was told, and what it did, for one operation.
     struct Truth {
         var admitAttempted = false
         var admitted = false
         var executeAttempted = false
         var executing = false
-        /// Events "posted". The executor posts only after `markExecuting` returned.
         var posted = 0
         var progressed = 0
         var finishAttempted: OperationView?
         var finished: OperationRecord?
     }
 
-    /// One operation of the run: its progress reports, the events it posts in all, and how it ends
-    /// (`nil` leaves it where it is when the run stops).
     struct Script {
         let key: OperationKey
         let executes: Bool
@@ -39,7 +33,6 @@ import Testing
         Script(key: Sample.key("left-executing"), executes: true, progress: [], total: 1, ending: nil),
     ]
 
-    /// A file from an earlier run: one finished record and one that was executing when it stopped.
     static func seededDisk() throws -> (FakeDisk, OperationRecord) {
         let disk = FakeDisk()
         let store = try Sample.store(disk)
@@ -53,7 +46,6 @@ import Testing
         return (disk, try #require(try store.record(for: seededDone, now: Sample.start)))
     }
 
-    /// Runs every script in turn as the executor would, stopping at the first refusal.
     static func run(on storage: FaultyStorage) -> [OperationKey: Truth] {
         var truths: [OperationKey: Truth] = [:]
         guard let store = try? OperationStore(storage: storage, now: runAt) else { return truths }
@@ -66,7 +58,6 @@ import Testing
         return truths
     }
 
-    /// `false` when a store call was refused and the run stops.
     private static func run(_ script: Script, on store: OperationStore, _ truth: inout Truth) -> Bool {
         truth.admitAttempted = true
         guard
@@ -104,8 +95,6 @@ import Testing
         return true
     }
 
-    /// The executor's answer to a failed record write: end the operation as `failed`. The store
-    /// is already unavailable, so this is refused too and nothing more reaches the file.
     static func giveUp(_ store: OperationStore, _ ticket: OperationTicket, posted: Int) {
         #expect(throws: OperationStoreError.unavailable) {
             _ = try store.finish(ticket, Sample.failed(), eventsPosted: posted)

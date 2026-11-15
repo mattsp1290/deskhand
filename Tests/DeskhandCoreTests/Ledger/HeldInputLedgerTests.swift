@@ -13,7 +13,6 @@ import Testing
         return ledger.pending()
     }
 
-    /// Presses `inputs` in order through the ledger and posts their downs.
     private func press(_ inputs: [HeldInput], _ ledger: inout HeldInputLedger, on machine: LedgerMachine) throws {
         for input in inputs {
             try ledger.willPress(input)
@@ -80,7 +79,6 @@ import Testing
         }
     }
 
-    /// `willPress` must throw `.unavailable`, and must not write.
     private func expectRefusedPress(
         _ input: HeldInput, _ ledger: inout HeldInputLedger, on machine: LedgerMachine,
         sourceLocation: SourceLocation = #_sourceLocation
@@ -123,9 +121,6 @@ import Testing
         expectRefusedPress(left, &ledger, on: machine)
     }
 
-    /// A2: the clear of `left` reached the disk and then failed. The ledger still lists `left` and
-    /// the disk does not, so pressing `left` again needs a write first. The unavailable ledger
-    /// refuses instead, until a reload brings memory and disk back together.
     @Test func aWriteThatLandsAndThenFailsRefusesTheNextPressUntilReload() throws {
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)
@@ -209,8 +204,6 @@ import Testing
         #expect(try reopened(machine).isEmpty)
     }
 
-    /// The press of `keyA` failed after its entry landed. Memory holds nothing, the disk holds
-    /// `keyA`, so cleanup must not report the ledger empty.
     @Test func cleanupOnAnUnavailableLedgerIsNeverComplete() throws {
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)
@@ -241,8 +234,6 @@ import Testing
         #expect(pending == [control, keyA])
     }
 
-    /// Contract 12.3 step 6 and 12.7: the entry is written, the checks run, then the down is posted.
-    /// When the checks fail nothing is down, so the entry is cleared with no release.
     @Test func aPressWhoseChecksFailIsWithdrawnWithoutARelease() throws {
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)
@@ -257,8 +248,6 @@ import Testing
         #expect(machine.posted == [.down(control)], "no release for a down that was never posted")
     }
 
-    /// An entry the press did not write may be down from before (a `type` carrier key), so a
-    /// failed check leaves it for the abort's releases.
     @Test func withdrawingAPressThatFoundItsEntryKeepsTheEntry() throws {
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)

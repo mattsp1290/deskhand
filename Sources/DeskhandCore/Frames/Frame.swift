@@ -125,7 +125,6 @@ extension FrameID {
 
     private static let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8)
 
-    /// Unpadded RFC 4648 section 5.
     private static func base64URL(_ bytes: [UInt8]) -> String {
         var output: [UInt8] = []
         var index = 0

@@ -58,20 +58,17 @@ public struct Allowance: Hashable, Sendable {
 /// Why the allowance is not valid, for the log on the Mac. The wire never says which (contract
 /// 14.3).
 public enum AllowanceInvalidReason: Error, Hashable, Sendable, CustomStringConvertible {
-    // The directory that holds the file (contract 14.1, D15).
     case directorySymbolicLink
     case directoryUnreadable(errno: Int32)
     case directoryNotADirectory
     case directoryNotRootOwned(owner: UInt32)
     case directoryWritableByGroupOrOthers(permissions: UInt32)
-    // The file itself (contract 14.1).
     case symbolicLink
     case unreadable(errno: Int32)
     case notRegularFile
     case notRootOwned(owner: UInt32)
     case writableByGroupOrOthers(permissions: UInt32)
     case tooLarge
-    // The contents (contract 14.2).
     case malformedJSON
     case notAnObject
     case unknownMember(String)
@@ -81,7 +78,6 @@ public enum AllowanceInvalidReason: Error, Hashable, Sendable, CustomStringConve
     case malformedTimestamp(String)
     case expiresNotAfterNotBefore
     case macMismatch
-    // The clock (contract 14.3).
     case notYetValid
     case expired
 

@@ -23,7 +23,6 @@ public struct LeaseManager: Hashable, Sendable {
     /// As last written. A held lease whose deadline has passed is still `held` here until a mutating
     /// call or ``expire(now:)`` settles it; ``state(at:)`` gives the state as of a given reading.
     public private(set) var lease: LeaseState = .none
-    /// The most recent ends of a live lease, oldest first, at most ``retainedEnds``.
     private var recentEnds: [LeaseEnd] = []
     private var lastSerial: UInt64 = 0
 
@@ -154,7 +153,6 @@ public struct LeaseManager: Hashable, Sendable {
         }
     }
 
-    /// `renew` never acquires.
     private mutating func renew(by caller: LeaseHolder, ttlMs: Int, now: ClockReading) -> LeaseOutcome {
         switch lease {
         case .held(let held) where held.holder == caller: return extend(held, ttlMs: ttlMs, now: now)
@@ -164,8 +162,6 @@ public struct LeaseManager: Hashable, Sendable {
         }
     }
 
-    /// Releasing with no live lease is a no-op, so a repeated release is safe; it also leaves an
-    /// expired lease's `lease_expired` in place.
     private mutating func release(by caller: LeaseHolder, now: ClockReading) -> (LeaseOutcome, LeaseEnd?) {
         switch lease {
         case .held(let held) where held.holder == caller:

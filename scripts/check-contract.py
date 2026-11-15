@@ -10,12 +10,9 @@ adding a schema or an example needs no edit here:
              "jsonrpc-error"). Stems must be unique. Each schema must declare
              Draft 2020-12, have an $id ending in its path relative to
              docs/schemas/, and every $ref must resolve locally (no network).
-             Every "format" a schema uses must be one the validator asserts,
-             and every keyword must be a Draft 2020-12 keyword, so a misspelled
-             one fails instead of being ignored.
+             Every "format" a schema uses must be one the validator asserts.
   defs.json  The shared definitions library. It is the only schema that needs
-             no valid and no invalid example. allowance.json is self-contained,
-             so its $defs/timestamp must stay identical to the one here.
+             no valid and no invalid example.
   tools/     Tool schemas <tool>.input.json and <tool>.output.json. They must
              also survive the tools/list bundling rule (contract 3.2); input
              schemas must be closed objects with no top-level combinators.
@@ -43,13 +40,11 @@ adding a schema or an example needs no edit here:
              9.2 tool_error tables match the schema's if/then rules; the
              constants of section 16 match every schema keyword, example
              `limits` and prose figure that carries them, wherever the figure
-             is repeated; prose that restates a schema bound which is not a
-             constant matches that bound (SCHEMA_PROSE_SITES); the HTTP status
-             and JSON-RPC code pairs of 2.3 and 2.4 match 9.4; a status
-             result's state heads its active_states for every state; the
-             header's versions match every contract_version and protocol
-             version; every JSON block validates; every intra-doc #anchor
-             resolves.
+             is repeated; the HTTP status and JSON-RPC code pairs of 2.3 and
+             2.4 match 9.4; a status result's state heads its active_states for
+             every state; the header's versions match every contract_version
+             and protocol version; every JSON block validates; every intra-doc
+             #anchor resolves.
 
 Date-time formats are asserted (rfc3339-validator), so 29 February of a common
 year fails. Any other JSON file under examples/ is an error, so nothing is
@@ -247,10 +242,6 @@ PROSE_SITES = [
      [("MAX_LONG_EDGE", "value"), ("MIN_LONG_EDGE", "value"), ("MAX_LONG_EDGE", "value")]),
 ]
 
-# Prose that restates a schema bound which is not a section 16 constant:
-# (section heading prefix, regex, one (schema, JSON pointer, keyword) or None
-# per group). Like PROSE_SITES, every match is compared and a site that is not
-# found fails.
 SCHEMA_PROSE_SITES = [
     ("4.1 ", rf"({NUM}) to ({NUM}) characters from",
      [(DEFS, "/$defs/holder_id", "minLength"), (DEFS, "/$defs/holder_id", "maxLength")]),
@@ -267,8 +258,6 @@ SCHEMA_PROSE_SITES = [
      [("allowance.json", "/properties/mac", "minLength"), ("allowance.json", "/properties/mac", "maxLength")]),
 ]
 
-# Draft 2020-12 keywords, for the unknown-keyword check: a misspelled keyword
-# ("maxLenght") is ignored by every validator, so it would pass silently.
 SUBSCHEMA_KEYWORDS = {"not", "if", "then", "else", "items", "contains", "additionalProperties", "propertyNames",
                       "unevaluatedItems", "unevaluatedProperties", "contentSchema"}
 SUBSCHEMA_LIST_KEYWORDS = {"allOf", "anyOf", "oneOf", "prefixItems"}
@@ -414,7 +403,6 @@ class Checker:
         self.check_copies()
 
     def check_copies(self) -> None:
-        # allowance.json is self-contained, so its timestamp is a copy; its $comment says it must stay identical.
         copy_ts = self.schemas.get("allowance.json", {}).get("$defs", {}).get("timestamp")
         if copy_ts != self.schemas[DEFS].get("$defs", {}).get("timestamp"):
             self.fail(f"allowance.json: $defs/timestamp differs from {DEFS}#/$defs/timestamp; they must stay identical")

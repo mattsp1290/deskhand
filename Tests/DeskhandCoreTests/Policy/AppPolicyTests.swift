@@ -15,12 +15,10 @@ private let editor = app("com.example.Editor", .team(team))
 private let terminal = app("com.apple.Terminal", .apple)
 private let deskhandID = bundle("com.example.deskhand")
 
-/// The owners of a drag's samples, numbered from point 0.
 private func owners(_ apps: AppIdentity...) -> EffectTarget {
     .pointer(windowOwners: apps.enumerated().map { WindowOwner(pointIndex: $0.offset, app: $0.element) })
 }
 
-/// Allows TextEdit and Editor, and also tries to allow two default-denied apps, which must stay denied.
 private let policy = AppPolicy(
     deskhandBundleID: deskhandID,
     allowed: [
@@ -180,8 +178,6 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
         #expect(reason.code == .deniedApp)
     }
 
-    /// Contract 6.9: deskhand's own bundle is never allowed, whatever the configuration says, as the
-    /// frontmost app, a window owner or the owner of keyboard focus.
     @Test func deskhandItselfIsAlwaysDenied() {
         let me = app("com.example.deskhand", .team(team))
         let helper = app("com.example.deskhand.indicator", .team(team))
@@ -206,8 +202,6 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
         #expect(configured.excludesFromCapture(deskhandID))
     }
 
-    /// Contract 6.9: a panel of another process can take keystrokes while the frontmost app stays
-    /// the same, so keyboard focus is checked too, and an unreadable focus refuses.
     @Test func keyboardChecksTheOwnerOfFocus() {
         let spotlight = app("com.apple.Spotlight", .apple)
         #expect(
@@ -223,8 +217,6 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
                 == deny(.permittedApps, .keyboardFocus, .notInPermittedApps))
     }
 
-    /// `details.point_index` names the point whose owner refused, 0 when nothing was checked, and is
-    /// absent for the frontmost app and keyboard focus.
     @Test func aDenialNamesThePointThatCausedIt() {
         let measured = Measured(
             frontmostApp: AppRef(textEdit, name: "TextEdit"), targetApp: nil, windowTitle: "secret",
@@ -239,8 +231,6 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
         }
     }
 
-    /// Contract 6.7: a title of an app on the capture exclusion list, of deskhand, or of an app that
-    /// is not identified never becomes a title `measured` can carry.
     @Test func titlesOfHiddenAppsAreRemoved() {
         let mail = AppRef(bundleID: "com.apple.mail", teamID: nil, name: "Mail")
         let edit = AppRef(textEdit, name: "TextEdit")
@@ -253,8 +243,6 @@ private func deny(_ by: DeniedBy, _ subject: PolicySubject, _ reason: AppDenialR
         #expect(policy.windowTitle("notes.txt", of: edit) == "notes.txt")
     }
 
-    /// Contract 6.9, "Drag": every point of the path is checked, consecutive samples are at most
-    /// 8 frame pixels apart, and each names the point that ends its segment.
     @Test func aDragIsSampledAlongItsWholePath() throws {
         let drag = try PointerArguments(arguments: [
             "holder_id": "h", "frame_id": "f", "operation_id": "o",

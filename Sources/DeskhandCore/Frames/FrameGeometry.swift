@@ -86,7 +86,6 @@ extension GlobalRect {
 }
 
 extension Double {
-    /// Clamps into `[lower, upper)`: the far edge of a display belongs to its neighbour.
     fileprivate func clamped(from lower: Double, below upper: Double) -> Double {
         Swift.max(lower, Swift.min(self, upper.nextDown))
     }

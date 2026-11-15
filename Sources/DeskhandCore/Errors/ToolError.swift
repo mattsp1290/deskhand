@@ -69,7 +69,6 @@ public enum ToolErrorReason: Hashable, Sendable {
 
     var measured: Measured? {
         switch self {
-        // A title that the policy refused is never sent, nor a drag's end past the failed check (6.7).
         case .deniedApp(_, let measured, _): measured.forDeniedApp
         case .logUnavailable(let measured): measured
         default: nil

@@ -1,21 +1,9 @@
-/// The record file's format: a header line, then one RFC 8785 JSON object per line in the order
-/// the entries were written. Replaying the entries through ``OperationPhase/applying(_:)`` rebuilds
-/// every record.
-///
-/// Every entry is flushed before the call that wrote it returns, so after a crash only the last
-/// line can be incomplete: its write never returned and nothing acted on it, so it is dropped. A
-/// cut-short write is never JSON; a line that is JSON but does not decode, or an undecodable line
-/// anywhere else, is corruption, and loading stops.
 enum OperationJournal {
     static let format = "deskhand-operations"
     static let version = 1
-    /// Every instant from the epoch that RFC 3339 can write, through 9999-12-31T23:59:59.999Z. A
-    /// value outside it is damage, and would overflow the retention arithmetic.
     static let admittedAtRange = 0...253_402_300_799_999
     static let countRange = 0...JSONValue.maxExactInteger
 
-    /// The header and one `record` line per record: what ``OperationStorage/replace(with:)``
-    /// writes at load and when the journal is compacted.
     static func snapshot(_ records: some Sequence<OperationRecord>) throws(NonFiniteNumberError) -> [UInt8] {
         var bytes = try line(["journal": .string(format), "version": JSONValue(version)])
         for record in records { bytes += try Entry.record(record).line() }
@@ -28,7 +16,6 @@ enum OperationJournal {
 
     static func replay(_ bytes: [UInt8]) throws(OperationStoreLoadError) -> [OperationKey: OperationRecord] {
         var lines = bytes.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
-        // What follows the last newline is empty unless the last append was cut short.
         lines.removeLast()
         guard let header = lines.first, isHeader(header) else {
             throw .corrupt(line: 1, reason: "missing \(format) version \(version) header")
@@ -54,7 +41,6 @@ enum OperationJournal {
     }
 
     enum Entry: Hashable {
-        /// Creates a record: an admission, or a whole record written by a snapshot.
         case record(OperationRecord)
         case transition(OperationKey, OperationTransition)
 
@@ -160,7 +146,6 @@ enum OperationJournal {
 
     struct EntryError: Error {
         let reason: String
-        /// The line is not JSON at all, as a write cut short by a crash leaves it.
         let isTorn: Bool
 
         init(_ reason: String, isTorn: Bool = false) {

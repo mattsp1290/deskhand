@@ -35,8 +35,6 @@ import Testing
 
     struct Case: CustomTestStringConvertible, Sendable {
         let steps: [Step]
-        /// The status and count after every step, or the step that must be refused and the status it
-        /// is refused from.
         let outcome: Outcome
 
         enum Outcome {
@@ -115,7 +113,6 @@ import Testing
 }
 
 @Suite(.timeLimit(.minutes(1))) struct OperationRepeatTests {
-    /// Builds a record of `status` for `key` on `disk` and returns a store loaded afterwards.
     static func store(with status: OperationStatus, key: OperationKey, disk: FakeDisk) throws -> OperationStore {
         let store = try Sample.store(disk)
         let ticket = try Sample.admit(store, key)
@@ -138,7 +135,6 @@ import Testing
         return restarts ? try Sample.store(disk) : store
     }
 
-    /// The table in contract 4.3, every row against the same and a different digest.
     @Test(arguments: OperationStatus.allCases, [true, false])
     func answersARepeatByStatusAndDigest(status: OperationStatus, sameDigest: Bool) throws {
         let key = Sample.key("call_01HZX3M9R1")
@@ -208,8 +204,6 @@ import Testing
         #expect(replay.structuredContent(currentState: .ok)["current_state"] == nil, "a success gains no state")
     }
 
-    /// Contract 12.5 (0.11): a replayed error keeps the `state` it was stored with and gains
-    /// `current_state`, so a state's code still carries that state.
     @Test func replaysAStoredErrorWithItsStoredStateAndTheStateNow() throws {
         let store = try Sample.store(FakeDisk())
         let key = Sample.key("call_01HZX3M9Q5")
@@ -233,8 +227,6 @@ import Testing
         #expect(replay.structuredContent(currentState: .ok) == .object(expected))
     }
 
-    /// The first result is `keyboard.output.error-secure-input-aborted.json` and its replay is
-    /// `keyboard.output.replayed-state-abort.json`, apart from the message, which may change.
     @Test func replaysASecureInputAbortAsTheContractShowsIt() throws {
         let store = try Sample.store(FakeDisk())
         let key = Sample.key("call_01HZX3M9R1")
@@ -281,7 +273,6 @@ import Testing
         content["message"] = nil
         #expect(content == example)
 
-        // Built when the repeat arrives, so both states are the state at that moment.
         let locked = replay.structuredContent(currentState: .locked)
         #expect(locked["state"] == "locked" && locked["current_state"] == "locked")
     }
@@ -302,8 +293,6 @@ import Testing
         #expect(content["measured"] == nil)
     }
 
-    /// B11: every admitted error carries `measured` (contract 6.7), whether or not the executor's
-    /// `ToolError` had one; a `denied_app` keeps the facts of the check that failed.
     @Test func storesMeasuredOnEveryError() throws {
         let store = try Sample.store(FakeDisk())
         for (name, outcome) in [("aborted", Sample.aborted()), ("failed", Sample.failed())] {
@@ -330,7 +319,6 @@ import Testing
         #expect(sent.measured == failedCheck.forDeniedApp)
     }
 
-    /// A14: the record is keyed by the intent the receipt proves committed.
     @Test func admitsUnderTheKeyOfTheCommittedIntent() throws {
         let store = try Sample.store(FakeDisk())
         let key = Sample.key("op-1", holder: "crew-7", principal: Sample.otherPrincipal)
@@ -542,7 +530,6 @@ import Testing
         #expect(line == disk.lines.count - 1)
     }
 
-    /// A13: a damaged admission time is corruption, wherever the line is, and never a crash.
     @Test(arguments: ["-9223372036854775808", "-1", "253402300800000"], [false, true])
     func refusesAnAdmissionTimeOutOfRange(_ value: String, onTheLastLine: Bool) throws {
         let disk = FakeDisk()
@@ -563,7 +550,6 @@ import Testing
         #expect(reason.contains("admitted_at_ms"))
     }
 
-    /// Counts are read with the one integer rule of every reader.
     @Test(arguments: ["1.5", "-1", "9007199254740992", "\"3\""])
     func refusesACountThatIsNotACount(_ value: String) throws {
         let disk = try Self.journal()

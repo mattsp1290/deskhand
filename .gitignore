@@ -21,6 +21,5 @@ xcuserdata/
 # macOS
 .DS_Store
 
-# Python (scripts/check-contract.py)
 .venv/
 __pycache__/

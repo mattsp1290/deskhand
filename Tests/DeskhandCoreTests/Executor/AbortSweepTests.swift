@@ -2,9 +2,6 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// Contract 6.6, 11.2, 12.4, 12.7: whatever stops an operation after whichever event, nothing it
-/// pressed stays down or owed, unless cleanup is not authorized; and nothing but the operation's
-/// own end releases what it holds.
 @Suite("Executor: aborts after every event", .timeLimit(.minutes(1)))
 struct AbortSweepTests {
     enum Cause: String, CaseIterable, Sendable { case userActive, paused, hangUp, postFails, locked }
@@ -44,7 +41,6 @@ struct AbortSweepTests {
                     }
                 }
                 let harness = try Harness(mac: mac)
-                // Reads before event k: step 3, before the record, then one per check.
                 let connection = FakeConnection(openReads: cause == .hangUp ? 2 + n : .max)
                 let answer = await harness.executor.perform(try Self.call(action, on: harness, connection: connection))
                 if n == 0, cause != .hangUp, cause != .postFails { continue }
@@ -52,7 +48,6 @@ struct AbortSweepTests {
                 if n < total {
                     #expect(answer.result == nil, "\(label): completed")
                     if cause == .hangUp {
-                        // A hold reads the connection at every poll, so a hang-up can land before event n.
                         #expect((answer.operation?.eventsPosted ?? .max) <= n, "\(label)")
                     } else if cause != .postFails {
                         #expect(answer.operation?.eventsPosted == n, "\(label)")

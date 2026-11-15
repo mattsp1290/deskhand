@@ -1,16 +1,12 @@
 import DeskhandCore
 import Testing
 
-/// Contract 12.8: a release needs `locked`, `not_console`, `login_window` and `secure_input` all
-/// absent, each judged on its own. Nothing else holds a release back.
 @Suite(.timeLimit(.minutes(1))) struct CleanupAuthorizationTests {
-    /// What each state blocks when it holds alone.
     private static let stateTable: [(BlockingState, CleanupBlocker?)] = [
         (.gated, nil), (.paused, nil), (.disarmed, nil), (.notConsole, .notConsole), (.locked, .locked),
         (.displayAsleep, nil), (.permissionMissing, nil), (.permissionStale, nil), (.secureInput, .secureInput),
     ]
 
-    /// What each condition blocks when it holds alone.
     private static let conditionTable: [(Condition, CleanupBlocker?)] = [
         (.credentialsWarning, nil), (.cleanupPending, nil), (.logUnavailable, nil),
         (.loginWindow, .loginWindow), (.userActive, nil),
@@ -40,7 +36,6 @@ import Testing
         #expect(authorization == .authorized && authorization.isAuthorized)
     }
 
-    /// The state `status` reports is not enough: `paused` outranks `locked`, yet the lock blocks.
     @Test func aLowerPrecedenceBlockerStillBlocks() {
         let active = ActiveStates([.paused, .disarmed, .locked])
         #expect(active.current == .paused)
@@ -53,8 +48,6 @@ import Testing
         #expect(!authorization.isAuthorized)
     }
 
-    /// Every combination of states, with and without the login window: the blockers are exactly the
-    /// union of what each member blocks alone.
     @Test func everyCombinationIsTheUnionOfItsMembers() {
         let states = BlockingState.allCases
         let blockedBy = Dictionary(uniqueKeysWithValues: Self.stateTable)

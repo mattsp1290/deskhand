@@ -1,22 +1,15 @@
 import DeskhandCore
 import Testing
 
-/// Contract 9.5: every refusal step fails at once, and each fix reveals the next step's code, in
-/// order, until the call is admitted.
 @Suite("Admission: the order of refusals", .timeLimit(.minutes(1)))
 struct AdmissionOrderTests {
-    /// One refusal step, made to fail, and how to make it pass.
     struct Fault {
         let step: Int
         let code: ToolErrorCode
-        /// `denied_app` and `denied_shortcut` count toward the action ceiling (contract 9.5).
         var counts = false
         let fix: (Peel) async throws -> Void
     }
 
-    /// One executor with every fault in place. A call by another principal, admitted and then aborted
-    /// by a lock whose releases waited, leaves the ceiling full (one call a minute), input owed in
-    /// the ledger and the lease with that other principal.
     final class Peel {
         let harness: Harness
         var mac: FakeMac { harness.mac }
@@ -57,7 +50,6 @@ struct AdmissionOrderTests {
             }
         }
 
-        /// Lets the counted refusal leave the 60 s window, renewing the lease past the jump.
         func clearCeiling() {
             mac.advance(byMilliseconds: 60_001)
             let now = mac.reading
@@ -73,9 +65,6 @@ struct AdmissionOrderTests {
                 #expect(mac.posted.count == postedBefore, "step \(fault.step) posted input")
                 if operation != "op-1" { #expect(try await harness.status(operation) == .notFound) }
                 expected.append(fault.code)
-                // The ceiling holds one call a minute and is empty from step 7 on, so a refusal
-                // that counts makes the next call rate_limited, and one that wrongly counts makes
-                // the next step's code rate_limited.
                 if fault.counts {
                     let limited = await harness.executor.perform(try call())
                     #expect(limited.code == .rateLimited, "step \(fault.step) did not count toward the ceiling")
@@ -94,7 +83,6 @@ struct AdmissionOrderTests {
         }
     }
 
-    /// The steps both tools share: 1 and 4 to 8 (`head`), and 11 (`tail`).
     static func common() -> (head: [Fault], tail: [Fault]) {
         let head = [
             Fault(step: 1, code: .paused) { $0.mac.change { $0.report = ExecutorFixture.okReport } }
@@ -113,7 +101,6 @@ struct AdmissionOrderTests {
                 peel.mac.change { $0.lease = ExecutorFixture.acquired(ttlMs: 120_000, at: now) }
             },
             Fault(step: 7, code: .rateLimited) { $0.clearCeiling() },
-            // The conflicting record, admitted at the start, leaves the 90 s retention window.
             Fault(step: 8, code: .operationCapacity) { $0.mac.advance(byMilliseconds: 31_000) },
         ]
         let tail = [

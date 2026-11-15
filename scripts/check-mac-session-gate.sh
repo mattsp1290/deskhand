@@ -5,13 +5,6 @@
 # without `.macSessionTestsEnabled` would run in CI and on any plain
 # `swift test`, and the trait without the tag is unreachable by tag filters.
 #
-# Comments and string literals are handled asymmetrically, so neither can fool
-# the lint in the unsafe direction: the tag is looked for in the raw text of the
-# attribute (a comment or a string can never hide it), the trait only in code (a
-# comment or a string can never supply it). An attribute runs from `@Test(` /
-# `@Suite(` to its matching `)`, possibly across lines. "...", """...""",
-# #"..."# and #"""..."""# literals are skipped, and an attribute that never
-# closes fails. A commented-out `// @Test(...)` is still linted (conservative).
 #
 # Usage: scripts/check-mac-session-gate.sh [dir ...]   (default: Tests Sources)
 set -eu
@@ -30,8 +23,8 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
     # shellcheck disable=SC2086 # file names in this repo have no spaces
     awk '
     function check() {
-        tag = (buf ~ /requiresMacSession/)          # raw text, comments and strings included
-        trait = (code ~ /macSessionTestsEnabled/)   # code only: a comment or a string cannot supply it
+        tag = (buf ~ /requiresMacSession/)
+        trait = (code ~ /macSessionTestsEnabled/)
         if (tag && !trait) {
             printf "%s:%d: .requiresMacSession without .macSessionTestsEnabled\n", FILENAME, start
             bad = 1
@@ -64,7 +57,7 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
             closed = 0
             for (i = 1; i <= n; i++) {
                 c = substr(rest, i, 1)
-                if (mode != "") {                          # inside a string literal
+                if (mode != "") {
                     if (mode == "esc" && c == "\\") { buf = buf substr(rest, i, 2); i++; continue }
                     if (substr(rest, i, length(closer)) == closer) {
                         buf = buf closer; i += length(closer) - 1; mode = ""; continue
@@ -72,7 +65,7 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
                     buf = buf c; continue
                 }
                 if (c == "/" && substr(rest, i + 1, 1) == "/") { buf = buf substr(rest, i); break }
-                if (match(substr(rest, i), /^#*"("")?/)) {  # "...", """...""", #"..."#, #"""..."""#
+                if (match(substr(rest, i), /^#*"("")?/)) {
                     open = substr(rest, i, RLENGTH); hashes = open; gsub(/"/, "", hashes)
                     closer = substr(open, length(hashes) + 1) hashes
                     mode = length(hashes) ? "raw" : "esc"

@@ -2,7 +2,6 @@ import DeskhandCore
 import DeskhandTestSupport
 import Testing
 
-/// Builders for action log tests. Every value is fake.
 enum LogSamples {
     static let time = Timestamp(millisecondsSinceEpoch: 1_794_657_600_250)
     static let node = NodeAddress("10.0.0.21")!
@@ -45,12 +44,10 @@ enum LogSamples {
 
     static let preview = AppRef(bundleID: "com.apple.Preview", teamID: nil, name: "Preview")
 
-    /// A last look with TextEdit in front and Preview as the target. The title must never be logged.
     static let measured = Measured(
         frontmostApp: textEdit, targetApp: preview, windowTitle: "secret title", globalPoint: nil,
         measuredAt: time.adding(milliseconds: 20))
 
-    /// An outcome line can only come from a committed intent, so this commits one first.
     static func outcomeLine(
         _ outcome: ActionOutcome, intent: ActionLogIntent, measured: Measured? = measured
     ) async throws -> ActionLogLine {

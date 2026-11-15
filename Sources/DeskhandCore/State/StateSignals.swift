@@ -84,14 +84,12 @@ public struct StateSignals: Hashable, Sendable {
 
     public subscript(signal: PlatformSignal) -> SignalReading { readings[signal] ?? .uncertain }
 
-    /// Nothing read yet: no allowance, and every platform signal uncertain.
     static let unread = StateSignals(
         allowance: .missing, readings: [:], credentialsWarning: false, cleanupPending: false, logUnavailable: false,
         ownInput: .idle)
 }
 
 extension AllowanceVerdict {
-    /// Valid at `now`: a valid verdict stops being valid at its `expires_at`.
     func isValid(at now: Timestamp) -> Bool {
         if case .valid(let expiresAt) = self { return now < expiresAt }
         return false

@@ -73,8 +73,6 @@ import Testing
         }
     }
 
-    /// The deny list wins over the allowlist, so an allow entry that it covers could never allow
-    /// anything; the configuration says so instead of starting with a dead entry.
     @Test(arguments: ["com.google.Chrome", "com.apple.Safari.WebApp.1", "com.apple.terminal"])
     func anAllowEntryTheDenyListCoversIsAnError(_ raw: String) throws {
         let document = ConfigFixtures.minimal(

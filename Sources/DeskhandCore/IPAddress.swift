@@ -129,7 +129,6 @@ public struct IPAddress: Hashable, Sendable, CustomStringConvertible {
             || (UInt8(ascii: "A")...UInt8(ascii: "F")).contains(byte)
     }
 
-    /// Splits on every `::`. A `:::` leaves a part that starts with `:`, which then fails to parse.
     private static func splitOnDoubleColons(_ text: String) -> [Substring] {
         var parts: [Substring] = []
         var start = text.startIndex

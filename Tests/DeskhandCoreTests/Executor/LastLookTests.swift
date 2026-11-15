@@ -1,12 +1,8 @@
 import DeskhandCore
 import Testing
 
-/// Contract 12.3 steps 5 and 6: the checks before every event, the last look first among them, with
-/// nothing slow between the reads of the state, the lease, the person and the connection and the
-/// post.
 @Suite("Executor: the checks before every event", .timeLimit(.minutes(1)))
 struct LastLookTests {
-    /// A change of the world that a check must catch.
     enum Change: String, CaseIterable, Sendable {
         case paused, userActive, leaseReleased, leaseExpired, deniedWindow, frontmostDenied, focusDenied
 
@@ -20,7 +16,6 @@ struct LastLookTests {
             }
         }
 
-        /// The changes a check reads after the identities, which an identity read can outlast.
         static let fast: [Change] = [.paused, .userActive, .leaseReleased, .leaseExpired]
 
         func apply(_ world: inout FakeMac.World, at now: ClockReading) {
@@ -85,7 +80,6 @@ struct LastLookTests {
         var posts = 0
         for (index, touch) in touches.enumerated() where touch == .post {
             posts += 1
-            // The checks of this event: everything since the previous post or ledger write.
             var start = index
             while start > 0, touches[start - 1] != .post, touches[start - 1] != .ledgerWrite { start -= 1 }
             let checks = Array(touches[start..<index])
@@ -126,7 +120,6 @@ struct LastLookTests {
     @Test("a last look that fails withdraws the entry it wrote: nothing posted, nothing released")
     func lastLookWithdraws() async throws {
         let harness = try Harness()
-        // Open for step 3 and the look before the record; closed at the last look.
         let answer = await harness.executor.perform(
             try harness.keyboard(["type": "type", "text": "ab"], connection: FakeConnection(openReads: 2)))
         #expect(answer.code == .cancelled)

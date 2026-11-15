@@ -4,8 +4,6 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct StatePrecedenceTests {
     private typealias F = StateFixture
 
-    /// Every allowance value, every arming and every reading of every platform signal: the active
-    /// states are exactly those whose input holds, and the state is the highest of them.
     @Test func everyCombinationReportsTheHighestActiveState() {
         let signals = PlatformSignal.allCases
         let readings = SignalReading.allCases
@@ -54,7 +52,6 @@ import Testing
         #expect(mismatches == 0, "first mismatches: \(samples)")
     }
 
-    /// Contract 10.1: a signal that was not read at all counts as uncertain, so its state holds.
     @Test(arguments: PlatformSignal.allCases)
     func missingReadingFailsClosed(_ signal: PlatformSignal) {
         var input = F.signals()
@@ -65,8 +62,6 @@ import Testing
         #expect(report.activeStates(at: F.t0).states == [stateFedBy[signal]!])
     }
 
-    /// Contract 11.4: the login window is `not_console` even when the console-ownership signal
-    /// says the session owns the console.
     @Test func loginWindowOverridesConsoleOwnership() {
         var input = F.signals()
         input.readings[.notConsole] = .absent
@@ -78,8 +73,6 @@ import Testing
         #expect(report.conditions == [.loginWindow])
     }
 
-    /// Every non-state condition the reducer reports, alone and together. None of them changes the
-    /// state; only the login window, through its signal, makes `not_console` hold.
     @Test func conditionsAreReportedBesideTheState() {
         var checked = 0
         for mask in 0..<8 {
@@ -106,7 +99,6 @@ import Testing
         #expect(checked == 24)
     }
 
-    /// Before the first reading deskhand is `disarmed`, and fails closed on everything it has not read.
     @Test func startupHoldsEverythingUnreadAndIsDisarmed() {
         let startup = StateReport.startup
         #expect(startup.arming == .disarmed)

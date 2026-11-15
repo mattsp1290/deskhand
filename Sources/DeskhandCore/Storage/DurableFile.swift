@@ -30,8 +30,6 @@ public struct DurableFile: Sendable {
     public let owner: UInt32
     public let flusher: any StorageFlush
 
-    /// What `F_FULLFSYNC` fails with when the file system does not support it, as opposed to
-    /// failing to flush.
     private static let fullFlushUnsupported: Set<Int32> = [ENOTSUP, EINVAL]
 
     /// The effective uid of this process: the owner every file is checked against by default.
@@ -153,7 +151,6 @@ public struct DurableFile: Sendable {
         }
     }
 
-    /// The checked directory that holds the file. Read access lets it be flushed.
     private func openDirectory() throws(StorageError) -> Int32 {
         let descriptor = directoryPath.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard descriptor >= 0 else { throw .io(operation: "open directory", errno: errno) }
@@ -209,7 +206,6 @@ private func writeAll(_ bytes: [UInt8], to descriptor: Int32) throws(StorageErro
     }
 }
 
-/// `read(2)`, which ``DurableFile/read()`` hides inside the type.
 private func systemRead(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
     read(descriptor, buffer, count)
 }

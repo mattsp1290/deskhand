@@ -1,9 +1,6 @@
 import DeskhandCore
 import Synchronization
 
-/// Tasks waiting until a condition holds. Each wait ends when its condition holds or when its task
-/// is cancelled, which is what a test's time limit does: a wait that would never end fails its
-/// test instead of hanging the run.
 final class Waiters: Sendable {
     private struct Waiter {
         let id: UInt64
@@ -19,8 +16,6 @@ final class Waiters: Sendable {
 
     private let state = Mutex(State())
 
-    /// Returns once `ready` holds, checked now and at every ``changed()``, or once the calling task
-    /// is cancelled. `ready` must not call ``changed()``.
     func wait(until ready: @escaping @Sendable () -> Bool) async {
         let id = state.withLock { state in
             state.lastID += 1
@@ -47,8 +42,6 @@ final class Waiters: Sendable {
         }
     }
 
-    /// What the conditions read changed: ends every wait whose condition now holds. Call it after
-    /// the change, outside any lock a condition takes.
     func changed() {
         let ready = state.withLock { state in
             var ready: [Waiter] = []
@@ -63,8 +56,6 @@ final class Waiters: Sendable {
     }
 }
 
-/// `task`'s value, or `nil` once the calling task is cancelled, as at the end of its test's time
-/// limit: awaiting a call that never answers then fails the test instead of hanging the run.
 func finished<T: Sendable>(_ task: Task<T, Never>) async -> T? {
     let result = Box<T>()
     let waiters = Waiters()
@@ -77,7 +68,6 @@ func finished<T: Sendable>(_ task: Task<T, Never>) async -> T? {
     return result.value
 }
 
-/// One value, set once.
 final class Box<T: Sendable>: Sendable {
     private let stored = Mutex<T?>(nil)
 
@@ -86,9 +76,6 @@ final class Box<T: Sendable>: Sendable {
     func set(_ value: T) { stored.withLock { $0 = value } }
 }
 
-/// The executor's wait limits (``WaitLimitTimer``), which pass only when the test says so: until
-/// then a bounded wait waits for its answer however slow the machine is, and once the test lets
-/// the limits pass, the waits that hang end at once.
 final class ManualWaitLimits: WaitLimitTimer {
     private struct State {
         var passing = false
@@ -125,8 +112,6 @@ final class ManualWaitLimits: WaitLimitTimer {
         }
     }
 
-    /// Runs `body` with every limit passing, the waits running now and those that start: each ends
-    /// as if its limit had passed. Limits are held again when `body` returns.
     func passing<T>(_ body: () async -> T) async -> T {
         let sleepers = state.withLock { state in
             state.passing = true

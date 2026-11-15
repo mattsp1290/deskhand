@@ -3,16 +3,10 @@ import DeskhandTestSupport
 import Synchronization
 import Testing
 
-/// Faults on the release path, shared by the poster and the ledger's disk. Attempts are counted
-/// from 1 since the last ``arm(_:)``. A crash makes every later post and write fail without effect,
-/// as nothing more happens in a dead process, until ``restart()``.
 final class ReleaseFaults: Sendable {
     struct Plan: Sendable {
-        /// Release posts that throw, by attempt.
         var failingReleases: Set<Int> = []
-        /// Ledger writes that throw without reaching the disk, by attempt.
         var failingWrites: Set<Int> = []
-        /// The write attempt during which the process dies: its bytes never reach the disk.
         var crashAtWrite: Int?
         var releaseAttempts = 0
         var writeAttempts = 0
@@ -29,7 +23,6 @@ final class ReleaseFaults: Sendable {
         }
     }
 
-    /// A new process on the same Mac: the disk and what the Mac holds down survive.
     func restart() { plan.withLock { $0 = Plan() } }
 
     var crashed: Bool { plan.withLock(\.crashed) }
@@ -61,11 +54,9 @@ final class ReleaseFaults: Sendable {
 
 enum ReleaseFault: Error {
     case injected
-    /// The process has died.
     case dead
 }
 
-/// The fake Mac's poster behind ``ReleaseFaults``.
 struct FaultyPoster: EventPoster {
     let mac: FakeMac
     let faults: ReleaseFaults
@@ -81,7 +72,6 @@ struct FaultyPoster: EventPoster {
     }
 }
 
-/// The fake Mac's ledger disk behind ``ReleaseFaults``.
 struct FaultyLedgerStore: HeldInputStore {
     let mac: FakeMac
     let faults: ReleaseFaults
@@ -95,8 +85,6 @@ struct FaultyLedgerStore: HeldInputStore {
 }
 
 extension FakeMac {
-    /// What the Mac holds down now because of deskhand: every down event posted and not yet let up.
-    /// A key-up for something not down changes nothing.
     var heldDown: Set<HeldInput> {
         var held: Set<HeldInput> = []
         for entry in read(\.trace) {
@@ -111,7 +99,6 @@ extension FakeMac {
         return held
     }
 
-    /// Puts `entries` in the ledger file, as a previous run would have left them.
     func leaveInLedger(_ entries: [HeldInput]) throws {
         var ledger = try HeldInputLedger(store: ledgerStore)
         for input in entries { try ledger.willPress(input) }
@@ -125,8 +112,6 @@ extension FakeMac {
     }
 }
 
-/// One executor on one fake Mac whose release path and ledger disk can fail or crash, with the
-/// default release handler unless a test passes another.
 struct ReleaseHarness {
     let mac: FakeMac
     let faults: ReleaseFaults
@@ -151,8 +136,6 @@ struct ReleaseHarness {
         executor = InputExecutor(seams: seams, ledger: ledger, now: mac.reading.wall)
     }
 
-    /// The next run of deskhand on the same Mac after the process died: the disks and what the Mac
-    /// holds down survive, and a new executor reads the ledger the dead one left.
     func restarted() throws -> ReleaseHarness {
         faults.restart()
         return try ReleaseHarness(mac: mac, faults: faults, frames: frames, loader: loader)
@@ -176,7 +159,6 @@ struct ReleaseHarness {
             connection: FakeConnection())
     }
 
-    /// A `move`, which presses nothing: admitted only when no state, condition or fault refuses it.
     func move(_ operation: String) async throws -> EffectAnswer {
         await executor.perform(try pointer(["type": "move", "x": 1, "y": 1], operation: operation))
     }
@@ -189,21 +171,16 @@ struct ReleaseHarness {
     }
 }
 
-/// A `keyboard` `press` of `control+option+shift+k`, held long enough for an abort to land while all
-/// four are down.
 enum HeldChord {
     static let action: JSONValue = [
         "type": "press", "key": "k", "modifiers": ["shift", "control", "option"], "hold_ms": 500,
     ]
-    /// The order the executor presses them in, which is the ledger's order.
     static let pressed: [HeldInput] = [
         .modifierKey(.control), .modifierKey(.option), .modifierKey(.shift), .named(.k),
     ]
     static var released: [HeldInput] { pressed.reversed() }
-    /// The chord's down events: an abort set off after the last of them finds all four down.
     static let downEvents = 4
 
-    /// A fake Mac on which the states and conditions given change right after the last down event.
     static func mac(abortingWith states: Set<BlockingState>, conditions: Set<Condition> = []) -> FakeMac {
         FakeMac {
             $0.afterPost[downEvents] = { world, now in
