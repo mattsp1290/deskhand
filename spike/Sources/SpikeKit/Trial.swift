@@ -11,11 +11,14 @@ public protocol Executor {
 public struct AgentExecutor: Executor {
   public let label = "launch_agent"
 
-  public init() {}
+  private let sessionToken: String?
+
+  public init(sessionToken: String? = nil) { self.sessionToken = sessionToken }
 
   public func call(_ words: [String]) async -> [JSON] {
     let box = LineBox()
-    let error = await ControlClient.call(words) { line in box.append(line) }
+    let request = sessionToken.map { ["session", $0] + words } ?? words
+    let error = await ControlClient.call(request) { line in box.append(line) }
     if let error { return [.obj([("error", .string(error))])] }
     return box.lines.map { JSON.parse($0) ?? .string($0) }
   }
@@ -155,7 +158,19 @@ public struct InProcessExecutor: Executor {
   // MARK: Harness calls
 
   public func call(_ words: [String]) async -> [JSON] {
-    await executor.call(words)
+    guard persistenceError == nil else {
+      return [.obj([("error", .string("evidence persistence failed"))])]
+    }
+    let results = await executor.call(words)
+    for result in results {
+      if result["error"] != nil || result["status"]?.stringValue == "error" {
+        report.fail("executor command failed: \(words.joined(separator: " "))")
+      } else if result["status"]?.stringValue == "blocked_on_permission", report.status == .measured
+      {
+        report.status = .blockedOnPermission
+      }
+    }
+    return results
   }
 
   public func sample() async -> JSON {
@@ -194,7 +209,7 @@ public struct InProcessExecutor: Executor {
     report.set("executor_context", executorContext)
     report.set("answers", .obj(answers))
     report.set("attempts", .array(attempts))
-    report.set("complete", .bool(final && persistenceError == nil))
+    report.set("complete", .bool(final && persistenceError == nil && report.status != .error))
     report.needsHuman = !final
     guard let file else { return }
     let text = report.json(context: RunContext.json).pretty()
@@ -210,7 +225,10 @@ public struct InProcessExecutor: Executor {
 
   public func finish() {
     save(final: true)
-    guard persistenceError == nil else { return }
+    guard persistenceError == nil, report.status != .error else {
+      say("Trial incomplete because execution or evidence persistence failed.")
+      return
+    }
     say("\nRecorded \(attempts.count) attempt(s)\(file.map { " in \($0.path)" } ?? "").")
     for finding in report.findings { say("  - \(finding)") }
   }

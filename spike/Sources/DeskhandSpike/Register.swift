@@ -5,7 +5,9 @@ import SpikeKit
 /// Registers the bundled LaunchAgent (`Contents/Library/LaunchAgents/homes.birb.deskhand.agent.plist`)
 /// with `SMAppService.agent(plistName:)`, as deskhand v0 will.
 enum Register {
-  static let plistName = "homes.birb.deskhand.agent.plist"
+  static var plistName: String {
+    (Bundle.main.bundleIdentifier ?? RunContext.bundleIdentifier) + ".agent.plist"
+  }
 
   static func statusName(_ status: SMAppService.Status) -> String {
     switch status {
@@ -26,6 +28,7 @@ enum Register {
     var code: Int32 = 0
     switch command {
     case "register":
+      if service.status == .enabled { break }
       do {
         try service.register()
       } catch {
@@ -52,7 +55,10 @@ enum Register {
     if status == .requiresApproval {
       result.append(
         ("hint", .string("approve deskhand-spike in System Settings > General > Login Items")))
-      if command == "register" { SMAppService.openSystemSettingsLoginItems() }
+      if command == "register" {
+        SMAppService.openSystemSettingsLoginItems()
+        code = 4
+      }
     }
     return (.obj(result), code)
   }

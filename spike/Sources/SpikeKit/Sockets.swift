@@ -325,8 +325,16 @@ public nonisolated enum ControlClient {
     var pending: [UInt8] = []
     var buffer = [UInt8](repeating: 0, count: 65_536)
     while true {
+      var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+      let polled = poll(&ready, 1, 120_000)
+      if polled == 0 { return "agent response timeout after 120 seconds" }
+      if polled < 0 {
+        if errno == EINTR { continue }
+        return "agent transport failed: \(Net.errnoName(errno))"
+      }
       let count = read(fd, &buffer, buffer.count)
-      if count <= 0 { break }
+      if count == 0 { break }
+      if count < 0 { return "agent read failed: \(Net.errnoName(errno))" }
       pending.append(contentsOf: buffer[0..<count])
       while let newline = pending.firstIndex(of: 10) {
         onLine(String(decoding: pending[..<newline], as: UTF8.self))

@@ -102,6 +102,12 @@ public nonisolated enum CodeSigning {
       ("path", .str(bundlePath)),
       ("mas_receipt_present", .bool(receipt)),
       ("cdhash_present", .bool(info[kSecCodeInfoUnique as String] != nil)),
+      (
+        "cdhash",
+        .str(
+          (info[kSecCodeInfoUnique as String] as? Data)?.map { String(format: "%02x", $0) }.joined()
+        )
+      ),
     ])
   }
 

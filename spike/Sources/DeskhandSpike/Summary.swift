@@ -95,11 +95,12 @@ enum Checklist {
   }
 
   static func isDone(_ entry: ChecklistEntry, in directory: URL) -> Bool {
-    let url = directory.appendingPathComponent(entry.file)
+    let root = entry.file.hasPrefix("../") ? directory : RunDirectory.selected(in: directory)
+    let url = root.appendingPathComponent(entry.file)
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
-    guard entry.file.hasSuffix(".json"), let json = JSON.parse(text) else { return true }
+    guard entry.file.hasSuffix(".json"), let json = JSON.parse(text) else { return false }
     return json["status"]?.stringValue == "measured"
-      && (json["evidence"]?["complete"]?.boolValue ?? false)
+      && (!entry.file.hasPrefix("trials/") || json["evidence"]?["complete"]?.boolValue == true)
   }
 
   static func print(directory: URL, idsOnly: Bool) {
@@ -121,20 +122,36 @@ enum Checklist {
   }
 }
 
-/// Writes `summary.md` from every JSON result in a Mac's directory.
+enum RunDirectory {
+  static func selected(in directory: URL) -> URL {
+    let pointer = directory.appendingPathComponent("current-run")
+    guard let text = try? String(contentsOf: pointer, encoding: .utf8) else { return directory }
+    let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !name.contains("/"), name != ".", name != ".." else { return directory }
+    return directory.appendingPathComponent("runs").appendingPathComponent(name)
+  }
+}
+
+/// Writes `summary.md` from the selected run in a Mac's directory.
 enum Summary {
   struct Loaded {
     let path: String
     let json: JSON
   }
 
-  static func load(_ directory: URL) -> [Loaded] {
+  static func load(_ requestedDirectory: URL) -> [Loaded] {
+    let directory = RunDirectory.selected(in: requestedDirectory)
     var results: [Loaded] = []
     let manager = FileManager.default
     guard let enumerator = manager.enumerator(at: directory, includingPropertiesForKeys: nil) else {
       return []
     }
-    for case let url as URL in enumerator where url.pathExtension == "json" {
+    for case let url as URL in enumerator {
+      if url.lastPathComponent == "runs" {
+        enumerator.skipDescendants()
+        continue
+      }
+      guard url.pathExtension == "json" else { continue }
       guard let text = try? String(contentsOf: url, encoding: .utf8), let json = JSON.parse(text),
         json["probe"] != nil
       else { continue }

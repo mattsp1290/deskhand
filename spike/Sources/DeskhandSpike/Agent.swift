@@ -12,6 +12,7 @@ enum Agent {
   }
 
   private static var handle: FileHandle?
+  private static let measurement = MeasurementSession()
   private static var listener: TCPListener?
   private static var listenerState: JSON = .null
   private static var accepted: [JSON] = []
@@ -25,25 +26,32 @@ enum Agent {
 
   private static func write(_ text: String) {
     let manager = FileManager.default
-    if handle == nil {
-      try? manager.createDirectory(
-        at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-      if !manager.fileExists(atPath: logURL.path) {
-        manager.createFile(atPath: logURL.path, contents: nil)
+    do {
+      if handle == nil {
+        try manager.createDirectory(
+          at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !manager.fileExists(atPath: logURL.path) {
+          guard manager.createFile(atPath: logURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+          }
+        }
+        handle = try FileHandle(forWritingTo: logURL)
+        _ = try handle?.seekToEnd()
       }
-      handle = try? FileHandle(forWritingTo: logURL)
-      _ = try? handle?.seekToEnd()
+      if let size = try handle?.offset(), size > 50_000_000 {
+        try handle?.close()
+        handle = nil
+        let rotated = logURL.appendingPathExtension("1")
+        if manager.fileExists(atPath: rotated.path) { try manager.removeItem(at: rotated) }
+        try manager.moveItem(at: logURL, to: rotated)
+        write(text)
+        return
+      }
+      try handle?.write(contentsOf: Data(text.utf8))
+    } catch {
+      FileHandle.standardError.write(Data(("agent evidence write failed: \(error)\n").utf8))
+      exit(1)
     }
-    if let size = try? handle?.offset(), size > 50_000_000 {
-      try? handle?.close()
-      handle = nil
-      let rotated = logURL.appendingPathExtension("1")
-      try? manager.removeItem(at: rotated)
-      try? manager.moveItem(at: logURL, to: rotated)
-      write(text)
-      return
-    }
-    handle?.write(Data(text.utf8))
   }
 
   static func run(_ arguments: [String]) async {
@@ -73,7 +81,30 @@ enum Agent {
     let control = ControlServer()
     let controlError = control.start { words, emit in
       Agent.log("control", .strings(words))
-      await Dispatcher.run(words) { emit($0.compact()) }
+      var command = words
+      var token: String?
+      if command.first == "session", command.count >= 3 {
+        if command[1] == "begin" || command[1] == "end" {
+          let accepted =
+            command[1] == "begin"
+            ? measurement.begin(command[2]) : measurement.end(command[2])
+          emit(
+            JSON.obj(
+              accepted
+                ? [("session", .bool(true))]
+                : [("error", .string("measurement session busy or invalid owner"))]
+            ).compact())
+          return
+        }
+        token = command[1]
+        command.removeFirst(2)
+      }
+      guard measurement.enter(token) else {
+        emit(JSON.obj([("error", .string("measurement session busy or invalid owner"))]).compact())
+        return
+      }
+      defer { measurement.leave() }
+      await Dispatcher.run(command) { emit($0.compact()) }
     }
     log(
       "control_socket",
@@ -92,13 +123,18 @@ enum Agent {
     Task {
       while true {
         await Clock.sleep(ms: 2000)
-        log("capture_check", await CaptureCheck.quick())
+        if measurement.isIdle, measurement.enter(nil) {
+          log("capture_check", await CaptureCheck.quick())
+          measurement.leave()
+        }
         await Clock.sleep(ms: captureInterval * 1000)
       }
     }
     while true {
-      samples += 1
-      log("sample", Signals.sample())
+      if measurement.isIdle {
+        samples += 1
+        log("sample", Signals.sample())
+      }
       await Clock.sleep(ms: interval * 1000)
     }
   }

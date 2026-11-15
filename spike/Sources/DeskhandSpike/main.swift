@@ -142,13 +142,22 @@ enum Main {
       await Dispatcher.run(words, emit: emit)
     }
     var executorContext = RunContext.json
+    var sessionToken: String?
     if !inProcess {
-      let agent = AgentExecutor()
+      let token = UUID().uuidString
+      let acquired = await AgentExecutor().call(["session", "begin", token]).first
+      guard acquired?["session"]?.boolValue == true else {
+        print("Cannot acquire the LaunchAgent measurement session.")
+        return 3
+      }
+      sessionToken = token
+      let agent = AgentExecutor(sessionToken: token)
       let ping = await agent.call(["ping"]).first
       if ping?["pong"]?.boolValue == true {
         executor = agent
         executorContext = ping?["context"] ?? .null
       } else {
+        _ = await AgentExecutor().call(["session", "end", token])
         print(
           "The LaunchAgent is required. Install with spike/scripts/install.sh or explicitly use --in-process for diagnostics."
         )
@@ -166,7 +175,11 @@ enum Main {
     print("deskhand-spike trial \(name) on \(Host.macName), executor \(executor.label)")
     print("This harness never asks for, types or stores your password.")
     await spec.run(env)
-    return env.persistenceError == nil ? 0 : 1
+    if let sessionToken {
+      let released = await AgentExecutor().call(["session", "end", sessionToken]).first
+      guard released?["session"]?.boolValue == true else { return 3 }
+    }
+    return env.persistenceError == nil && env.report.status != .error ? 0 : 1
   }
 }
 

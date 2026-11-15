@@ -38,3 +38,37 @@ import Testing
   #expect(env.report.status == .error)
   #expect(env.report.json(context: .null)["evidence"]?["complete"] == .bool(false))
 }
+
+@Test @MainActor func measurementSessionOwnsWholeTrial() {
+  let session = MeasurementSession()
+  let owner = UUID().uuidString
+  let other = UUID().uuidString
+  #expect(session.begin(owner))
+  #expect(!session.begin(other))
+  #expect(!session.enter(nil))
+  #expect(!session.enter(other))
+  #expect(session.enter(owner))
+  #expect(!session.enter(owner))
+  #expect(!session.end(owner))
+  session.leave()
+  #expect(!session.isIdle)
+  #expect(!session.end(other))
+  #expect(session.enter(owner))
+  session.leave()
+  #expect(session.end(owner))
+  #expect(session.isIdle)
+}
+
+@Test @MainActor func executorFailureCannotCompleteTrial() async {
+  let spec = TrialSpec(
+    name: "test", items: [], effort: 0, summary: "test", humanActions: "none", run: { _ in })
+  let executor = InProcessExecutor { _, emit in
+    emit(.obj([("error", .string("unreachable"))]))
+    emit(.obj([("status", .string("blocked_on_permission"))]))
+  }
+  let env = TrialEnv(spec: spec, executor: executor, outDirectory: nil, count: 1, options: [:])
+  _ = await env.call(["sample"])
+  env.finish()
+  #expect(env.report.status == .error)
+  #expect(env.report.json(context: .null)["evidence"]?["complete"] == .bool(false))
+}

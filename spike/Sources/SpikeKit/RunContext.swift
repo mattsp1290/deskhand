@@ -47,10 +47,16 @@ public enum RunContext {
       ("xpc_service_name", .str(env["XPC_SERVICE_NAME"])),
       ("parent_bundle_id", .str(by == .terminal ? env["__CFBundleIdentifier"] : nil)),
       ("bundle_id", .str(bundle.bundleIdentifier)),
+      (
+        "build_receipt",
+        bundle.url(forResource: "BuildReceipt", withExtension: "json")
+          .flatMap { try? String(contentsOf: $0, encoding: .utf8) }.flatMap(JSON.parse) ?? .null
+      ),
       ("bundle_version", .str(bundle.infoDictionary?["CFBundleVersion"] as? String)),
       ("bundle_path", .string(bundle.bundlePath)),
       ("tcc_attribution", .string(attribution)),
       ("team_id", signature["team_id"].orNull),
+      ("cdhash", signature["cdhash"].orNull),
       ("adhoc", signature["adhoc"].orNull),
       ("hardened_runtime", signature["hardened_runtime"].orNull),
       ("leaf_common_name", signature["leaf_common_name"].orNull),

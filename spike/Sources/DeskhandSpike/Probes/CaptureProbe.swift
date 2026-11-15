@@ -142,10 +142,12 @@ enum CaptureProbe {
         if let excluded = try? await CaptureTools.capture(excludedFilter) {
           hidden = CaptureTools.colorFraction(excluded, in: inner, color: magenta)
           if let directory = options.imageDirectory {
-            CaptureTools.savePNG(
+            if !CaptureTools.savePNG(
               excluded,
               to: directory.appendingPathComponent("display-\(display.displayID)-excluded-self.png")
-            )
+            ) {
+              report.fail("PNG evidence write failed")
+            }
           }
         }
         entry.append(
@@ -189,10 +191,13 @@ enum CaptureProbe {
             ]))
         }
         if let directory = options.imageDirectory {
-          CaptureTools.savePNG(
+          if !CaptureTools.savePNG(
             excluded,
             to: directory.appendingPathComponent(
               "display-\(display.displayID)-excluded-\(app.bundleIdentifier).png"))
+          {
+            report.fail("PNG evidence write failed")
+          }
         }
         sensitiveResults.append(
           .obj([
