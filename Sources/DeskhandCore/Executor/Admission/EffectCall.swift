@@ -38,7 +38,6 @@ public enum EffectCallArguments: Hashable, Sendable {
         }
     }
 
-    /// What the action log records: typed text only as its length (contract 12.10).
     var loggedAction: LoggedAction {
         switch self {
         case .pointer(let arguments): .pointer(arguments.action)

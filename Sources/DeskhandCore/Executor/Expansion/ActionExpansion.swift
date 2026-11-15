@@ -88,9 +88,6 @@ public enum ActionExpansion {
         }
     }
 
-    /// Button down at the first point, a move through every later sample at most
-    /// `DRAG_POLICY_SAMPLE_PX` apart, spread over `duration_ms`, and the button up at the last point
-    /// no sooner than `duration_ms` after it went down (contract 6.4, 6.9).
     private static func dragSteps(_ drag: Drag, _ targets: PointerTargets) -> [PlanStep] {
         var moves: [PointerTarget] = []
         var at = targets.first
@@ -123,8 +120,6 @@ public enum ActionExpansion {
         return steps
     }
 
-    /// The scroll in points, split into equal parts of at most ``maxScrollPointsPerEvent`` on each
-    /// axis.
     static func scrollParts(dx: Int, dy: Int, targets: PointerTargets) -> [(dx: Double, dy: Double)] {
         let delta = targets.geometry.globalDelta(dx: dx, dy: dy)
         let parts = max(1, Int((max(abs(delta.dx), abs(delta.dy)) / maxScrollPointsPerEvent).rounded(.up)))

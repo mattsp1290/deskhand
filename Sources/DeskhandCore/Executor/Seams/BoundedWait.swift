@@ -10,17 +10,11 @@ public protocol WaitLimitTimer: Sendable {
 
 extension TaskSleepTimer: WaitLimitTimer {}
 
-/// How long one bounded wait lasts, and the timer that measures it.
 struct WaitLimit: Sendable {
     let duration: Duration
     let timer: any WaitLimitTimer
 }
 
-/// Waits for `operation` for at most `limit`, and returns `nil` when the limit passed first
-/// (contract 11.3, 12.3). The operation runs in a task of its own, so the cancellation of the
-/// waiting task, which is how a closed connection reaches a request, does not reach it: an append
-/// to the action log is not abandoned because the caller hung up. An operation that outlives the
-/// limit runs on, and hands its answer to `late` once it has one.
 func awaitBounded<T: Sendable>(
     within limit: WaitLimit, _ operation: @escaping @Sendable () async -> T,
     late: @escaping @Sendable (T) async -> Void = { _ in }
@@ -29,7 +23,6 @@ func awaitBounded<T: Sendable>(
         let answer = FirstAnswer(continuation)
         let timeout = Task {
             await limit.timer.sleep(for: limit.duration)
-            // A cancelled sleep returns early: only a limit that really passed answers `nil`.
             guard !Task.isCancelled else { return }
             answer.resume(returning: nil)
         }
@@ -42,17 +35,42 @@ func awaitBounded<T: Sendable>(
     }
 }
 
-/// Resumes a continuation with whichever answer comes first and ignores the rest.
 final class FirstAnswer<T: Sendable>: Sendable {
     private let continuation: Mutex<CheckedContinuation<T?, Never>?>
 
     init(_ continuation: CheckedContinuation<T?, Never>) { self.continuation = Mutex(continuation) }
 
-    /// `false` when an earlier answer already resumed it.
     @discardableResult
     func resume(returning value: T?) -> Bool {
         guard let continuation = continuation.withLock({ $0.take() }) else { return false }
         continuation.resume(returning: value)
         return true
+    }
+}
+
+struct OutstandingRead: Sendable {
+    let id: ObjectIdentifier
+    let task: Task<Void, Never>
+}
+
+extension InputExecutor {
+    func boundedRead<T: Sendable>(_ operation: @escaping @Sendable () async -> T) async -> T? {
+        guard outstandingRead == nil else { return nil }
+        return await withCheckedContinuation { continuation in
+            let answer = FirstAnswer(continuation)
+            let id = ObjectIdentifier(answer)
+            let timeout = Task {
+                await waitLimit.timer.sleep(for: waitLimit.duration)
+                guard !Task.isCancelled, outstandingRead?.id == id else { return }
+                if answer.resume(returning: nil) { outstandingRead?.task.cancel() }
+            }
+            let task = Task {
+                let value = await operation()
+                if outstandingRead?.id == id { outstandingRead = nil }
+                answer.resume(returning: value)
+                timeout.cancel()
+            }
+            outstandingRead = OutstandingRead(id: id, task: task)
+        }
     }
 }

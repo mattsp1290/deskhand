@@ -1,11 +1,8 @@
 import DeskhandCore
 import Testing
 
-/// The watchdog's interruptions (contract 12.4, 13): they stop the call in the section at its next
-/// check, the first in refusal order winning, and only while that call is in the section.
 @Suite("Executor: the watchdog's interruptions", .timeLimit(.minutes(1)))
 struct InterruptionTests {
-    /// The end of the fixture's lease (serial 1), or of a later lease of the same holder (serial 2).
     static func leaseEnd(ofSerial serial: Int) throws -> LeaseEnd {
         var manager = ExecutorFixture.acquired()
         let release = LeaseArguments(holderID: ExecutorFixture.holder, command: .release)

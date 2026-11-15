@@ -1,7 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// A fixed test key: the bytes 0 to 31.
 private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
 
 @Suite(.timeLimit(.minutes(1))) struct RequestDigestTests {
@@ -9,10 +8,6 @@ private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
         try RequestDigest(tool: tool, arguments: #require(JSONValue(parsing: arguments).objectValue), key: key)
     }
 
-    /// Golden values computed independently (HMAC-SHA-256 of the JCS text with Python's `hmac`; the
-    /// same text's plain SHA-256 matches the values deskhand used before the key, which Node.js
-    /// computed). A change here would orphan every persisted operation record, so it must be
-    /// deliberate.
     @Test func matchesIndependentlyComputedDigests() throws {
         #expect(
             try digest(.displays, "{}").description
@@ -23,7 +18,6 @@ private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
                 == "3616a1cbe0eb7a93d10f8f9d3dffbda48894b0559f14332a7156c54cecda7478")
     }
 
-    /// Contract 12.1: a lost key makes every stored digest stop matching, which is the safe way.
     @Test func anotherKeyGivesAnotherDigest() throws {
         let other = DigestKey(bytes: [UInt8](repeating: 7, count: 32))!
         #expect(try digest(.displays, "{}") != digest(.displays, "{}", key: other))
@@ -54,7 +48,6 @@ private let key = DigestKey(bytes: (0..<32).map { UInt8($0) })!
         #expect(try digest(.keyboard, base) != digest(.pointer, base))
     }
 
-    /// Defaults are not filled in before hashing, so an explicit default is a different request.
     @Test func explicitDefaultIsADifferentRequest() throws {
         let implicit = #"{"holder_id":"h","frame_id":"f","operation_id":"o","action":{"type":"press","key":"a"}}"#
         let explicit =

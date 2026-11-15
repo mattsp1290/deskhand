@@ -3,8 +3,8 @@ public struct JSONParseError: Error, Hashable, Sendable, CustomStringConvertible
     public enum Kind: Hashable, Sendable {
         /// Not JSON: `-32700` wherever it is.
         case syntax
-        /// A number that a double cannot hold: it overflows, or it underflows to zero or to a
-        /// subnormal value. Not I-JSON, so `-32700` like a syntax error.
+        /// A number that overflows a double or whose nonzero mantissa underflows to zero.
+        /// Reported as `-32700` like a syntax error.
         case numberOutOfRange
         /// Two members of one object with the same name.
         case duplicateMemberName
@@ -99,7 +99,6 @@ private struct JSONParser {
         JSONParseError(kind: kind, offset: offset ?? index, location: location, reason: reason)
     }
 
-    /// A strictness fault stops a strict parse; a request-body parse records it and goes on.
     private mutating func strictness(_ fault: JSONParseError) throws(JSONParseError) {
         guard collectsStrictness else { throw fault }
         faults.append(fault)
@@ -212,8 +211,6 @@ private struct JSONParser {
         }
     }
 
-    /// Appends the escaped character. Returns `false` for an unpaired surrogate, which is written as
-    /// U+FFFD so that a request-body parse can go on.
     private mutating func parseEscape(into utf8: inout [UInt8], at location: JSONPointer) throws(JSONParseError)
         -> Bool
     {
@@ -295,12 +292,10 @@ private struct JSONParser {
         guard let value = Double(String(decoding: bytes[start..<index], as: UTF8.self)), value.isFinite else {
             throw outOfRange
         }
-        // A literal with a non-zero digit that reads as zero, or as a subnormal, lost its value to
-        // underflow: `1e-400` is not the integer 0.
         let nonZeroMantissa = bytes[start..<mantissaEnd].contains {
             (UInt8(ascii: "1")...UInt8(ascii: "9")).contains($0)
         }
-        guard !(value == 0 && nonZeroMantissa), value == 0 || abs(value) >= .leastNormalMagnitude else {
+        guard !(value == 0 && nonZeroMantissa) else {
             throw outOfRange
         }
         return value

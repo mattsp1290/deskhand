@@ -32,7 +32,6 @@ import Testing
         #expect(frame.displayConfigGeneration == F.generation && frame.capturedAt == F.t0)
         #expect(frame.geometry == capture.geometry && frame.frontmostApp == F.textEdit && frame.maxAgeMs == 60_000)
         #expect(frame.outputPixelSize == PixelSize(width: 4, height: 4))
-        // Re-review A, finding 7: the log's frame digest travels with the frame.
         #expect(frame.sha256 == capture.sha256)
         #expect(store.lookup(frame.id, in: F.alpha)?.sha256 == capture.sha256)
         #expect(frame.id.rawValue.hasPrefix("frm_"))
@@ -207,8 +206,6 @@ import Testing
         #expect(store.lookup(frames[1].id, in: holders[1]) != nil && store.lookup(frames[2].id, in: holders[2]) != nil)
     }
 
-    /// Contract 4.2: screenshots under other `holder_id` values never discard the lease holder's
-    /// latest frame, however many there are.
     @Test func otherHoldersNeverEvictTheLeaseHoldersFrame() throws {
         var store = FrameStore()
         let held = try store.take(F.capture(), for: F.alpha, leaseHolder: F.alpha)
@@ -222,7 +219,6 @@ import Testing
         #expect(store.reason(held.id, in: F.alpha, now: F.t0.adding(milliseconds: 100)) == nil)
     }
 
-    /// A scope over its own bound gives up its own oldest frame, not another scope's.
     @Test func aScopeOverItsBoundEvictsItsOwnOldest() throws {
         var store = FrameStore(maxLiveFrames: 16, maxLiveFramesPerScope: 2)
         let other = try store.take(F.capture(), for: F.beta)

@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Contract 10.4: a release is an event deskhand posted, so the arming lookback runs from the last
-/// one, whether it ended an abort or went out later.
 @Suite("Release: releases are posted events", .timeLimit(.minutes(1)))
 struct ReleaseObservedTests {
     @Test("every event and every release is reported as posted, at the time it went out")

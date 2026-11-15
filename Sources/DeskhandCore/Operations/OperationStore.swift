@@ -47,7 +47,6 @@ public final class OperationStore {
     public let configuration: Configuration
     private let storage: any OperationStorage
     private var records: [OperationKey: OperationRecord] = [:]
-    /// Sorted by admission time, so the records that have left the window are a prefix.
     private var admissions: [Admission] = []
     private var countByPrincipal: [Principal: Int] = [:]
     private var entriesSinceSnapshot = 0
@@ -228,7 +227,6 @@ public final class OperationStore {
 
     private func snapshot() -> [UInt8] {
         let ordered = admissions.compactMap { records[$0.key] }
-        // Every stored result was encoded once already, when it was journaled.
         return try! OperationJournal.snapshot(ordered)
     }
 
@@ -244,8 +242,6 @@ public final class OperationStore {
         }
     }
 
-    /// Deletes the final records whose window has passed (contract 12.6). A record still
-    /// `accepted` or `executing` stays whatever its age: its executor still holds a ticket.
     private func prune(_ now: Timestamp) {
         let horizon = Int64(configuration.retentionMs)
         var kept: [Admission] = []
@@ -269,8 +265,6 @@ public final class OperationStore {
 }
 
 extension Array {
-    /// The first index whose element satisfies `belongsInSecondPartition`, which must be false for
-    /// a prefix of the array and true for the rest.
     fileprivate func partitioningIndex(where belongsInSecondPartition: (Element) -> Bool) -> Int {
         var low = startIndex
         var high = endIndex

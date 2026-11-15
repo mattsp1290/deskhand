@@ -2,8 +2,6 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// The real executor built with the watchdog's activity source, and the watchdog driving its
-/// cleanup retries (contract 11.2, 13.2).
 @Suite("Watchdog: with the executor", .timeLimit(.minutes(1)))
 struct WatchdogExecutorTests {
     static let typing: JSONValue = ["type": "type", "text": "hello world"]
@@ -33,7 +31,6 @@ struct WatchdogExecutorTests {
         #expect(refused.code == .userActive)
         #expect(refused.details == ["idle_ms": 0])
 
-        // With a signal that counts deskhand's events, the posts of the last call are the latest input.
         let anyOrigin = try ExecutorWatch(.personOnly)
         #expect(await anyOrigin.executor.perform(try anyOrigin.call(["type": "move", "x": 5, "y": 5])).result != nil)
         anyOrigin.hid.setKind(.anyOrigin)
@@ -107,8 +104,6 @@ struct WatchdogExecutorTests {
         _ = await watch.watchdog.evaluate()
         #expect(mac.released.isEmpty)
 
-        // A change of the blocking conditions is tried at once, and puts the next retry off the
-        // grid of the periodic reads.
         mac.advance(byMilliseconds: 300)
         mac.setState([.locked, .secureInput])
         var wakeup = await watch.watchdog.evaluate()
@@ -168,8 +163,6 @@ struct WatchdogExecutorTests {
         guard case .expired(let ended) = stale.state(at: ExecutorFixture.t0) else { throw WatchdogFakeFault() }
         #expect(ended.serial != held.serial)
 
-        // The executor's own checks see nobody; only the watchdog's poll sees the person, after it
-        // has forwarded the end of the lease its stale snapshot still shows.
         let mac = FakeMac()
         mac.change { $0.lease = current }
         let harness = try Harness(mac: mac)
@@ -184,8 +177,6 @@ struct WatchdogExecutorTests {
         #expect(mac.read(\.sleeps).count == 1)
     }
 
-    /// The person touches the Mac 40 ms before the executor's `sleep`-th wait ends, so the check after
-    /// that wait is the first to see it.
     static func touchDuringSleep(_ sleep: Int, _ watch: ExecutorWatch) -> WatchdogTouch {
         let touched = WatchdogTouch()
         let sleeps = WatchdogTouch()
@@ -212,7 +203,6 @@ struct WatchdogExecutorTests {
     }
 }
 
-/// When the person touched the Mac, and a counter for the hooks that decide when.
 final class WatchdogTouch: Sendable {
     private let state = Mutex<(instant: ContinuousClock.Instant?, count: Int)>((nil, 0))
 
@@ -220,7 +210,6 @@ final class WatchdogTouch: Sendable {
 
     func mark(_ instant: ContinuousClock.Instant) { state.withLock { $0.instant = instant } }
 
-    /// Counts one more call and returns the count.
     func count() -> Int {
         state.withLock {
             $0.count += 1
@@ -229,8 +218,6 @@ final class WatchdogTouch: Sendable {
     }
 }
 
-/// The fake Mac as an owner whose snapshot still shows `lease`, as a snapshot read before a newer
-/// lease was acquired would.
 final class StaleLeaseOwner: WatchdogStateOwner {
     let mac: FakeMac
     let lease: LeaseManager

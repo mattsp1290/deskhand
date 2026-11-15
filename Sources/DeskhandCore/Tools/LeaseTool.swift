@@ -35,8 +35,6 @@ public struct LeaseArguments: Hashable, Sendable {
         let reader = try ObjectReader(.object(arguments), at: .root, allowing: ["op", "holder_id", "ttl_ms"])
         let operation = try reader.required("op", Decode.oneOf(LeaseOperation.self))
         holderID = try reader.required("holder_id", Decode.identifier(HolderID.self))
-        // The input schema is flat and cannot say that `ttl_ms` is absent on `release`, so it is
-        // checked here, before its value (contract 5.1).
         if operation == .release, reader.members["ttl_ms"] != nil {
             throw ArgumentError(at: JSONPointer(["ttl_ms"]), "must be absent on release")
         }

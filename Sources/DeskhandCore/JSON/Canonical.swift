@@ -62,11 +62,6 @@ extension JSONValue {
         output.append(UInt8(ascii: "\""))
     }
 
-    /// ECMAScript `Number.prototype.toString` (ECMA-262 Number::toString), as RFC 8785 requires.
-    ///
-    /// The shortest round-trip digits come from Swift's `description`, which prints the shortest
-    /// digit string that parses back to the same double (and the closest such string on a tie). Only
-    /// the layout of those digits differs from ECMAScript, so it is rebuilt here.
     static func canonicalNumber(_ value: Double) throws(NonFiniteNumberError) -> String {
         guard value.isFinite else { throw NonFiniteNumberError(value: value) }
         if value == 0 { return "0" }
@@ -87,8 +82,6 @@ extension JSONValue {
         return text
     }
 
-    /// Returns `(s, n)` in ECMA-262's terms: the value is `0.s × 10^n`, `s` has no leading or
-    /// trailing zero.
     private static func shortestDigits(of magnitude: Double) -> (digits: String, n: Int) {
         let description = magnitude.description
         let parts = description.split(separator: "e", maxSplits: 1)

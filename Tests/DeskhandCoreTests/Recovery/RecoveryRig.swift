@@ -3,9 +3,6 @@ import DeskhandTestSupport
 import Foundation
 import Synchronization
 
-/// One Mac across runs of deskhand: the operation records and the held-input ledger are real
-/// owner-only files in a temporary directory, and the fake Mac stands behind every platform seam.
-/// Each ``start(firstReading:records:ledgerStore:poster:)`` is one run, as after a crash or a stop.
 struct RecoveryRig {
     let directory: String
     let mac = FakeMac()
@@ -22,9 +19,6 @@ struct RecoveryRig {
         try await body(RecoveryRig(directory: directory))
     }
 
-    /// One start. The state owner seeds itself from the world, then reduces its first reading of
-    /// the Mac, under which exactly `firstReading` holds besides `disarmed`; `nil` when it has read
-    /// nothing yet.
     func start(
         firstReading: Set<BlockingState>? = [], records: (any OperationStoreLoader)? = nil,
         ledgerStore: (any HeldInputStore & Sendable)? = nil, poster: (any EventPoster)? = nil
@@ -51,8 +45,6 @@ struct RecoveryRig {
         }
     }
 
-    /// Records as a run that died left them: `accepted` is admitted only, `executing` posted
-    /// `eventsPosted` events, `completed` ran to its end.
     func leaveRecords(
         accepted: [OperationKey] = [], executing: [OperationKey: Int] = [:], completed: [OperationKey] = []
     ) throws {
@@ -70,27 +62,22 @@ struct RecoveryRig {
         }
     }
 
-    /// Puts `entries` in the ledger file, in press order, as a previous run would have left them.
     func leaveInLedger(_ entries: [HeldInput]) throws {
         var ledger = try HeldInputLedger(store: FileHeldInputStore(path: ledgerPath))
         for input in entries { try ledger.willPress(input) }
     }
 
-    /// What the next run would find in the ledger.
     func ledgerOnDisk() throws -> [HeldInput] {
         try HeldInputLedger(store: FileHeldInputStore(path: ledgerPath)).pending()
     }
 
     func bytes(at path: String) throws -> [UInt8]? { try DurableFile(path: path).read() }
 
-    /// The journal's lines, sorted: a rewrite puts records admitted in the same millisecond in no
-    /// fixed order.
     func journalLines() throws -> [String] {
         String(decoding: try bytes(at: journalPath) ?? [], as: UTF8.self).split(separator: "\n").map(String.init)
             .sorted()
     }
 
-    /// A person armed deskhand, the Mac is `ok` and the caller acquired the lease.
     func makeReady() {
         let now = mac.reading
         mac.change {
@@ -99,7 +86,6 @@ struct RecoveryRig {
         }
     }
 
-    /// A `move`, which presses nothing: admitted only when nothing refuses it.
     func move(on executor: InputExecutor, operation: String) async throws -> EffectAnswer {
         let arguments: JSONObject = [
             "holder_id": .string(ExecutorFixture.holder.rawValue), "frame_id": .string(frames.frameID.rawValue),
@@ -114,8 +100,6 @@ struct RecoveryRig {
     }
 }
 
-/// The fake Mac's poster in a process that dies at its `diesAt`-th release: that release and every
-/// later one never reach the Mac.
 final class DyingPoster: EventPoster {
     private let mac: FakeMac
     private let diesAt: Int

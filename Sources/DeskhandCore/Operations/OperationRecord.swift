@@ -78,15 +78,11 @@ public enum OperationPhase: Hashable, Sendable {
 
     public var isFinal: Bool { status.isTerminal }
 
-    /// The only place a phase changes, live and when the journal is replayed, so a transition the
-    /// contract does not allow is refused the same way in both. Counts never go down.
     func applying(_ transition: OperationTransition) -> OperationPhase? {
         switch (self, transition) {
         case (.accepted, .execute):
             return .executing(eventsPosted: 0)
         case (.accepted, .finish(let ending, 0)) where ending.status != .completed:
-            // A record write that fails before the first event ends the operation as `failed`
-            // (contract 12.3); nothing was posted, so it never was `executing`.
             return .ended(ending, eventsPosted: 0)
         case (.accepted, .interrupt(0)), (.accepted, .restart):
             return .failedBeforeExecution
@@ -104,7 +100,6 @@ public enum OperationPhase: Hashable, Sendable {
     }
 }
 
-/// A change to one record. ``OperationPhase/applying(_:)`` decides which are legal.
 enum OperationTransition: Hashable, Sendable {
     case execute
     case progress(eventsPosted: Int)
@@ -175,9 +170,6 @@ public enum OperationOutcome: Hashable, Sendable {
         }
     }
 
-    /// The outcome as it is returned the first time: `operation_id`, the count, `replayed: false`
-    /// and, on an error, `measured` come from the record and the outcome, so what is stored and
-    /// what is sent cannot disagree with them.
     func stamped(for key: OperationKey, eventsPosted: Int) -> OperationOutcome {
         switch self {
         case .completed(var result):
@@ -225,8 +217,6 @@ public struct OperationReplay: Hashable, Sendable {
     public let record: OperationRecord
     public let answer: Answer
 
-    /// `nil` for a record that is still `accepted` or `executing`: a repeat of it is
-    /// `operation_in_progress`, never a replay.
     init?(_ record: OperationRecord) {
         switch record.phase {
         case .ended(let ending, _): answer = .stored(ending)

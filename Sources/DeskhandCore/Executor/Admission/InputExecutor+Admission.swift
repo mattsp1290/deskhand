@@ -1,12 +1,7 @@
-/// How the checks inside the admission section ended (contract 9.5 steps 4 to 15, 12.3 steps 2
-/// and 3).
 enum AdmissionResult: Sendable {
     case admitted(Execution)
-    /// A same-digest repeat of a final record, answered while the state is `ok`.
     case replay(OperationReplay, state: DeskhandState)
     case refused(Refusal)
-    /// The connection closed after the intent entry: no record, nothing posted. The refusal is the
-    /// `cancelled` entry that pairs with the intent, with the frame digest and frontmost app it named.
     case dropped(Refusal)
 }
 
@@ -78,12 +73,12 @@ extension InputExecutor {
         await logRefusal(
             ActionLogRefusal(
                 time: snapshot.reading.wall, nodeAddress: nodeAddress, principal: principal, tool: tool,
-                holderID: handles.holderID, operationID: handles.operationID, frameID: nil, frameSHA256: nil,
+                holderID: handles.holderID, operationID: handles.operationID, frameID: handles.frameID,
+                frameSHA256: nil,
                 action: nil, frontmostApp: nil, code: toolError.code))
         return toolError
     }
 
-    /// Steps 4 to 15 and the creation of the record, inside the admission section.
     func admit(_ call: EffectCall, keyboardPlan: ActionPlan?) async -> AdmissionResult {
         var snapshot = seams.state.snapshot()
         let storeFault = Refusal(
@@ -132,7 +127,7 @@ extension InputExecutor {
         let live: LiveFrame
         let frames = seams.frames
         let (frameID, scope, now) = (call.arguments.frameID, call.scope, snapshot.reading.wall)
-        switch await awaitBounded(within: waitLimit, { await frames.check(frameID, in: scope, for: use, now: now) }) {
+        switch await boundedRead({ await frames.check(frameID, in: scope, for: use, now: now) }) {
         case .stale(let reason, let sha256)?:
             return .refused(Refusal(.staleFrame(reason), frontmostApp: frontmost, frameSHA256: sha256))
         case .valid(let checked)?: live = checked
@@ -171,14 +166,11 @@ extension InputExecutor {
         }
         var patchCheckedAt: ContinuousClock.Instant?
         if case .pointer(let pointer) = call.arguments {
-            // Read before the recapture, so the age measured at the last look is never less than
-            // the capture's (contract 8.4).
             let beforeCapture = seams.state.snapshot().reading.monotonic
             let patches = seams.patches
-            let verdict = await awaitBounded(within: waitLimit) {
+            let verdict = await boundedRead {
                 await TargetPatchCheck.run(pointer.action, on: live, verifier: patches)
             }
-            // A recapture that did not answer in time verified nothing: fail closed.
             guard let verdict else { return refused(.staleFrame(.pixelsChanged(pointIndex: 0))) }
             if let stale = verdict { return refused(.staleFrame(stale)) }
             patchCheckedAt = beforeCapture
@@ -252,7 +244,6 @@ extension InputExecutor {
         }
     }
 
-    /// Answers a refusal before admission and writes its refusal entry (contract 12.10).
     func refuse(_ call: EffectCall, _ refusal: Refusal) async -> EffectAnswer {
         let snapshot = seams.state.snapshot()
         let error = ToolError(

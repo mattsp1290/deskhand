@@ -2,12 +2,12 @@ import DeskhandCore
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct ToolArgumentTests {
-    /// Every invalid input example and the `details.argument` pointer deskhand answers it with.
     static let invalidInputPointers: [String: String] = [
         "displays.input.unexpected-argument.json": "",
         "keyboard.input.hold-too-long.json": "/action/hold_ms",
         "keyboard.input.holder-trailing-newline.json": "/holder_id",
         "keyboard.input.missing-holder.json": "",
+        "keyboard.input.permitted-app-trailing-newline.json": "/permitted_apps/0",
         "keyboard.input.press-with-text.json": "/action",
         "keyboard.input.text-empty.json": "/action/text",
         "keyboard.input.text-too-long.json": "/action/text",
@@ -162,7 +162,6 @@ import Testing
         #expect(malformed.holderID == nil && malformed.operationID == nil)
     }
 
-    /// Contract 5.1: `ttl_ms` is refused on `release` even when its value is in range.
     @Test func releaseRefusesTTL() throws {
         let error = try #require(throws: ArgumentError.self) {
             try decode(.lease, ["op": "release", "holder_id": "h", "ttl_ms": 30_000])

@@ -5,7 +5,6 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct POSIXAllowanceFileProbeTests {
     let probe = POSIXAllowanceFileProbe()
 
-    /// A fresh `0755` directory per test; removed when the test's closure returns.
     static func withDirectory(_ body: (String) throws -> Void) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("deskhand-allowance-\(UInt64.random(in: 0...UInt64.max))").path
@@ -51,8 +50,6 @@ import Testing
         }
     }
 
-    /// The rejection a real deployment sees when the publisher is not root. Works without root:
-    /// under root (a Linux container) the directory is handed to `nobody` first.
     @Test func theReaderRefusesARealDirectoryNotOwnedByRoot() throws {
         try Self.withDirectory { directory in
             try Self.write(AllowanceSample.json(), to: directory + "/allowance.json")
@@ -110,8 +107,6 @@ import Testing
         }
     }
 
-    /// Re-review B, finding 5: a directory deskhand's user can search but not list, as a root-owned
-    /// `0711` one is, still serves the file inside it.
     @Test func readsThroughADirectoryItMaySearchButNotList() throws {
         try Self.withDirectory { directory in
             let contents = AllowanceSample.json()
@@ -129,7 +124,6 @@ import Testing
         }
     }
 
-    /// A directory that cannot be opened for lack of permission says which permission is missing.
     @Test func aDeniedDirectoryNamesThePermissionItNeeds() {
         let reason = AllowanceInvalidReason.directoryUnreadable(errno: EACCES)
         #expect(reason.description.hasSuffix("deskhand's user needs search permission on it"))

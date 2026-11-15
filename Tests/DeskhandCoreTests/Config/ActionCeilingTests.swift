@@ -6,7 +6,6 @@ import Testing
 
     private static func at(_ milliseconds: Int64) -> Timestamp { start.adding(milliseconds: milliseconds) }
 
-    /// Runs the step-6 check and, when it passes, admits the call, as the admission owner does.
     private static func attempt(_ ceiling: inout ActionCeiling, at now: Timestamp) -> ToolErrorReason? {
         if let refusal = ceiling.refusal(at: now) { return refusal }
         ceiling.recordAdmission(at: now)
@@ -22,8 +21,6 @@ import Testing
         #expect(ToolErrorReason.rateLimited(retryAfterMs: 1).code == .rateLimited)
     }
 
-    /// Contract 9.5, D9: `denied_app` and `denied_shortcut` refusals before admission count, so the
-    /// policy cannot be probed without limit; no other refusal does.
     @Test func policyRefusalsCountAndOthersDoNot() {
         var ceiling = ActionCeiling(actionsPerMinute: 3)
         let measured = Measured(
@@ -74,7 +71,6 @@ import Testing
         #expect(ceiling.refusal(at: Self.at(0)) == .rateLimited(retryAfterMs: 60_000))
     }
 
-    /// A fixed per-minute bucket would admit 2N across a minute boundary; the sliding window does not.
     @Test func noSixtySecondWindowHoldsMoreThanTheCeiling() {
         var ceiling = ActionCeiling(actionsPerMinute: 5)
         var admitted: [Int64] = []

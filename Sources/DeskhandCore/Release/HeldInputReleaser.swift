@@ -19,14 +19,6 @@ public struct HeldInputReleaser: ReleaseHandler {
         _ inputs: [HeldInput], from ledger: inout HeldInputLedger, poster: any EventPoster,
         authorization: () -> CleanupAuthorization
     ) -> CleanupOutcome {
-        let owned = Set(inputs)
-        var clearFailure: HeldInputLedgerError?
-        for input in ledger.pending().reversed() where owned.contains(input) {
-            if case .deferred(let blockers) = authorization() { return .deferred(blockers) }
-            do { try poster.postRelease(input) } catch { return .postFailed(input, error) }
-            do { try ledger.didRelease(input) } catch { clearFailure = clearFailure ?? error }
-        }
-        if let clearFailure { return .clearFailed(clearFailure) }
-        return ledger.isAvailable ? .complete : .clearFailed(.unavailable)
+        ledger.releasePending(inputs, authorization: authorization, postRelease: poster.postRelease)
     }
 }

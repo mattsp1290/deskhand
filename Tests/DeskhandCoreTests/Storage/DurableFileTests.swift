@@ -2,7 +2,6 @@ import DeskhandCore
 import Foundation
 import Testing
 
-/// Contract 12.1 and 12.7: owner-only files, refused when anything else is found at the path.
 @Suite(.timeLimit(.minutes(1))) struct DurableFileTests {
     private func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
@@ -56,8 +55,6 @@ import Testing
         }
     }
 
-    /// The directory is checked before the file, so a file owned by another uid shows only where
-    /// that uid does not own the directory as well: as root, which can hand the file away.
     @Test(.enabled(if: geteuid() == 0, "only root can give a file away"))
     func refusesAFileOwnedBySomeoneElse() throws {
         try withTemporaryDirectory { directory in
@@ -70,8 +67,6 @@ import Testing
         }
     }
 
-    /// Re-reviews A3 and B4: whoever can write the directory can remove the file, and a missing
-    /// file reads as empty. Each call checks the directory before it touches the file.
     @Test func refusesADirectoryOwnedBySomeoneElse() throws {
         try withTemporaryDirectory { directory in
             try DurableFile(path: directory + "/state.json").replace(with: bytes("x"))
@@ -119,7 +114,6 @@ import Testing
         }
     }
 
-    /// A missing directory is not an empty file.
     @Test func aMissingDirectoryIsAnError() throws {
         try withTemporaryDirectory { directory in
             let file = DurableFile(path: directory + "/absent/state.json")
@@ -186,8 +180,6 @@ import Testing
     }
 }
 
-/// B3: `F_FULLFSYNC` falls back to `fsync` only where the file system does not support it. Every
-/// other flush error reaches the caller, because the bytes may not be on stable storage.
 @Suite(.timeLimit(.minutes(1))) struct DurableFileFlushTests {
     private func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
@@ -237,8 +229,6 @@ import Testing
         }
     }
 
-    /// The write that fails late: the new bytes are in place, but the rename may not survive power
-    /// loss, so the caller is told it failed.
     @Test func aFailedDirectoryFlushLeavesTheNewBytesInPlace() throws {
         try withTemporaryDirectory { directory in
             let flusher = ScriptedFlush.failing(.full, with: EIO, at: 1)

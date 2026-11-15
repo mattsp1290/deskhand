@@ -9,7 +9,6 @@ private let now = ClockReading(wall: Timestamp(millisecondsSinceEpoch: 1_800_000
 
 private func at(_ offsetMs: Int64) -> ClockReading { now.advanced(byMilliseconds: offsetMs) }
 
-/// Built through the real argument parser, as the server builds it.
 private func request(_ op: LeaseOperation, _ holder: HolderID = mine, ttlMs: Int? = nil) -> LeaseArguments {
     var arguments: JSONObject = ["op": .string(op.rawValue), "holder_id": .string(holder.rawValue)]
     arguments["ttl_ms"] = ttlMs.map { JSONValue($0) }
@@ -33,7 +32,6 @@ extension LeaseManager {
     }
 }
 
-/// The lease situations of contract 5.1 and 5.3 as seen by the caller (`crew`, `exec-1`) at `now`.
 enum Situation: String, CaseIterable, Sendable {
     case noLeaseSinceStart
     case heldByCaller
@@ -79,7 +77,6 @@ enum Situation: String, CaseIterable, Sendable {
         }
     }
 
-    /// Contract 5.1's table, one entry per operation, then the effect-call check of 5.3.
     var expected: (acquire: LeaseOutcome, renew: LeaseOutcome, release: LeaseOutcome, check: LeaseDenial?) {
         switch self {
         case .heldByCaller: (.renewed, .renewed, .released, nil)
@@ -266,11 +263,9 @@ enum Situation: String, CaseIterable, Sendable {
         #expect(manager.endCause(of: admitted, now: at(4999)) == nil)
         #expect(manager.endCause(of: admitted, now: at(5000)) == .expired)
 
-        // Ran out, then another holder acquired before the next per-event check.
         _ = manager.run(.acquire, theirs, at: at(6000))
         #expect(manager.endCause(of: admitted, now: at(6001)) == .expired)
 
-        // Released, then the same holder acquired again: a new serial, so the old effect ends.
         var again = acquired(by: crew, mine, at: now)
         let first = try again.check(principal: crew, holderID: mine, now: now)
         _ = again.run(.release, at: at(100))
@@ -283,8 +278,6 @@ enum Situation: String, CaseIterable, Sendable {
         #expect(dropped.endCause(of: underDrop, now: at(200))?.abortReason == .blocked(.gated))
     }
 
-    /// Re-review A, finding 2: leases that begin and end after the admitted one do not relabel how
-    /// it ended.
     @Test func laterLeasesDoNotRelabelHowTheAdmittedLeaseEnded() throws {
         var manager = acquired(by: crew, mine, at: now, ttlMs: 5000)
         let admitted = try manager.check(principal: crew, holderID: mine, now: now)
@@ -293,7 +286,6 @@ enum Situation: String, CaseIterable, Sendable {
         #expect(manager.lastEnd?.cause == .released)
         #expect(manager.endCause(of: admitted, now: at(6200)) == .expired)
 
-        // The admitted lease's end and one release are kept; fill the rest of the retained ends.
         for index in 2..<LeaseManager.retainedEnds {
             _ = manager.run(.acquire, theirs, at: at(7000 + Int64(index)))
             _ = manager.run(.release, theirs, at: at(7000 + Int64(index)))
@@ -304,8 +296,6 @@ enum Situation: String, CaseIterable, Sendable {
         #expect(manager.endCause(of: admitted, now: at(8001)) == .released, "beyond the retained ends")
     }
 
-    /// Re-review B, finding 2: the deadline of the admitted lease moves with a renewal, and is gone
-    /// once that lease no longer holds.
     @Test func theAdmittedLeasesDeadlineFollowsRenewals() throws {
         var manager = acquired(by: crew, mine, at: now, ttlMs: 10_000)
         let admitted = try manager.check(principal: crew, holderID: mine, now: now)

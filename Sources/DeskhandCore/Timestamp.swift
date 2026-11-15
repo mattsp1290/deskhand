@@ -34,7 +34,6 @@ public struct Timestamp: Hashable, Comparable, Sendable, CustomStringConvertible
         guard description == text else { return nil }
     }
 
-    /// Howard Hinnant's `civil_from_days`: proleptic Gregorian date of a day count from 1970-01-01.
     private static func civilDate(daysSinceEpoch: Int64) -> (year: Int64, month: Int64, day: Int64) {
         let shifted = daysSinceEpoch + 719_468
         let era = shifted.floorDivided(by: 146_097)
@@ -48,15 +47,8 @@ public struct Timestamp: Hashable, Comparable, Sendable, CustomStringConvertible
     }
 }
 
-/// A UTC instant read from the wire form of a timestamp: `YYYY-MM-DDTHH:MM:SS`, an optional
-/// fraction of 1 to 9 digits, and a literal `Z`. Only a real instant parses: no month 13, no
-/// hour 24, no February 30, no leap second, and no offset other than `Z`.
-///
-/// Shared by every reader of timestamps (the action log, the allowance file), so the rule lives
-/// in one place.
 struct UTCInstant: Hashable, Comparable, Sendable {
     let secondsSinceEpoch: Int64
-    /// `0..<1_000_000_000`.
     let nanoseconds: Int64
 
     init?(rfc3339 text: String) {
@@ -95,16 +87,12 @@ struct UTCInstant: Hashable, Comparable, Sendable {
         (lhs.secondsSinceEpoch, lhs.nanoseconds) < (rhs.secondsSinceEpoch, rhs.nanoseconds)
     }
 
-    /// The earliest whole millisecond not before this instant. For a clock that counts whole
-    /// milliseconds, `now < instant` and `now >= instant` give the same answers against it as
-    /// against the exact instant.
     var timestampRoundedUp: Timestamp {
         let wholeMilliseconds = nanoseconds / 1_000_000
         let carry: Int64 = nanoseconds % 1_000_000 == 0 ? 0 : 1
         return Timestamp(millisecondsSinceEpoch: secondsSinceEpoch * 1000 + wholeMilliseconds + carry)
     }
 
-    /// Whether the instant falls on a whole millisecond.
     var isWholeMillisecond: Bool { nanoseconds % 1_000_000 == 0 }
 
     private static func daysIn(month: Int64, year: Int64) -> Int64 {
@@ -119,7 +107,6 @@ struct UTCInstant: Hashable, Comparable, Sendable {
         (0..<exponent).reduce(1) { result, _ in result * 10 }
     }
 
-    /// Howard Hinnant's `days_from_civil`: the inverse of ``Timestamp``'s `civil_from_days`.
     private static func daysSinceEpoch(year: Int64, month: Int64, day: Int64) -> Int64 {
         let shiftedYear = month <= 2 ? year - 1 : year
         let era = (shiftedYear >= 0 ? shiftedYear : shiftedYear - 399) / 400

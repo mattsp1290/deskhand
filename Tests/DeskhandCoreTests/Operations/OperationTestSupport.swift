@@ -1,13 +1,7 @@
-// Testable for `IntentReceipt(intent:)` only: outside the module a receipt comes from an async
-// `commitIntent`, and the store's tests are synchronous by design (the store is).
 @testable import DeskhandCore
 
-/// A disk that outlives the stores built on it, so a test can stop one store mid-write, decide
-/// what survived, and load another the way a restarted deskhand would.
 final class FakeDisk {
-    /// What survives power loss: the bytes as of the last flush.
     var durable: [UInt8]?
-    /// What a read sees now, including writes not yet flushed.
     var visible: [UInt8]?
     fileprivate var temporary: [UInt8]?
 
@@ -19,13 +13,9 @@ final class FakeDisk {
     var text: String { String(decoding: visible ?? [], as: UTF8.self) }
     var lines: [String] { text.split(separator: "\n").map(String.init) }
 
-    /// What a crash leaves for the next start.
     enum Loss: CaseIterable, CustomStringConvertible {
-        /// Only the process died: the kernel still has every write.
         case processOnly
-        /// Power loss: everything not flushed is gone.
         case unflushed
-        /// Power loss halfway through writing back what was not flushed.
         case tornUnflushed
 
         var description: String {
@@ -56,16 +46,13 @@ final class FakeDisk {
     }
 }
 
-/// An ``OperationStorage`` on a ``FakeDisk`` that fails or crashes at one chosen write boundary.
 final class FaultyStorage: OperationStorage {
     enum Boundary: Hashable {
         case append, synchronize, writeTemporary, flushTemporary, rename, flushDirectory
     }
 
     enum Fault: CaseIterable, CustomStringConvertible {
-        /// The write reports an error (after a short write, for an append) and the process goes on.
         case fail
-        /// The process dies at the boundary (part-way through, for an append). Nothing after it runs.
         case crash
 
         var description: String { self == .fail ? "fail" : "crash" }
@@ -140,11 +127,9 @@ enum Sample {
 
     static let textEdit = AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit")
 
-    /// A `keyboard` last look: TextEdit in front and owning keyboard focus.
     static let measured = Measured(
         frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt", globalPoint: nil, measuredAt: start)
 
-    /// A completed result whose echoed members are deliberately wrong, so tests see the store set them.
     static func completed(eventsPosted: Int = 999) -> OperationOutcome {
         .completed(
             EffectResult(
@@ -153,7 +138,6 @@ enum Sample {
                 completedAt: start.adding(milliseconds: 400)))
     }
 
-    /// The error itself carries no `measured`; the outcome's must reach the stored result.
     static func aborted(_ state: BlockingState = .paused) -> OperationOutcome {
         .aborted(
             ToolError(.blocked(state), message: "deskhand is \(state.rawValue).", state: state.state),
@@ -166,7 +150,6 @@ enum Sample {
             measured: measured)
     }
 
-    /// The receipt of a committed intent for `key`, which admission needs (contract 12.3 steps 2 and 3).
     static func receipt(_ key: OperationKey) -> IntentReceipt {
         IntentReceipt(
             intent: ActionLogIntent(
@@ -182,7 +165,6 @@ enum Sample {
         try OperationStore(storage: FaultyStorage(disk), configuration: configuration, now: now)
     }
 
-    /// Admits `key` on `store` and returns its ticket.
     static func admit(
         _ store: OperationStore, _ key: OperationKey, digest: RequestDigest = digest("a"), at now: Timestamp = start
     )

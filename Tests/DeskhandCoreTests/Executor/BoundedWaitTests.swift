@@ -1,13 +1,9 @@
 import Testing
 
-// Testable for ``ActionLogAttempts`` and ``awaitBounded(within:_:late:)``: the two reports of one
-// append race across a single hop to the executor, which a test through the executor cannot order.
 @testable import DeskhandCore
 
 @Suite("Executor: bounded waits and the order of append reports", .timeLimit(.minutes(1)))
 struct BoundedWaitTests {
-    /// One report: the attempt, whether the writer answered before the wait ran out, and whether
-    /// the report decides `log_unavailable`.
     struct Report: Sendable, CustomTestStringConvertible {
         let attempt: Int
         let answered: Bool
@@ -17,13 +13,10 @@ struct BoundedWaitTests {
     }
 
     static let orders: [[Report]] = [
-        // A timeout never replaces its own attempt's answer; its late answer replaces its timeout.
         [Report(attempt: 1, answered: true, decides: true), Report(attempt: 1, answered: false, decides: false)],
         [Report(attempt: 1, answered: false, decides: true), Report(attempt: 1, answered: true, decides: true)],
-        // A report older than one already reported is stale, however it ended.
         [Report(attempt: 2, answered: true, decides: true), Report(attempt: 1, answered: false, decides: false)],
         [Report(attempt: 2, answered: false, decides: true), Report(attempt: 1, answered: true, decides: false)],
-        // A newer attempt decides, whichever way it ended.
         [Report(attempt: 1, answered: true, decides: true), Report(attempt: 2, answered: false, decides: true)],
         [
             Report(attempt: 2, answered: false, decides: true), Report(attempt: 1, answered: true, decides: false),
@@ -45,7 +38,6 @@ struct BoundedWaitTests {
     @Test("a wait answers with the operation's value, and nil only once its limit passed; a late value goes on")
     func boundedWait() async {
         let limits = ManualWaitLimits()
-        // Long enough that a wait measured in real time would hang the test instead of passing.
         let limit = WaitLimit(duration: .seconds(3600), timer: limits)
         #expect(await awaitBounded(within: limit, { 7 }) == 7)
 

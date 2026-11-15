@@ -139,7 +139,6 @@ import Testing
 }
 
 extension String {
-    /// A JSON string escape for the one control character the table uses.
     fileprivate var replacingNewlines: String {
         var escaped = ""
         for character in self { escaped += character == "\n" ? "\\n" : String(character) }

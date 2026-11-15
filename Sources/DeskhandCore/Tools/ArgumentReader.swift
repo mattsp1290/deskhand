@@ -15,8 +15,6 @@ public struct ArgumentError: Error, Hashable, Sendable, CustomStringConvertible 
 
 typealias ValueDecoder<T> = (JSONValue, JSONPointer) throws(ArgumentError) -> T
 
-/// Reads one closed JSON object: unknown members are refused before anything else is read.
-///
 /// Member names are compared by Unicode scalars. A name that only canonically equals an allowed one
 /// is unknown, so the `String`-keyed lookups that follow only ever see names spelled exactly.
 struct ObjectReader {
@@ -45,7 +43,6 @@ struct ObjectReader {
 }
 
 enum Decode {
-    /// A JSON number with no fraction (`10.0` counts) inside `range`.
     static func integer(_ range: ClosedRange<Int>) -> ValueDecoder<Int> {
         { value, path throws(ArgumentError) in
             guard let integer = value.integer(in: range) else {
@@ -92,7 +89,6 @@ enum Decode {
         }
     }
 
-    /// An array of distinct elements whose length is in `count`. A repeat names the second occurrence.
     static func uniqueArray<T: Hashable>(
         count: ClosedRange<Int>, _ element: @escaping ValueDecoder<T>
     ) -> ValueDecoder<[T]> {
