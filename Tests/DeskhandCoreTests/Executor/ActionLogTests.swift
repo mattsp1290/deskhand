@@ -1,4 +1,5 @@
 import DeskhandCore
+import DeskhandTestSupport
 import Testing
 
 @Suite("Executor: the action log", .timeLimit(.minutes(1)))

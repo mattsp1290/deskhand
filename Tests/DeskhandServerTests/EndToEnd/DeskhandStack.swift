@@ -10,6 +10,7 @@ struct DeskhandStack: Sendable {
     struct Options: Sendable {
         var limits = Limits()
         var waitLimit = InputExecutor.Configuration.defaultWaitLimit
+        var waitTimer: any WaitLimitTimer = TaskSleepTimer()
         var frameCheck: (@Sendable () async -> FrameCheck)?
         var armed = true
         var states: Set<BlockingState> = []
@@ -73,7 +74,8 @@ struct DeskhandStack: Sendable {
             return InputExecutor.Seams(
                 state: owner, frames: StackFrames(owner: owner, check: options.frameCheck), patches: platform.desk,
                 identity: platform.desk, activity: activity,
-                poster: platform.desk, keyCodes: platform.desk, log: log, timer: platform.desk, observer: observer,
+                poster: platform.desk, keyCodes: platform.desk, log: log, timer: platform.desk,
+                waitTimer: options.waitTimer, observer: observer,
                 operationStore: FileOperationStoreLoader(
                     path: state.recordsPath, configuration: OperationStore.Configuration(limits: options.limits)))
         }

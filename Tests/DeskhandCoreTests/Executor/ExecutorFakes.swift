@@ -424,6 +424,7 @@ struct Harness {
         var identity: (any IdentityMeasurer)?
         var activity: (any UserActivitySource)?
         var poster: (any EventPoster)?
+        var observer: (any ExecutorObserver)?
         var ledgerStore: (any HeldInputStore & Sendable)?
     }
 
@@ -447,7 +448,8 @@ struct Harness {
         let seams = InputExecutor.Seams(
             state: overrides.state ?? mac, frames: self.frames, patches: FakePatches(mac: mac),
             identity: overrides.identity ?? mac, activity: overrides.activity ?? mac, poster: overrides.poster ?? mac,
-            keyCodes: mac, log: log, timer: mac, waitTimer: timer, observer: mac, operationStore: loader)
+            keyCodes: mac, log: log, timer: mac, waitTimer: timer, observer: overrides.observer ?? mac,
+            operationStore: loader)
         let ledger = try HeldInputLedger(store: overrides.ledgerStore ?? mac.ledgerStore)
         executor = InputExecutor(
             configuration: .init(

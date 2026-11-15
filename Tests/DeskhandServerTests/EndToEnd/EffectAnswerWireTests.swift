@@ -50,8 +50,9 @@ struct EffectAnswerWireTests {
     func frameFailureClosesWire(_ timeout: Bool) async throws {
         let entered = Latch()
         let proceed = Latch()
+        let limits = ManualWaitLimits()
         let options = DeskhandStack.Options(
-            waitLimit: .milliseconds(40),
+            waitTimer: limits,
             frameCheck: {
                 entered.open()
                 await proceed.wait()
@@ -63,8 +64,13 @@ struct EffectAnswerWireTests {
             let pending = Task { try await Self.exchange(request, address: stack.address, pki: stack.pki) }
             await entered.wait()
             await stack.executor.beginStop()
-            if !timeout { proceed.open() }
-            let response = try await pending.value
+            let response: ResumingTLSClient.Exchange
+            if timeout {
+                response = try await limits.passing { try await pending.value }
+            } else {
+                proceed.open()
+                response = try await pending.value
+            }
             proceed.open()
             #expect(response.bytes.isEmpty)
             #expect(stack.desk.posted.isEmpty)
@@ -144,19 +150,32 @@ struct EffectAnswerWireTests {
 
     @Test(arguments: [PatchVerdict.changed, .unknown], [false, true])
     func stopWhileCheckingPatch(_ verdict: PatchVerdict, _ timeout: Bool) async throws {
-        try await DeskhandStack.with(.init(waitLimit: .milliseconds(40))) { stack in
+        let limits = ManualWaitLimits()
+        try await DeskhandStack.with(.init(waitTimer: limits)) { stack in
             let frame = try await stack.ready()
-            let gate = Latch()
+            let entered = Latch()
+            let proceed = Latch()
             stack.desk.change {
                 $0.patch = verdict
                 $0.onVerify = {
-                    await stack.executor.beginStop()
-                    if timeout { await gate.wait() }
+                    entered.open()
+                    await proceed.wait()
                 }
             }
-            let response = try await Self.exchange(
-                Self.request("pointer", Wire.click(frame: frame, "op-1")), address: stack.address, pki: stack.pki)
-            gate.open()
+            let pending = Task {
+                try await Self.exchange(
+                    Self.request("pointer", Wire.click(frame: frame, "op-1")), address: stack.address, pki: stack.pki)
+            }
+            await entered.wait()
+            await stack.executor.beginStop()
+            let response: ResumingTLSClient.Exchange
+            if timeout {
+                response = try await limits.passing { try await pending.value }
+            } else {
+                proceed.open()
+                response = try await pending.value
+            }
+            proceed.open()
             #expect(response.bytes.isEmpty)
             #expect(stack.desk.posted.isEmpty)
             _ = await stack.executor.awaitStopEntries()

@@ -206,7 +206,7 @@ extension InputExecutor {
     }
 
     private func end(_ execution: inout Execution, _ ending: Ending) async -> EffectAnswer {
-        if case .processStop = ending {
+        if stopRequested {
             return await endStopped(execution, .abortedByRestart(eventsPosted: execution.eventsPosted))
         }
         releaseOperationInput(execution.pressed)

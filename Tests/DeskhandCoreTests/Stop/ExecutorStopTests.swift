@@ -1,4 +1,5 @@
 import DeskhandCore
+import DeskhandTestSupport
 import Foundation
 import Synchronization
 import Testing

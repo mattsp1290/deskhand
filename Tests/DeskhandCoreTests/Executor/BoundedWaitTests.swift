@@ -1,3 +1,4 @@
+import DeskhandTestSupport
 import Testing
 
 @testable import DeskhandCore
