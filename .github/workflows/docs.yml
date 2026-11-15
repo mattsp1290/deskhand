@@ -30,6 +30,9 @@ jobs:
       # Schemas and examples are discovered by layout; see docs/schemas/README.md.
       - run: python scripts/check-contract.py
 
+      - name: Embedded tool schemas are current
+        run: python scripts/embed-tool-schemas.py --check
+
   markdownlint:
     name: markdownlint
     runs-on: ubuntu-24.04

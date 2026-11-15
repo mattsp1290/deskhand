@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Embed the tool schemas that tools/list serves into the DeskhandServer target.
+
+Package.swift has no resources, so docs/schemas/defs.json and every
+docs/schemas/tools/*.json are copied byte for byte into a Swift source file as
+raw string literals. The server applies the bundling rule of contract 3.2 to
+them at run time. A Swift test compares the embedded text with the files on
+disk, so `swift test` fails whenever this script needs to be run again.
+
+  scripts/embed-tool-schemas.py           rewrite the Swift file
+  scripts/embed-tool-schemas.py --check   exit 1 if the Swift file is stale
+
+Standard library only.
+"""
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SCHEMAS = ROOT / "docs" / "schemas"
+OUTPUT = ROOT / "Sources" / "DeskhandServer" / "MCP" / "ToolSchemaSources.swift"
+INDENT = " " * 8
+
+
+def swift_name(relative: str) -> str:
+    stem = relative.removeprefix("tools/").removesuffix(".json")
+    words = re.split(r"[^A-Za-z0-9]+", stem)
+    return words[0] + "".join(w[:1].upper() + w[1:] for w in words[1:])
+
+
+def raw_literal(text: str) -> str:
+    if "\r" in text:
+        raise SystemExit("schema files must use LF line endings")
+    hashes = 1
+    while f'"{"#" * hashes}' in text or f'\\{"#" * hashes}' in text:
+        hashes += 1
+    delimiter = "#" * hashes
+    # A multi-line literal drops the newline before its closing delimiter, so a file that ends in a
+    # newline gets one blank line here.
+    lines = [INDENT + line if line else "" for line in text.split("\n")]
+    return f'{delimiter}"""\n' + "\n".join(lines) + f'\n{INDENT}"""{delimiter}'
+
+
+def render() -> str:
+    files = ["defs.json"] + sorted(p.relative_to(SCHEMAS).as_posix() for p in (SCHEMAS / "tools").glob("*.json"))
+    out = [
+        "enum ToolSchemaSources {",
+        "    static let files: [String: String] = [",
+    ]
+    out += [f'        "{f}": {swift_name(f)},' for f in files]
+    out += ["    ]"]
+    for f in files:
+        text = (SCHEMAS / f).read_text(encoding="utf-8")
+        out += ["", f"    static let {swift_name(f)} = {raw_literal(text)}"]
+    out += ["}", ""]
+    return "\n".join(out)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--check", action="store_true", help="exit 1 if the generated file is out of date")
+    args = parser.parse_args()
+    rendered = render()
+    if args.check:
+        current = OUTPUT.read_text(encoding="utf-8") if OUTPUT.exists() else ""
+        if current != rendered:
+            print(f"FAIL {OUTPUT.relative_to(ROOT)} is stale; run scripts/embed-tool-schemas.py")
+            return 1
+        return 0
+    OUTPUT.write_text(rendered, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
