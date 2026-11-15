@@ -9,13 +9,7 @@ struct CertificateFacts {
 
     init(der: [UInt8]) throws(X509ParseError) {
         let certificate = try X509Certificate(der: der)
-        var outer = DERReader(der[...])
-        var certificateReader = DERReader(try outer.read(tag: DERTag.sequence).content)
-        var tbs = DERReader(try certificateReader.read(tag: DERTag.sequence).content)
-        if tbs.nextTag == DERTag.explicitVersion { _ = try tbs.read() }
-        _ = try tbs.read(tag: DERTag.integer)
-        _ = try tbs.read(tag: DERTag.sequence)
-        issuer = try tbs.read(tag: DERTag.sequence).encoded
+        issuer = certificate.issuer.encoded
         subject = certificate.subject.encoded
         dnsNames = try Self.dnsNames(certificate)
     }

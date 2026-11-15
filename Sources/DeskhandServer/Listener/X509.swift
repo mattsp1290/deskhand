@@ -102,6 +102,7 @@ struct X509Certificate {
         let value: ArraySlice<UInt8>
     }
 
+    let issuer: DERElement
     let subject: DERElement
     let extensions: [Extension]
 
@@ -114,7 +115,7 @@ struct X509Certificate {
         if tbs.nextTag == DERTag.explicitVersion { _ = try tbs.read() }
         _ = try tbs.read(tag: DERTag.integer)
         _ = try tbs.read(tag: DERTag.sequence)  // signature algorithm
-        _ = try tbs.read(tag: DERTag.sequence)  // issuer
+        issuer = try tbs.read(tag: DERTag.sequence)
         _ = try tbs.read(tag: DERTag.sequence)  // validity
         subject = try tbs.read(tag: DERTag.sequence)
         _ = try tbs.read(tag: DERTag.sequence)  // subject public key info
