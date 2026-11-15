@@ -9,12 +9,17 @@ enum Agent {
   }
 
   private static var handle: FileHandle?
-  private static let measurement = MeasurementSession()
+  private static let measurement = MeasurementSession(
+    file: URL(fileURLWithPath: ControlServer.defaultPath).deletingLastPathComponent()
+      .appendingPathComponent("session-claim.json"),
+    artifactID: SessionIdentity.artifact(RunContext.json))
   private static var listener: TCPListener?
   private static var listenerState: JSON = .null
   private static var accepted: [JSON] = []
   private static let started = Clock.iso()
   private static var samples = 0
+  private static var peerAttempt: JSON = .null
+  private static var listenerPort = 47_821
 
   static func log(_ kind: String, _ body: JSON) {
     let line = JSON.obj([("kind", .string(kind)), ("t", Clock.stamp()), ("body", body)])
@@ -65,6 +70,8 @@ enum Agent {
       }
       index += 2
     }
+    listenerPort = port
+    Dispatcher.peerCommand = peerCommand
     SignalEvents.shared.onEvent = { event in Agent.log("event", event) }
     SignalEvents.shared.start()
     log(
@@ -77,31 +84,66 @@ enum Agent {
 
     let control = ControlServer()
     let controlError = control.start { words, emit in
-      Agent.log("control", .strings(words))
-      var command = words
+      guard words.count >= 3, words[0] == "request", UUID(uuidString: words[1]) != nil else {
+        return
+      }
+      let requestID = words[1]
+      var count = 0
+      var success = true
+      func reply(_ value: JSON) {
+        count += 1
+        if value["error"] != nil || value["status"]?.stringValue == "error" { success = false }
+        emit(CommandProtocol.result(value, id: requestID).compact())
+      }
+      defer {
+        emit(CommandProtocol.completion(id: requestID, count: count, success: success).compact())
+      }
+      var command = Array(words.dropFirst(2))
       var token: String?
       if command.first == "session", command.count >= 3 {
-        if command[1] == "begin" || command[1] == "end" {
-          let accepted =
-            command[1] == "begin"
-            ? measurement.begin(command[2]) : measurement.end(command[2])
-          emit(
-            JSON.obj(
+        if ["begin", "resume", "end"].contains(command[1]) {
+          let accepted: Bool
+          switch command[1] {
+          case "begin": accepted = measurement.begin(command[2])
+          case "resume": accepted = measurement.resume(command[2])
+          default: accepted = measurement.end(command[2])
+          }
+          if accepted {
+            listener?.stop()
+            listener = nil
+            peerAttempt = .null
+          }
+          reply(
+            .obj(
               accepted
                 ? [("session", .bool(true))]
-                : [("error", .string("measurement session busy or invalid owner"))]
-            ).compact())
+                : [
+                  (
+                    "error",
+                    .string(measurement.error ?? "measurement session busy or invalid owner")
+                  )
+                ]))
           return
         }
         token = command[1]
         command.removeFirst(2)
       }
+      if command == ["ping"] {
+        await Dispatcher.run(command, emit: reply)
+        return
+      }
       guard measurement.enter(token) else {
-        emit(JSON.obj([("error", .string("measurement session busy or invalid owner"))]).compact())
+        reply(
+          .obj([
+            (
+              "error",
+              .string(measurement.error ?? "measurement session busy, suspended or invalid owner")
+            )
+          ]))
         return
       }
       defer { measurement.leave() }
-      await Dispatcher.run(command) { emit($0.compact()) }
+      await Dispatcher.run(command, emit: reply)
     }
     log(
       "control_socket",
@@ -136,11 +178,55 @@ enum Agent {
     }
   }
 
+  private static func peerCommand(_ words: [String]) -> JSON {
+    guard words.count == 2, UUID(uuidString: words[1]) != nil else {
+      return .obj([("error", .string("expected arm|collect and nonce"))])
+    }
+    let nonce = words[1]
+    if words[0] == "collect", peerAttempt["nonce"]?.stringValue == nonce {
+      return peerAttempt.setting(
+        "accepted", .array(accepted.filter { $0["nonce"]?.stringValue == nonce })
+      )
+      .setting("context", RunContext.json)
+    }
+    guard words[0] == "arm", let address = Net.lanAddress()?.address else {
+      return .obj([("error", .string("cannot arm peer listener"))])
+    }
+    listener?.stop()
+    listener = nil
+    accepted = []
+    let candidate = TCPListener(host: address, port: listenerPort)
+    let greeting = JSON.obj([("nonce", .string(nonce)), ("target_host", .string(Host.macName))])
+      .compact()
+    let error = candidate.start(
+      greeting: { greeting },
+      onAccept: { peer in
+        let entry = JSON.obj([
+          ("peer", .string(peer)), ("nonce", .string(nonce)), ("t", Clock.stamp()),
+        ])
+        Task { @MainActor in
+          Agent.accepted.append(entry)
+          Agent.log("peer_accept", entry)
+        }
+      })
+    if let error { return .obj([("error", .string(error))]) }
+    listener = candidate
+    peerAttempt = .obj([
+      ("nonce", .string(nonce)), ("address", .string(address)),
+      ("port", .int(listenerPort)), ("target_host", .string(Host.macName)),
+    ])
+    return peerAttempt
+  }
+
   private static func keepListening(port: Int) async {
     var bound: String?
     while true {
+      guard measurement.isIdle else {
+        await Clock.sleep(ms: 5000)
+        continue
+      }
       let address = Net.lanAddress()?.address
-      if address != bound {
+      if address != bound || listener == nil {
         listener?.stop()
         listener = nil
         bound = nil

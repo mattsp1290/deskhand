@@ -1,3 +1,5 @@
+import CryptoKit
+import Darwin
 import Foundation
 import SpikeKit
 
@@ -56,7 +58,7 @@ enum Checklist {
     for trial in Catalog.trials where trial.name != "lock" {
       result.append(
         ChecklistEntry(
-          command: "trial \(trial.name)", effort: trial.effort, items: trial.items,
+          command: "--trial \(trial.name)", effort: trial.effort, items: trial.items,
           actions: trial.humanActions, file: "trials/\(trial.name).json"))
     }
     let lockEfforts = [
@@ -70,30 +72,39 @@ enum Checklist {
         : "\(path.instruction) Then unlock. 20 times."
       result.append(
         ChecklistEntry(
-          command: "trial lock --path \(path.name)", effort: lockEfforts[path.name] ?? 30,
+          command: "--trial lock --path \(path.name) --count 20",
+          effort: lockEfforts[path.name] ?? 30,
           items: LockTrial.spec.items, actions: actions, file: "trials/lock-\(path.name).json"))
     }
     result.append(
       ChecklistEntry(
-        command: "script persistence", effort: 2, items: ["3"],
-        actions: "none (rebuilds, reinstalls with the same identity, compares grants)",
-        file: "trials/persistence.json"))
+        command: "", effort: 2, items: ["3"],
+        actions:
+          "Pending external work. Ask the signing Mac for a second same-identity signed/notarized artifact and receipt. Preserve both receipts and before/after permission reports, install with spike/scripts/install.sh, then compare grants and artifact IDs.",
+        file: "external-persistence"))
     result.append(
       ChecklistEntry(
-        command: "script agent-log", effort: 1, items: ["1"],
-        actions: "none; rerun after a few days and after a week to catch the periodic prompt",
-        file: "agent-log.json"))
+        command: "--automatic", effort: 1, items: ["1"],
+        actions:
+          "Rerun after a few days and a week, then inspect the recorded agent log for the periodic prompt.",
+        file: "external-periodic-prompt"))
     result.append(
       ChecklistEntry(
-        command: "script remote", effort: 40, items: ["1", "2", "3", "4", "9"],
-        actions: "repeat on m1max2021 (ssh punk1290@10.0.0.96)",
-        file: "../m1max2021/summary.md"))
+        command: "", effort: 40, items: ["9"],
+        actions:
+          "Run spike/scripts/run-spike.sh --host TARGET --peer USER@OTHER_HOST --peer-listener. Use distinct physical hosts; inspect correlated source, destination and nonce evidence.",
+        file: "peer-listener.json"))
     return result.sorted { $0.effort < $1.effort }
   }
 
+  static func command(_ entry: ChecklistEntry, host: String) -> String {
+    guard !entry.command.isEmpty else { return "Pending external work" }
+    let quoted = "'" + host.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    return "spike/scripts/run-spike.sh --host \(quoted) \(entry.command)"
+  }
+
   static func isDone(_ entry: ChecklistEntry, in directory: URL) -> Bool {
-    let root = entry.file.hasPrefix("../") ? directory : RunDirectory.selected(in: directory)
-    let url = root.appendingPathComponent(entry.file)
+    guard let url = Campaign.selected(entry.file, in: directory) else { return false }
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
     guard entry.file.hasSuffix(".json"), let json = JSON.parse(text) else { return false }
     return json["status"]?.stringValue == "measured"
@@ -103,19 +114,108 @@ enum Checklist {
   static func print(directory: URL, idsOnly: Bool) {
     let pending = entries.filter { !isDone($0, in: directory) }
     if idsOnly {
-      for entry in pending { Swift.print(entry.command) }
+      for entry in pending { Swift.print(command(entry, host: directory.lastPathComponent)) }
       return
     }
     Swift.print("Manual steps, least effort first ([x] = result recorded in \(directory.path)):")
     for (index, entry) in entries.enumerated() {
       let mark = isDone(entry, in: directory) ? "x" : " "
       Swift.print(
-        " [\(mark)] \(index + 1). \(entry.command)  (items \(entry.items.joined(separator: ", ")))")
+        " [\(mark)] \(index + 1). \(command(entry, host: directory.lastPathComponent))  (items \(entry.items.joined(separator: ", ")))"
+      )
       Swift.print("        you: \(entry.actions)")
     }
     Swift.print(
       " [-] item 10 (Lima guest reachability) is bean deskhand-ealq; not run by this harness.")
     _ = pending
+  }
+}
+
+enum Campaign {
+  static func read(_ directory: URL) -> JSON? {
+    (try? String(contentsOf: directory.appendingPathComponent("campaign.json"), encoding: .utf8))
+      .flatMap(JSON.parse)
+  }
+
+  static func selected(_ file: String, in directory: URL) -> URL? {
+    guard let run = read(directory)?["selected"]?[file]?.stringValue,
+      safeRun(run), !file.contains(".."), !file.hasPrefix("/")
+    else { return nil }
+    return directory.appendingPathComponent("runs/\(run)/\(file)")
+  }
+
+  static func safeRun(_ name: String) -> Bool {
+    !name.isEmpty && name != "." && name != ".." && !name.contains("/")
+  }
+
+  static func importRun(_ runID: String, into directory: URL) throws {
+    guard safeRun(runID) else { throw TrialAbort.failed("invalid invocation name") }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let fd = open(directory.appendingPathComponent(".campaign.lock").path, O_CREAT | O_RDWR, 0o600)
+    guard fd >= 0 else { throw TrialAbort.failed("cannot open campaign writer lock") }
+    defer { close(fd) }
+    guard flock(fd, LOCK_EX) == 0 else {
+      throw TrialAbort.failed("cannot acquire campaign writer lock")
+    }
+    defer { flock(fd, LOCK_UN) }
+    let run = directory.appendingPathComponent("runs/\(runID)")
+    let receiptData = try Data(contentsOf: run.appendingPathComponent("artifact-receipt.json"))
+    let receipt = try JSONSerialization.jsonObject(with: receiptData)
+    guard let fields = receipt as? [String: Any],
+      let digest = fields["executable_sha256"] as? String,
+      digest.count == 64, fields["source_sha"] != nil, fields["team"] != nil
+    else {
+      throw TrialAbort.failed("invocation lacks artifact receipt provenance")
+    }
+    let canonical = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+    let artifact = SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined()
+    let archive = directory.appendingPathComponent("campaigns/\(artifact).json")
+    let prior: JSON?
+    if FileManager.default.fileExists(atPath: archive.path) {
+      let text = try String(contentsOf: archive, encoding: .utf8)
+      guard let saved = JSON.parse(text), saved["artifact_id"]?.stringValue == artifact,
+        saved["invocations"]?.arrayValue != nil, saved["selected"]?.members != nil
+      else {
+        throw TrialAbort.failed("existing campaign is malformed; preserve it for inspection")
+      }
+      prior = saved
+    } else {
+      prior = nil
+    }
+    var attempts = prior?["invocations"]?.arrayValue ?? []
+    var selected = prior?["selected"]?.members?.map { ($0.key, $0.value) } ?? []
+    let invocation = try String(
+      contentsOf: run.appendingPathComponent("invocation.json"), encoding: .utf8)
+    guard let outcome = JSON.parse(invocation), let status = outcome["exit_status"]?.intValue else {
+      throw TrialAbort.failed("missing invocation outcome")
+    }
+    let reports = Summary.loadFiles(run)
+    if !attempts.contains(where: { $0["id"]?.stringValue == runID }) {
+      attempts.append(
+        .obj([
+          ("id", .string(runID)), ("exit_status", .int(status)),
+          ("reports", .strings(reports.map(\.path))),
+        ]))
+      if status == 0 {
+        for report in reports
+        where report.json["status"]?.stringValue == "measured"
+          && (!report.path.hasPrefix("trials/")
+            || report.json["evidence"]?["complete"]?.boolValue == true)
+        {
+          selected.removeAll { $0.0 == report.path }
+          selected.append((report.path, .string(runID)))
+        }
+      }
+    }
+    let campaign = JSON.obj([
+      ("artifact_id", .string(artifact)),
+      ("receipt", JSON.parse(String(decoding: canonical, as: UTF8.self)).orNull),
+      ("invocations", .array(attempts)), ("selected", .obj(selected)),
+    ])
+    try EvidenceWriter.write(campaign.pretty(), to: archive)
+    try EvidenceWriter.write(
+      campaign.pretty(), to: directory.appendingPathComponent("campaign.json"))
+    try EvidenceWriter.write(runID + "\n", to: directory.appendingPathComponent("current-run"))
   }
 }
 
@@ -135,14 +235,30 @@ enum Summary {
     let json: JSON
   }
 
-  static func load(_ requestedDirectory: URL) -> [Loaded] {
-    let directory = RunDirectory.selected(in: requestedDirectory)
+  static func load(_ directory: URL) -> [Loaded] {
+    guard let campaign = Campaign.read(directory) else {
+      return loadFiles(RunDirectory.selected(in: directory))
+    }
+    var results: [Loaded] = []
+    for selection in campaign["selected"]?.members ?? [] {
+      guard let url = Campaign.selected(selection.key, in: directory),
+        let text = try? String(contentsOf: url, encoding: .utf8), let json = JSON.parse(text)
+      else { continue }
+      results.append(
+        Loaded(path: "runs/\(selection.value.stringValue ?? "")/\(selection.key)", json: json))
+    }
+    return results.sorted { $0.path < $1.path }
+  }
+
+  static func loadFiles(_ requestedDirectory: URL) -> [Loaded] {
+    let directory = requestedDirectory.resolvingSymlinksInPath()
     var results: [Loaded] = []
     let manager = FileManager.default
-    guard let enumerator = manager.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+    guard let enumerator = manager.enumerator(atPath: directory.path) else {
       return []
     }
-    for case let url as URL in enumerator {
+    for case let relative as String in enumerator {
+      let url = directory.appendingPathComponent(relative)
       if url.lastPathComponent == "runs" {
         enumerator.skipDescendants()
         continue
@@ -151,7 +267,6 @@ enum Summary {
       guard let text = try? String(contentsOf: url, encoding: .utf8), let json = JSON.parse(text),
         json["probe"] != nil
       else { continue }
-      let relative = url.path.replacingOccurrences(of: directory.path + "/", with: "")
       results.append(Loaded(path: relative, json: json))
     }
     return results.sorted { $0.path < $1.path }
@@ -180,6 +295,22 @@ enum Summary {
         + (teams.isEmpty ? "none (unsigned or ad-hoc)" : teams.sorted().joined(separator: ", "))
         + ".")
     lines.append("")
+    if let campaign = Campaign.read(directory) {
+      lines.append("Campaign artifact \(campaign["artifact_id"]?.stringValue ?? "unknown").")
+      for attempt in campaign["invocations"]?.arrayValue ?? [] {
+        lines.append(
+          "- Invocation \(attempt["id"]?.stringValue ?? "?") exited \(attempt["exit_status"]?.intValue ?? -1). Evidence remains in its run directory."
+        )
+        if attempt["exit_status"]?.intValue != 0 {
+          for file in attempt["reports"]?.arrayValue?.compactMap(\.stringValue) ?? [] {
+            lines.append(
+              "  - Failed invocation evidence: `runs/\(attempt["id"]?.stringValue ?? "?")/\(file)`. This attempt does not replace successful selections."
+            )
+          }
+        }
+      }
+      lines.append("")
+    }
     lines.append("## By spike item")
     for (item, title) in Items.titles {
       lines.append("")
@@ -230,7 +361,7 @@ enum Summary {
     for entry in Checklist.entries {
       let done = Checklist.isDone(entry, in: directory)
       lines.append(
-        "- [\(done ? "x" : " ")] `run-spike.sh \(entry.command)`: \(entry.actions) "
+        "- [\(done ? "x" : " ")] `\(Checklist.command(entry, host: directory.lastPathComponent))`: \(entry.actions) "
           + "(items \(entry.items.joined(separator: ", ")))")
     }
     let url = directory.appendingPathComponent("summary.md")

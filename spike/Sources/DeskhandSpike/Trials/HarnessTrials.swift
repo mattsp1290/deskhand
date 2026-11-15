@@ -19,45 +19,55 @@ enum HarnessTrials {
         env.step(
           "The harness puts the display to sleep, waits, then declares user activity. You only "
             + "unlock afterwards (Touch ID). \(env.count) cycles.")
-        await env.waitEnter("Ready")
+        try await env.waitEnter("Ready")
         var woke = 0
         var lockedAfter = 0
+        var validAttempts = 0
         for attempt in 1...env.count {
-          let pre = await env.sample()
-          let sleep = await env.act("display-sleep")
-          let asleep = await env.poll(everyMs: 250, timeoutMs: 10_000) { sample in
+          let pre = try await env.sample()
+          let sleep = try await env.act("display-sleep")
+          let asleep = try await env.poll(everyMs: 250, timeoutMs: 10_000) { sample in
             sample["displays"]?.arrayValue?.contains {
               $0["main"]?.boolValue == true && $0["asleep"]?.boolValue == true
             } ?? false
           }
           await Clock.sleep(ms: 4000)
-          let beforeWake = await env.sample()
-          let declare = await env.act("declare-activity", "3000")
-          let afterWake = await env.sample()
+          let beforeWake = try await env.sample()
+          let declare = try await env.act("declare-activity", "3000")
+          let afterWake = try await env.sample()
           let displayOn =
             declare["displays_after"]?.arrayValue?.contains {
               $0["main"]?.boolValue == true && $0["asleep"]?.boolValue == false
             } ?? false
           let locked = LockTrial.looksLocked(afterWake)
-          if displayOn { woke += 1 }
+          let assessment = MeasurementAnalysis.wake(
+            sleepSucceeded: sleep["pmset"]?["status"]?.intValue == 0
+              && sleep["pmset"]?["timed_out"]?.boolValue != true,
+            finalPoll: asleep.last.orNull, beforeAssertion: beforeWake, awakeAfter: displayOn)
+          if assessment["valid"]?.boolValue == true { validAttempts += 1 }
+          if assessment["woke"]?.boolValue == true { woke += 1 }
           if locked { lockedAfter += 1 }
           env.say(
             "[\(attempt)/\(env.count)] display woke: \(displayOn), locked: \(locked). Unlock if needed."
           )
-          _ = await env.poll(everyMs: 500, timeoutMs: 600_000) { LockTrial.looksUnlocked($0) }
-          env.record(
+          _ = try await env.poll(everyMs: 500, timeoutMs: 600_000) { LockTrial.looksUnlocked($0) }
+          try env.record(
             .obj([
               ("attempt", .int(attempt)), ("pre", pre), ("sleep", sleep),
-              ("went_to_sleep", .bool(asleep.last.map { _ in true } ?? false)),
+              ("went_to_sleep", .bool(MeasurementAnalysis.mainDisplayAsleep(asleep.last.orNull))),
+              ("assessment", assessment), ("sleep_poll", .array(asleep)),
               ("before_wake", beforeWake), ("declare", declare), ("after_wake", afterWake),
               ("display_woke", .bool(displayOn)), ("locked_after_wake", .bool(locked)),
             ]))
           await Clock.sleep(ms: 2000)
         }
+        env.report.set("valid_attempts", .int(validAttempts))
+        env.report.set("requested_attempts", .int(env.count))
+        if validAttempts != env.count { env.report.status = .inconclusive }
         env.report.finding(
           "IOPMAssertionDeclareUserActivity woke the display in \(woke)/\(env.count); the screen "
             + "was locked after waking in \(lockedAfter)/\(env.count)")
-        env.finish()
+        try env.finish()
       })
   }
 
@@ -74,7 +84,7 @@ enum HarnessTrials {
           "Open your password manager and your messaging apps so each has a window on screen, "
             + "not covered by others. A locked vault window is fine; nothing secret has to be shown. "
             + "Installed ones the harness knows: \(installed.joined(separator: ", ")).")
-        await env.waitEnter("Done")
+        try await env.waitEnter("Done")
         let apps = NSWorkspace.shared.runningApplications.filter {
           $0.activationPolicy == .regular && $0.processIdentifier != getpid()
         }
@@ -83,7 +93,7 @@ enum HarnessTrials {
             "  \(index + 1). \(app.localizedName ?? "?") (\(app.bundleIdentifier ?? "no bundle id"))"
           )
         }
-        let picked = await env.ask(
+        let picked = try await env.ask(
           "picked_apps", "Numbers of your password manager and messaging apps (comma-separated)",
           choices: [])
         let chosen = picked.split(separator: ",").compactMap {
@@ -91,9 +101,10 @@ enum HarnessTrials {
         }
         .filter { $0 >= 1 && $0 <= apps.count }.map { apps[$0 - 1] }
         let ids = chosen.compactMap(\.bundleIdentifier)
+        guard !ids.isEmpty else { throw TrialAbort.failed("select at least one application") }
         var words = ["probe", "capture", "--save-images"]
         for id in ids { words += ["--exclude-bundle-id", id] }
-        let result = await env.call(words).last.orNull
+        let result = try await env.call(words).last.orNull
         var clickable: [JSON] = []
         let windows = WindowList.onScreen()
         for app in chosen {
@@ -110,13 +121,12 @@ enum HarnessTrials {
               ]))
           }
         }
-        env.record(.obj([("capture", result), ("clickable", .array(clickable))]))
-        let directory = CaptureTools.imageCacheDirectory
-        let images =
-          ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
-          .filter { $0.contains("excluded") }.map { directory.appendingPathComponent($0).path }
+        try env.record(.obj([("capture", result), ("clickable", .array(clickable))]))
+        let images = try CaptureManifest.previews(
+          result["evidence"]?["capture_manifest"] ?? .null,
+          selected: ids, root: CaptureTools.imageCacheDirectory)
         if !images.isEmpty { _ = await Shell.runAsync("/usr/bin/open", images) }
-        let hidden = await env.ask(
+        let hidden = try await env.ask(
           "excluded_apps_hidden",
           "In the images that opened (\(images.count)), are the chosen apps' windows hidden?",
           choices: ["y", "n", "partly"])
@@ -126,10 +136,10 @@ enum HarnessTrials {
         env.report.finding(
           "excluded apps \(ids) hidden in captures (person): \(hidden); events at their window "
             + "centres would reach them: \(reachable)/\(clickable.count) windows")
-        if await env.ask("delete_images", "Delete the captured images now?") == "y" {
+        if try await env.ask("delete_images", "Delete the captured images now?") == "y" {
           for image in images { try? FileManager.default.removeItem(atPath: image) }
         }
-        env.finish()
+        try env.finish()
       })
   }
 
@@ -155,16 +165,16 @@ enum HarnessTrials {
         for (name, instruction) in arrangements {
           env.step(instruction)
           if name != "as_is" {
-            _ = await env.act(
+            _ = try await env.act(
               "open-settings", "x-apple.systempreferences:com.apple.Displays-Settings.extension")
           }
-          let answer = await env.ask(
+          let answer = try await env.ask(
             "arrangement_\(name)", "Ready? (s skips this arrangement)", choices: ["y", "s"])
           if answer == "s" { continue }
-          let geometry = await env.call(["probe", "environment"]).last.orNull
-          let mapping = await env.call(["probe", "coordinates"]).last.orNull
-          let pointer = await env.call(["probe", "input-post"]).last.orNull
-          env.record(
+          let geometry = try await env.call(["probe", "environment"]).last.orNull
+          let mapping = try await env.call(["probe", "coordinates"]).last.orNull
+          let pointer = try await env.call(["probe", "input-post"]).last.orNull
+          try env.record(
             .obj([
               ("arrangement", .string(name)), ("environment", geometry), ("coordinates", mapping),
               ("input_post", pointer),
@@ -178,7 +188,7 @@ enum HarnessTrials {
           }
         }
         env.say("Restore your display arrangement when you like.")
-        env.finish()
+        try env.finish()
       })
   }
 }

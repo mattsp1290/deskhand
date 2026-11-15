@@ -22,6 +22,8 @@ enum CaptureProbe {
 
   static func run(_ options: ProbeOptions) async -> ProbeReport {
     var report = ProbeReport("capture", items: spec.items)
+    var manifest = CaptureManifest()
+    let imageDirectory = options.imageDirectory?.appendingPathComponent(manifest.captureID)
     let preflight = CGPreflightScreenCaptureAccess()
     report.set("preflight_screen_recording", .bool(preflight))
     report.set("lock_candidates", Signals.lockCandidates())
@@ -70,7 +72,22 @@ enum CaptureProbe {
 
     var displayResults: [JSON] = []
     var sensitiveResults: [JSON] = []
-    let wanted = Set(sensitiveBundleIDs + options.excludeBundleIDs)
+    let wanted = Set(
+      options.excludeBundleIDs.isEmpty ? sensitiveBundleIDs : options.excludeBundleIDs)
+    if imageDirectory != nil {
+      for id in options.excludeBundleIDs {
+        let displays = content.displays.filter { display in
+          normalOnScreen.contains {
+            $0.owningApplication?.bundleIdentifier == id && $0.frame.intersects(display.frame)
+          }
+        }
+        if displays.isEmpty { manifest.failures.append("no visible requested application: \(id)") }
+        for display in displays {
+          manifest.requested.append(
+            .obj([("bundle_id", .string(id)), ("display_id", .int(Int(display.displayID)))]))
+        }
+      }
+    }
     for display in content.displays {
       var entry: [(String, JSON)] = [
         ("display_id", .int(Int(display.displayID))), ("frame", Geometry.json(display.frame)),
@@ -134,7 +151,7 @@ enum CaptureProbe {
         var hidden: Double?
         if let excluded = try? await CaptureTools.capture(excludedFilter) {
           hidden = CaptureTools.colorFraction(excluded, in: inner, color: magenta)
-          if let directory = options.imageDirectory {
+          if let directory = imageDirectory {
             if !CaptureTools.savePNG(
               excluded,
               to: directory.appendingPathComponent("display-\(display.displayID)-excluded-self.png")
@@ -182,13 +199,17 @@ enum CaptureProbe {
               ("plain_vs_excluded", CaptureTools.difference(a, b)),
             ]))
         }
-        if let directory = options.imageDirectory {
-          if !CaptureTools.savePNG(
-            excluded,
-            to: directory.appendingPathComponent(
-              "display-\(display.displayID)-excluded-\(app.bundleIdentifier).png"))
-          {
-            report.fail("PNG evidence write failed")
+        if let directory = imageDirectory, options.excludeBundleIDs.contains(app.bundleIdentifier) {
+          let path = directory.appendingPathComponent(
+            "display-\(display.displayID)-excluded-\(app.bundleIdentifier).png")
+          if CaptureTools.savePNG(excluded, to: path) {
+            manifest.savedImages.append(
+              .obj([
+                ("bundle_id", .string(app.bundleIdentifier)),
+                ("display_id", .int(Int(display.displayID))), ("path", .string(path.path)),
+              ]))
+          } else {
+            manifest.failures.append("PNG write failed: \(path.path)")
           }
         }
         sensitiveResults.append(
@@ -199,6 +220,13 @@ enum CaptureProbe {
           ]))
       }
       displayResults.append(.obj(entry))
+    }
+    if imageDirectory != nil {
+      if manifest.savedImages.count != manifest.requested.count {
+        manifest.failures.append("requested capture images are missing")
+      }
+      report.set("capture_manifest", manifest.json)
+      if !manifest.failures.isEmpty { report.status = .inconclusive }
     }
     report.set("displays", .array(displayResults))
     report.set("sensitive_app_exclusion", .array(sensitiveResults))

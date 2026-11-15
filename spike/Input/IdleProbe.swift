@@ -44,6 +44,7 @@ enum IdleProbe {
       for (tapName, tap) in taps {
         await Clock.sleep(ms: 1300)
         let before = Signals.idle()
+        let started = Clock.monoMs()
         rig.window.clearReceived()
         var clicked = false
         if InputGuard.ownsTopmost(at: center) {
@@ -56,12 +57,15 @@ enum IdleProbe {
         let delivered = rig.window.received("left_down").count > 0
         var resets: [(String, JSON)] = []
         for key in ["hid_any_s", "combined_any_s", "iohid_idle_s"] {
-          let b = before[key]?.doubleValue ?? 0
-          let a = after[key]?.doubleValue ?? 0
-          resets.append((key, .bool(b >= 1 && a < 0.6)))
+          let assessment = MeasurementAnalysis.idle(
+            delivered: delivered,
+            before: before[key]?.doubleValue, after: after[key]?.doubleValue,
+            elapsed: (Clock.monoMs() - started) / 1000)
+          resets.append((key, assessment.json))
         }
-        let resetsHID = resets.first { $0.0 == "hid_any_s" }?.1.boolValue == true
-        if delivered, !resetsHID { personOnlyCandidates.append("\(stateName)+\(tapName)") }
+        if resets.first(where: { $0.0 == "hid_any_s" })?.1 == .string("unchanged") {
+          personOnlyCandidates.append("\(stateName)+\(tapName)")
+        }
         matrix.append(
           .obj([
             ("source_state", .string(stateName)), ("tap", .string(tapName)),
@@ -72,36 +76,56 @@ enum IdleProbe {
     }
     report.set("matrix", .array(matrix))
     for row in matrix {
-      let reset = row["reset"]?.members?.filter { $0.value.boolValue == true }.map(\.key) ?? []
+      let reset = row["reset"]?.members?.filter { $0.value == .string("reset") }.map(\.key) ?? []
       report.finding(
         "source \(row["source_state"]?.stringValue ?? "?") via \(row["tap"]?.stringValue ?? "?") tap: "
           + "delivered \(row["click_delivered"]?.boolValue == true), resets "
           + (reset.isEmpty ? "nothing" : reset.joined(separator: ", ")))
     }
-    report.set("person_only_candidates", .strings(personOnlyCandidates))
+    report.set("unchanged_hid_source_tap_pairs", .strings(personOnlyCandidates))
+    let validHID = matrix.filter {
+      ["reset", "unchanged"].contains($0["reset"]?["hid_any_s"]?.stringValue ?? "")
+    }
+    if validHID.isEmpty { report.status = .inconclusive }
     report.finding(
-      personOnlyCandidates.isEmpty
-        ? "no source/tap delivers events without resetting the HID idle counter: the HID signal is any-origin"
-        : "HID idle stays person-only for posts via: \(personOnlyCandidates.joined(separator: ", "))"
+      validHID.isEmpty
+        ? "HID source classification is inconclusive; no valid delivered trials."
+        : "Valid HID rows \(validHID.count)/\(matrix.count); unchanged for delivered source/tap pairs: \(personOnlyCandidates). This tests own posts only; physical-person discrimination remains unqualified."
     )
 
     var offsets: [String: [Double]] = [:]
+    var echoRows: [JSON] = []
     for _ in 0..<25 {
-      await Clock.sleep(ms: 400)
+      await Clock.sleep(ms: 1300)
+      let before = Signals.idle()
+      rig.window.clearReceived()
       let posted = Clock.monoMs()
-      Post.move(to: CGPoint(x: center.x + 1, y: center.y))
-      Post.move(to: center)
+      let sent =
+        InputGuard.ownsTopmost(at: center)
+        ? await Post.click(at: center, tap: .cghidEventTap, state: .hidSystemState) : false
       await Clock.sleep(ms: 60)
       let read = Clock.monoMs()
-      for (key, state) in [
-        ("hid_any", CGEventSourceStateID.hidSystemState), ("combined_any", .combinedSessionState),
-      ] {
-        let idle = CGEventSource.secondsSinceLastEventType(state, eventType: Signals.anyInputEvent)
-        offsets[key, default: []].append(((read - idle * 1000) - posted).rounded())
+      let after = Signals.idle()
+      let delivered = sent && !rig.window.received("left_down").isEmpty
+      for key in ["hid_any_s", "combined_any_s", "iohid_idle_s"] {
+        let assessment = MeasurementAnalysis.idle(
+          delivered: delivered, before: before[key]?.doubleValue,
+          after: after[key]?.doubleValue, elapsed: (read - posted) / 1000)
+        let offset = after[key]?.doubleValue.map { (read - $0 * 1000) - posted }
+        if assessment == .reset, let offset { offsets[key, default: []].append(offset) }
+        echoRows.append(
+          .obj([
+            ("counter", .string(key)), ("source", .string("hid_system")),
+            ("tap", .string("hid")), ("before", before[key].orNull), ("after", after[key].orNull),
+            ("posted_ms", .double(posted)), ("observed_ms", .double(read)),
+            ("assessment", assessment.json), ("raw_offset_ms", .num(offset)),
+          ]))
       }
-      if let iohid = Signals.hidIdleSeconds() {
-        offsets["iohid", default: []].append(((read - iohid * 1000) - posted).rounded())
-      }
+    }
+    report.set("echo_observations", .array(echoRows))
+    if offsets.isEmpty {
+      report.status = .inconclusive
+      report.note("No valid observed counter resets; echo tolerance remains unmeasured.")
     }
     report.set(
       "echo_offset_ms",

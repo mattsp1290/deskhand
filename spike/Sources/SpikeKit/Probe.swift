@@ -4,6 +4,7 @@ import Foundation
 public nonisolated enum ProbeStatus: String, Sendable {
   /// The probe ran and recorded evidence.
   case measured
+  case inconclusive
   /// A permission the probe needs is not granted; the evidence shows which and what failed.
   case blockedOnPermission = "blocked_on_permission"
   /// The probe did not run because the Mac was in a state where running it would be unsafe or

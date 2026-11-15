@@ -2,7 +2,7 @@
 set -euo pipefail
 script_dir=$(cd "$(dirname "$0")" && pwd)
 source "$script_dir/common.sh"
-usage() { printf '%s\n' 'usage: run-spike.sh --selfcheck | --host NAME [--out ROOT] [--remote [USER@HOST]] --automatic | --trial NAME [--path P] [--count N]'; }
+usage() { printf '%s\n' 'usage: run-spike.sh --selfcheck | --host NAME [--out ROOT] [--remote [USER@HOST]] --automatic | --trial NAME [--path P] [--count N] | --peer USER@OTHER_HOST --peer-listener [--parse-only]'; }
 if [[ ${1:-} == --selfcheck && $# == 1 ]]; then
   repo=$(cd "$script_dir/../.." && pwd)
   swift build --package-path "$repo/spike"
@@ -19,14 +19,19 @@ out="$script_dir/../../docs/spike-results"
 remote=''
 operation=''
 trial_args=()
+parse_only=false
+peer=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --parse-only) parse_only=true; shift ;;
     --help|-h) usage; exit 0 ;;
     --host) [[ $# -ge 2 ]] || fail 'Missing host'; host=$2; shift 2 ;;
     --out) [[ $# -ge 2 ]] || fail 'Missing output root'; out=$2; shift 2 ;;
     --remote)
       remote=punk1290@10.0.0.96; shift
       if [[ $# -gt 0 && $1 != --* ]]; then remote=$1; shift; fi ;;
+    --peer) [[ $# -ge 2 ]] || fail 'Missing peer'; peer=$2; shift 2 ;;
+    --peer-listener) [[ -z "$operation" ]] || fail 'Choose one operation'; operation=peer; shift ;;
     --automatic) [[ -z "$operation" ]] || fail 'Choose one operation'; operation=automatic; shift ;;
     --trial) [[ $# -ge 2 && -z "$operation" ]] || fail 'Choose one trial'; operation=trial; trial_args=("$2"); shift 2 ;;
     --path|--count) [[ $# -ge 2 ]] || fail 'Missing trial option'; trial_args+=("$1" "$2"); shift 2 ;;
@@ -34,6 +39,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -n "$operation" ]] || fail 'Provide a safe host name and one operation'
+if [[ "$operation" == trial ]]; then
+  case "${trial_args[0]}" in permissions|lock|wake|exclusion|coordinates|secure-input|drag-owner) ;; *) fail 'Unknown trial' ;; esac
+fi
+for ((i=0; i<${#trial_args[@]}; i++)); do
+  if [[ ${trial_args[$i]} == --path ]]; then
+    [[ "$operation" == trial && ${trial_args[0]} == lock ]] || fail 'Paths apply only to lock trials'
+    case "${trial_args[$((i+1))]}" in shortcut|display-sleep|hot-corner|menu|lid|fast-user-switch|idle) ;; *) fail 'Unknown lock path' ;; esac
+  fi
+  if [[ ${trial_args[$i]} == --count ]]; then
+    value=${trial_args[$((i+1))]}
+    [[ "$value" =~ ^[1-9][0-9]*$ && ${#value} -le 9 ]] || fail 'Count must be a positive integer of at most nine digits'
+  fi
+done
+if [[ "$operation" == peer ]]; then
+  [[ "$peer" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ && -z "$remote" ]] || fail 'Peer listener requires --peer USER@OTHER_HOST and runs on the target host'
+fi
+if $parse_only; then printf 'Arguments valid\n'; exit 0; fi
 if [[ -n "$remote" ]]; then
   [[ "$remote" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$ ]] || fail 'Expected USER@HOST'
   ssh_options=(-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
@@ -47,7 +69,10 @@ if [[ -n "$remote" ]]; then
   ssh -t "${ssh_options[@]}" "$remote" "$command" || status=$?
   mkdir -p "$out/$host/runs"
   scp -r "${ssh_options[@]}" "$remote:$remote_dir/results/$host/runs/." "$out/$host/runs/" || fail "Retrieval failed; evidence retained at $remote:$remote_dir"
-  scp "${ssh_options[@]}" "$remote:$remote_dir/results/$host/current-run" "$remote:$remote_dir/results/$host/summary.md" "$out/$host/" || fail "Retrieval incomplete; evidence retained at $remote:$remote_dir"
+  imported_run=$(ssh "${ssh_options[@]}" "$remote" "cat '$remote_dir/results/$host/current-run'")
+  [[ "$imported_run" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'Invalid imported invocation'
+  "$installed_app/Contents/MacOS/deskhand-spike" campaign-import --dir "$out/$host" --run "$imported_run"
+  "$installed_app/Contents/MacOS/deskhand-spike" summarize --dir "$out/$host"
   printf 'Remote staging retained at %s:%s\n' "$remote" "$remote_dir"
   exit "$status"
 fi
@@ -60,9 +85,20 @@ mkdir -p "$(dirname "$lock")"
 mkdir "$lock" 2>/dev/null || fail "A driver owns this host. Inspect $lock before removing a stale lease."
 printf '%s\n' "$$" > "$lock/pid"
 token=''
+run=''
 cleanup() {
-  if [[ -n "$token" ]]; then "$cli" agent-call session end "$token" >&2 || true; fi
+  local completion_status=$?
+  trap - EXIT
+  if [[ -n "$token" ]]; then "$cli" agent-call session end "$token" >&2 || completion_status=$?; fi
+  if [[ -n "$run" ]]; then
+    printf '{"exit_status":%s}\n' "$completion_status" > "$run/invocation.json"
+    "$cli" campaign-import --dir "$out/$host" --run "$run_id" || completion_status=$?
+    "$cli" summarize --dir "$out/$host" || completion_status=$?
+    "$cli" checklist --dir "$out/$host" > "$run/checklist.txt" || completion_status=$?
+    printf 'Evidence: %s\n' "$run"
+  fi
   rm -rf "$lock"
+  exit "$completion_status"
 }
 trap cleanup EXIT
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen)"
@@ -86,6 +122,21 @@ if [[ "$operation" == automatic ]]; then
   "$cli" agent-call session "$token" probe all-automatic --out "$run" > "$run/automatic.jsonl" || status=$?
   "$cli" agent-call session end "$token" > "$run/session-end.json" || status=$?
   token=''
+elif [[ "$operation" == peer ]]; then
+  token=$(uuidgen)
+  nonce=$(uuidgen)
+  "$cli" agent-call session begin "$token" > "$run/session.json"
+  "$cli" agent-call session "$token" peer-listener arm "$nonce" > "$run/peer-arm.json"
+  address=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["address"])' "$run/peer-arm.json")
+  port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["port"])' "$run/peer-arm.json")
+  [[ "$address" =~ ^[0-9.]+$ && "$port" =~ ^[0-9]+$ ]] || fail 'Invalid listener endpoint'
+  printf -v peer_command '%s %q %q %q %q' '"$HOME/Applications/DeskhandSpike.app/Contents/MacOS/deskhand-spike"' peer-connect "$address" "$port" "$nonce"
+  ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$peer" "$peer_command" > "$run/peer-connect.json" || status=$?
+  [[ -s "$run/peer-connect.json" ]] || printf '{}\n' > "$run/peer-connect.json"
+  "$cli" agent-call session "$token" peer-listener collect "$nonce" > "$run/peer-target.json" || status=$?
+  "$cli" peer-assess --target "$run/peer-target.json" --peer "$run/peer-connect.json" --out "$run" || status=$?
+  "$cli" agent-call session end "$token" > "$run/session-end.json" || status=$?
+  token=''
 else
   "$cli" trial "${trial_args[@]}" --out "$run" || status=$?
 fi
@@ -97,16 +148,11 @@ for f in root.rglob('*.json'):
  r=json.loads(f.read_text())
  if 'probe' not in r: continue
  reports.append(r)
- assert r.get('status') in ('measured','blocked_on_permission','skipped','error'), f
+ assert r.get('status') in ('measured','blocked_on_permission','skipped','inconclusive','error'), f
  if r['probe'] != 'agent-log':
   c=r.get('evidence',{}).get('executor_context',r.get('context',{}))
   assert c.get('launched_by')=='launch_agent', f
  assert r['status']!='error', f
 assert any(r['probe']!='agent-log' for r in reports), 'No measurement evidence persisted'
 PY
-printf '%s\n' "$run_id" > "$out/$host/current-run.next"
-mv "$out/$host/current-run.next" "$out/$host/current-run"
-"$cli" summarize --dir "$out/$host" || status=$?
-"$cli" checklist --dir "$out/$host" > "$run/checklist.txt" || status=$?
-printf 'Evidence: %s\n' "$run"
 exit "$status"

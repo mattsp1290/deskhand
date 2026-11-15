@@ -33,7 +33,7 @@ import Testing
   let env = TrialEnv(
     spec: spec, executor: InProcessExecutor { _, _ in }, outDirectory: directory, count: 1,
     options: [:])
-  env.finish()
+  try? env.finish()
   #expect(env.persistenceError != nil)
   #expect(env.report.status == .error)
   #expect(env.report.json(context: .null)["evidence"]?["complete"] == .bool(false))
@@ -67,8 +67,8 @@ import Testing
     emit(.obj([("status", .string("blocked_on_permission"))]))
   }
   let env = TrialEnv(spec: spec, executor: executor, outDirectory: nil, count: 1, options: [:])
-  _ = await env.call(["sample"])
-  env.finish()
+  _ = try? await env.call(["sample"])
+  try? env.finish()
   #expect(env.report.status == .error)
   #expect(env.report.json(context: .null)["evidence"]?["complete"] == .bool(false))
 }

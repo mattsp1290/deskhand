@@ -63,6 +63,7 @@ public nonisolated enum Net {
   }
 
   static func ipv4(_ host: String, _ port: Int) -> sockaddr_in? {
+    guard (1...65535).contains(port) else { return nil }
     var addr = sockaddr_in()
     addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     addr.sin_family = sa_family_t(AF_INET)
@@ -74,9 +75,12 @@ public nonisolated enum Net {
   /// Connects with a timeout and reads whatever the peer sends first (up to 256 bytes).
   public static func connect(host: String, port: Int, timeoutMs: Int) -> JSON {
     let started = Clock.monoMs()
+    var localAddress: String?
+    var localPort: Int?
     func done(_ ok: Bool, _ error: String?, _ greeting: String? = nil) -> JSON {
       .obj([
         ("host", .string(host)), ("port", .int(port)), ("connected", .bool(ok)),
+        ("local_address", .str(localAddress)), ("local_port", .int(localPort)),
         ("error", .str(error)), ("greeting", .str(greeting)),
         ("elapsed_ms", .int(Int(Clock.monoMs() - started))),
       ])
@@ -98,6 +102,16 @@ public nonisolated enum Net {
     var length = socklen_t(MemoryLayout<Int32>.size)
     getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &length)
     guard soError == 0 else { return done(false, errnoName(soError)) }
+    var local = sockaddr_in()
+    var localLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+    withUnsafeMutablePointer(to: &local) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = getsockname(fd, $0, &localLength) }
+    }
+    var localText = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+    inet_ntop(AF_INET, &local.sin_addr, &localText, socklen_t(INET_ADDRSTRLEN))
+    localAddress = String(
+      decoding: localText.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    localPort = Int(UInt16(bigEndian: local.sin_port))
     var readFD = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
     var greeting: String?
     if poll(&readFD, 1, Int32(timeoutMs)) == 1 {
@@ -191,6 +205,7 @@ public nonisolated final class TCPListener {
 
   public func stop() {
     if fd >= 0 {
+      shutdown(fd, SHUT_RDWR)
       close(fd)
       fd = -1
     }
@@ -287,18 +302,19 @@ public nonisolated enum ControlClient {
 
   /// Sends `words` and streams every reply line to `onLine` until the agent closes.
   public static func call(
-    _ words: [String], path: String = ControlServer.defaultPath,
+    _ words: [String], path: String = ControlServer.defaultPath, timeoutMs: Int32 = 120_000,
     onLine: @escaping @Sendable (String) -> Void
   ) async -> String? {
     await withCheckedContinuation { continuation in
       DispatchQueue.global().async {
-        continuation.resume(returning: blockingCall(words, path: path, onLine: onLine))
+        continuation.resume(
+          returning: blockingCall(words, path: path, timeoutMs: timeoutMs, onLine: onLine))
       }
     }
   }
 
   private static func blockingCall(
-    _ words: [String], path: String, onLine: (String) -> Void
+    _ words: [String], path: String, timeoutMs: Int32, onLine: (String) -> Void
   ) -> String? {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return Net.errnoName(errno) }
@@ -324,8 +340,8 @@ public nonisolated enum ControlClient {
     var buffer = [UInt8](repeating: 0, count: 65_536)
     while true {
       var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-      let polled = poll(&ready, 1, 120_000)
-      if polled == 0 { return "agent response timeout after 120 seconds" }
+      let polled = poll(&ready, 1, timeoutMs)
+      if polled == 0 { return "agent response timeout after \(timeoutMs) milliseconds" }
       if polled < 0 {
         if errno == EINTR { continue }
         return "agent transport failed: \(Net.errnoName(errno))"
@@ -339,7 +355,7 @@ public nonisolated enum ControlClient {
         pending.removeSubrange(...newline)
       }
     }
-    if !pending.isEmpty { onLine(String(decoding: pending, as: UTF8.self)) }
+    if !pending.isEmpty { return "unterminated reply frame" }
     return nil
   }
 }

@@ -43,6 +43,7 @@ public enum RunContext {
     return .obj([
       ("launched_by", .string(by.rawValue)),
       ("pid", .int(Int(getpid()))),
+      ("process_instance", .string(UUID().uuidString)),
       ("ppid", .int(Int(getppid()))),
       ("xpc_service_name", .str(env["XPC_SERVICE_NAME"])),
       ("parent_bundle_id", .str(by == .terminal ? env["__CFBundleIdentifier"] : nil)),

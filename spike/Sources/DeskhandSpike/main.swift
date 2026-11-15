@@ -13,12 +13,19 @@ enum Main {
       agent-call <command words...> [--out DIR]   run a command inside the LaunchAgent
       sample | act <action> [arg] | ping | status  run one harness command here
       register | unregister | service-status      SMAppService for the bundled LaunchAgent
+      peer-connect ADDRESS PORT NONCE              explicit peer network helper
+      peer-assess --target FILE --peer FILE [--out DIR]   offline evidence correlation
+      campaign-import --dir DIR --run ID           import an isolated invocation
       summarize --dir DIR                          write DIR/summary.md
       checklist --dir DIR [--ids]                  remaining manual steps, least effort first
       agent-log [--out DIR]                        condense the LaunchAgent log
     """
 
   static func run(_ arguments: [String]) async -> Int32 {
+    do { try NumericArguments.validate(arguments) } catch {
+      print("usage error: \(error)")
+      return 2
+    }
     guard let command = arguments.first else {
       print(usage)
       return 2
@@ -51,18 +58,72 @@ enum Main {
         print(usage)
         return 2
       }
-      let lines = await AgentExecutor().call(rest)
-      var failed = false
-      for line in lines {
-        if !emit(line, out: out) || line["error"] != nil { failed = true }
+      do {
+        let lines = try await AgentExecutor(expectedProbes: Catalog.expectedProbes).call(rest)
+          .reports
+        var failed = false
+        for line in lines { if !emit(line, out: out) { failed = true } }
+        return failed ? 3 : 0
+      } catch let failure as CommandFailure {
+        for line in failure.partialReports { _ = emit(line, out: out) }
+        print(
+          JSON.obj([("error", .string(failure.reason)), ("raw_lines", .strings(failure.rawLines))])
+            .compact())
+        return 3
+      } catch {
+        print("agent command failed: \(error)")
+        return 3
       }
-      return failed ? 3 : 0
     case "trial":
       return await runTrial(rest, out: out)
     case "register", "unregister", "service-status":
       let (json, code) = await Register.run(command == "service-status" ? "status" : command)
       print(json.compact())
       return code
+    case "peer-connect":
+      guard rest.count == 3, let port = Int(rest[1]), (1...65534).contains(port),
+        UUID(uuidString: rest[2]) != nil
+      else { return 2 }
+      let host = rest[0]
+      let result = await Task.detached { Net.connect(host: host, port: port, timeoutMs: 5000) }
+        .value
+        .setting("source_host", .string(Host.macName)).setting("expected_nonce", .string(rest[2]))
+      print(result.compact())
+      return result["connected"]?.boolValue == true ? 0 : 1
+    case "peer-assess":
+      guard let targetFile = take("--target", from: &rest),
+        let peerFile = take("--peer", from: &rest), rest.isEmpty
+      else { return 2 }
+      do {
+        let target = try String(contentsOfFile: targetFile, encoding: .utf8)
+        let peer = try String(contentsOfFile: peerFile, encoding: .utf8)
+        let targetJSON = JSON.parse(target) ?? .null
+        let peerJSON = JSON.parse(peer) ?? .null
+        var report = ProbeReport("peer-listener", items: ["9"])
+        report.set("target", targetJSON)
+        report.set("peer", peerJSON)
+        let valid = PeerEvidence.correlated(target: targetJSON, peer: peerJSON)
+        report.status = valid ? .measured : .inconclusive
+        report.finding(
+          valid
+            ? "Distinct-host connection matched the target nonce and accepted source endpoint."
+            : "Cross-host listener evidence is pending or failed correlation.")
+        return emit(report.json(context: targetJSON["context"].orNull), out: out) && valid ? 0 : 1
+      } catch {
+        print("peer assessment failed: \(error)")
+        return 1
+      }
+    case "campaign-import":
+      guard let directory = take("--dir", from: &rest), let run = take("--run", from: &rest),
+        rest.isEmpty
+      else { return 2 }
+      do {
+        try Campaign.importRun(run, into: URL(fileURLWithPath: directory))
+        return 0
+      } catch {
+        print("campaign import failed: \(error)")
+        return 1
+      }
     case "summarize":
       guard let directory = take("--dir", from: &rest) else {
         print(usage)
@@ -136,48 +197,50 @@ enum Main {
       print("unknown trial \(name)")
       return 2
     }
-    var executor: Executor = InProcessExecutor { words, emit in
-      await Dispatcher.run(words, emit: emit)
+    if let path = options["path"],
+      name != "lock" || !LockTrial.paths.contains(where: { $0.name == path })
+    {
+      print("invalid path for trial \(name)")
+      return 2
     }
-    var executorContext = RunContext.json
-    var sessionToken: String?
-    if !inProcess {
-      let token = UUID().uuidString
-      let acquired = await AgentExecutor().call(["session", "begin", token]).first
-      guard acquired?["session"]?.boolValue == true else {
-        print("Cannot acquire the LaunchAgent measurement session.")
-        return 3
-      }
-      sessionToken = token
-      let agent = AgentExecutor(sessionToken: token)
-      let ping = await agent.call(["ping"]).first
-      if ping?["pong"]?.boolValue == true {
-        executor = agent
-        executorContext = ping?["context"] ?? .null
-      } else {
-        _ = await AgentExecutor().call(["session", "end", token])
-        print(
-          "The LaunchAgent is required. Install with spike/scripts/install.sh or explicitly use --in-process for diagnostics."
-        )
-        return 3
-      }
-    }
+    let sessionToken = inProcess ? nil : UUID().uuidString
+    let executor: Executor =
+      sessionToken.map {
+        AgentExecutor(sessionToken: $0, expectedProbes: Catalog.expectedProbes) as Executor
+      } ?? InProcessExecutor { words, emit in await Dispatcher.run(words, emit: emit) }
+    let management = AgentExecutor(expectedProbes: Catalog.expectedProbes)
     let env = TrialEnv(
-      spec: spec, executor: executor, outDirectory: out, count: count ?? (name == "lock" ? 20 : 3),
-      options: options)
-    env.executorContext = executorContext
-    if name == "drag-owner" || name == "exclusion" {
-      env.report.set("measurement_context", RunContext.json)
-      env.report.note("Includes driver-only measurement. Excluded from LaunchAgent conclusions.")
+      spec: spec, executor: executor, outDirectory: out,
+      count: count ?? (name == "lock" ? 20 : 3), options: options)
+    if inProcess { env.executorContext = RunContext.json }
+    var failed = false
+    do {
+      try env.save()
+      if let sessionToken {
+        _ = try await management.call(["session", "begin", sessionToken])
+        env.executorContext = try await executor.call(["ping"]).reports.first?["context"] ?? .null
+      }
+      if name == "drag-owner" || name == "exclusion" {
+        env.report.set("measurement_context", RunContext.json)
+        env.report.note("Includes driver-only measurement. Excluded from LaunchAgent conclusions.")
+      }
+      print("deskhand-spike trial \(name) on \(Host.macName), executor \(executor.label)")
+      print("This harness never asks for, types or stores your password.")
+      try await spec.run(env)
+      failed = env.report.json(context: .null)["evidence"]?["complete"]?.boolValue != true
+    } catch {
+      failed = true
+      env.abort(error)
+      print("trial failed: \(error)")
     }
-    print("deskhand-spike trial \(name) on \(Host.macName), executor \(executor.label)")
-    print("This harness never asks for, types or stores your password.")
-    await spec.run(env)
     if let sessionToken {
-      let released = await AgentExecutor().call(["session", "end", sessionToken]).first
-      guard released?["session"]?.boolValue == true else { return 3 }
+      do { _ = try await management.call(["session", "end", sessionToken]) } catch {
+        failed = true
+        env.abort(error)
+        print("session release failed: \(error)")
+      }
     }
-    return env.persistenceError == nil && env.report.status != .error ? 0 : 1
+    return failed ? 1 : 0
   }
 }
 

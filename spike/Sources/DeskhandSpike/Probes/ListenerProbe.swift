@@ -82,7 +82,8 @@ enum ListenerProbe {
     report.needsHuman = true
     report.note(
       "a Local Network prompt is confirmed by a person (trial permissions); inbound from another "
-        + "host: run-spike.sh --remote, Lima guest: bean deskhand-ealq")
+        + "host: run-spike.sh --host TARGET --peer USER@OTHER_HOST --peer-listener; Lima guest: bean deskhand-ealq"
+    )
     return report
   }
 
