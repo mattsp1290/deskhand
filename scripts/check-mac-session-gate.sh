@@ -14,14 +14,8 @@ if [ "$#" -eq 0 ]; then
     set -- Tests Sources
 fi
 
-find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print | sort | {
-    files=$(cat)
-    if [ -z "$files" ]; then
-        echo "check-mac-session-gate: no Swift files under $*" >&2
-        exit 1
-    fi
-    # shellcheck disable=SC2086 # file names in this repo have no spaces
-    awk '
+status=0
+output=$(find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -exec awk '
     function check() {
         tag = (buf ~ /requiresMacSession/)
         trait = (code ~ /macSessionTestsEnabled/)
@@ -84,5 +78,12 @@ find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift' -print 
         if (bad) exit 1
         printf "check-mac-session-gate: ok (%d attributes, %d gated)\n", attrs, gated
     }
-    ' $files
-}
+    ' {} +) || status=$?
+if [ -z "$output" ] && [ "$status" -eq 0 ]; then
+    echo "check-mac-session-gate: no Swift files under $*" >&2
+    exit 1
+fi
+if [ -n "$output" ]; then
+    printf '%s\n' "$output"
+fi
+exit "$status"
