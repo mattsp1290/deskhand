@@ -46,21 +46,24 @@ enum IdleProbe {
         let before = Signals.idle()
         let started = Clock.monoMs()
         rig.window.clearReceived()
-        var clicked = false
-        if InputGuard.ownsTopmost(at: center) {
-          clicked = await Post.click(at: center, tap: tap, state: state).allPosted
-        }
+        let click =
+          InputGuard.ownsTopmost(at: center)
+          ? await Post.click(at: center, tap: tap, state: state)
+          : ClickReceipt(down: nil, up: nil)
         Post.move(to: CGPoint(x: center.x + 1, y: center.y), tap: tap, state: state)
         Post.move(to: center, tap: tap, state: state)
         await settle(ms: 200)
         let after = Signals.idle()
-        let delivered = rig.window.received("left_down").count > 0
+        let observed = Clock.monoMs()
+        let delivery = click.delivery(
+          in: rig.window.received, startedMs: started, endedMs: observed)
+        let delivered = delivery.qualified
         var resets: [(String, JSON)] = []
         for key in ["hid_any_s", "combined_any_s", "iohid_idle_s"] {
           let assessment = MeasurementAnalysis.idle(
             delivered: delivered,
             before: before[key]?.doubleValue, after: after[key]?.doubleValue,
-            elapsed: (Clock.monoMs() - started) / 1000)
+            elapsed: (observed - started) / 1000)
           resets.append((key, assessment.json))
         }
         if resets.first(where: { $0.0 == "hid_any_s" })?.1 == .string("unchanged") {
@@ -69,7 +72,10 @@ enum IdleProbe {
         matrix.append(
           .obj([
             ("source_state", .string(stateName)), ("tap", .string(tapName)),
-            ("click_posted", .bool(clicked)), ("click_delivered", .bool(delivered)),
+            ("click_posted", .bool(click.allPosted)), ("click_delivered", .bool(delivered)),
+            ("click_receipt", click.json), ("delivery", delivery.json),
+            ("received_events", .array(rig.window.received.map(\.json))),
+            ("action_started_ms", .double(started)), ("observed_ms", .double(observed)),
             ("before", before), ("after", after), ("reset", .obj(resets)),
           ]))
       }
@@ -107,8 +113,8 @@ enum IdleProbe {
       await Clock.sleep(ms: 60)
       let read = Clock.monoMs()
       let after = Signals.idle()
-      let receivedUp = rig.window.received("left_up")
-      let delivered = click.allPosted && receivedUp.count == 1
+      let delivery = click.delivery(in: rig.window.received, startedMs: started, endedMs: read)
+      let delivered = delivery.qualified
       for key in ["hid_any_s", "combined_any_s", "iohid_idle_s"] {
         var assessment = MeasurementAnalysis.idle(
           delivered: delivered, before: before[key]?.doubleValue,
@@ -128,7 +134,8 @@ enum IdleProbe {
             ("down_posted_ms", .num(click.down?.monotonicMs)),
             ("up_posted_ms", .num(click.up?.monotonicMs)),
             ("all_posted", .bool(click.allPosted)),
-            ("received_mouse_up", .array(receivedUp.map(\.json))),
+            ("click_receipt", click.json), ("delivery", delivery.json),
+            ("received_events", .array(rig.window.received.map(\.json))),
             ("observed_ms", .double(read)),
             ("implied_event_ms", .num(after[key]?.doubleValue.map { read - $0 * 1000 })),
             ("assessment", assessment.json), ("raw_offset_ms", .num(offset)),

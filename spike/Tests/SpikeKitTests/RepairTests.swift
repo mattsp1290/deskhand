@@ -316,7 +316,7 @@ import Testing
       #expect(!fixture.session.enter(fixture.token))
     })
   let context = try await executor.restart(previousContext: before)
-  #expect(context["pid"] == .int(2))
+  #expect(context["pid"]?.intValue == 2)
   #expect(fixture.resumed)
   _ = try await executor.call(["sample"])
   #expect(fixture.samples == 1)

@@ -78,8 +78,8 @@ import Testing
 }
 
 @Test func clickCompletenessRequiresBothPostReceipts() {
-  let down = EventPost(eventType: .leftMouseDown, monotonicMs: 1000)
-  let up = EventPost(eventType: .leftMouseUp, monotonicMs: 1040)
+  let down = EventPost(identity: EventIdentity(1)!, eventType: .leftMouseDown, monotonicMs: 1000)
+  let up = EventPost(identity: EventIdentity(2)!, eventType: .leftMouseUp, monotonicMs: 1040)
   #expect(ClickReceipt(down: down, up: up).allPosted)
   #expect(!ClickReceipt(down: down, up: nil).allPosted)
   #expect(!ClickReceipt(down: nil, up: up).allPosted)

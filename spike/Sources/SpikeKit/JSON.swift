@@ -6,6 +6,7 @@ public nonisolated enum JSON: Sendable, Equatable {
   case bool(Bool)
   case int(Int)
   case double(Double)
+  case number(JSONNumber)
   case string(String)
   case array([JSON])
   case object([Member])
@@ -58,6 +59,7 @@ public nonisolated enum JSON: Sendable, Equatable {
     switch self {
     case .int(let value): return Double(value)
     case .double(let value): return value
+    case .number(let value): return value.finiteDouble
     default: return nil
     }
   }
@@ -66,6 +68,7 @@ public nonisolated enum JSON: Sendable, Equatable {
     switch self {
     case .int(let value): return value
     case .double(let value): return Int(exactly: value)
+    case .number(let value): return value.exactInt
     default: return nil
     }
   }
@@ -109,6 +112,7 @@ public nonisolated enum JSON: Sendable, Equatable {
     case .bool(let value): out += value ? "true" : "false"
     case .int(let value): out += String(value)
     case .double(let value): out += JSON.format(value)
+    case .number(let value): out += value.lexeme
     case .string(let value): JSON.quote(value, into: &out)
     case .array(let items):
       guard !items.isEmpty else {
@@ -148,8 +152,7 @@ public nonisolated enum JSON: Sendable, Equatable {
 
   private static func format(_ value: Double) -> String {
     guard value.isFinite else { return "null" }
-    if value == value.rounded(), abs(value) < 1e15 { return String(Int(value)) }
-    return String(format: "%.6g", value)
+    return String(value)
   }
 
   private static func quote(_ value: String, into out: inout String) {
@@ -174,10 +177,8 @@ public nonisolated enum JSON: Sendable, Equatable {
 
   /// Parses one JSON document; `nil` when it is not valid JSON.
   public static func parse(_ text: String) -> JSON? {
-    guard let data = text.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-    else { return nil }
-    return from(foundation: object)
+    guard var parser = JSONParser(text) else { return nil }
+    return parser.parse()
   }
 
   /// Converts a Foundation/CoreFoundation property-list-like value. Data becomes its length, dates
@@ -188,9 +189,12 @@ public nonisolated enum JSON: Sendable, Equatable {
     case is NSNull: return .null
     case let number as NSNumber:
       if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
+      if let decimal = number as? NSDecimalNumber {
+        return JSONNumber(decimal.stringValue).map(JSON.number).orNull
+      }
       if CFNumberIsFloatType(number) { return .double(number.doubleValue) }
       if let integer = Int(number.stringValue) { return .int(integer) }
-      return .double(number.doubleValue)
+      return JSONNumber(number.stringValue).map(JSON.number).orNull
     case let string as String: return .string(string)
     case let date as Date: return .string(Clock.iso(date))
     case let data as Data: return .obj([("data_bytes", .int(data.count))])

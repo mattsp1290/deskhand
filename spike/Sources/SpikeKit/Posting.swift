@@ -3,12 +3,21 @@ import CoreGraphics
 import Foundation
 
 public nonisolated struct EventPost: Sendable {
+  public let identity: EventIdentity
   public let eventType: CGEventType
   public let monotonicMs: Double
 
-  public init(eventType: CGEventType, monotonicMs: Double) {
+  public init(identity: EventIdentity, eventType: CGEventType, monotonicMs: Double) {
+    self.identity = identity
     self.eventType = eventType
     self.monotonicMs = monotonicMs
+  }
+
+  public var json: JSON {
+    .obj([
+      ("identity", .string(String(identity.rawValue))),
+      ("event_type", .int(Int(eventType.rawValue))), ("posted_ms", .double(monotonicMs)),
+    ])
   }
 }
 
@@ -115,10 +124,12 @@ public enum Post {
         mouseEventSource: source(state), mouseType: type, mouseCursorPosition: point,
         mouseButton: button)
     else { return nil }
+    guard let identity = EventIdentity.next() else { return nil }
     event.setIntegerValueField(.mouseEventClickState, value: clickState)
+    event.setIntegerValueField(.eventSourceUserData, value: identity.rawValue)
     let posted = Clock.monoMs()
     event.post(tap: tap)
-    return EventPost(eventType: type, monotonicMs: posted)
+    return EventPost(identity: identity, eventType: type, monotonicMs: posted)
   }
 
   @discardableResult

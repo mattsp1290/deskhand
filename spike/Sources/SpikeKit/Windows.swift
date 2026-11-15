@@ -79,20 +79,22 @@ public enum Geometry {
     CGPoint(x: point.x, y: primaryHeight - point.y)
   }
 
-  public static func json(_ rect: CGRect) -> JSON {
+  public nonisolated static func json(_ rect: CGRect) -> JSON {
     .obj([
       ("x", .double(rect.origin.x)), ("y", .double(rect.origin.y)),
       ("width", .double(rect.width)), ("height", .double(rect.height)),
     ])
   }
 
-  public static func json(_ point: CGPoint) -> JSON {
+  public nonisolated static func json(_ point: CGPoint) -> JSON {
     .obj([("x", .double(point.x)), ("y", .double(point.y))])
   }
 }
 
 /// A recorded event delivered to a harness window.
-public struct ReceivedEvent {
+public nonisolated struct ReceivedEvent: Sendable {
+  public let identity: EventIdentity?
+  public let eventType: CGEventType?
   public let kind: String
   public let window: Int
   public let globalLocation: CGPoint
@@ -103,13 +105,17 @@ public struct ReceivedEvent {
   /// `ProcessInfo.systemUptime`.
   public let timestamp: TimeInterval
   public let receivedUptime: TimeInterval
+  public let receivedMonotonicMs: Double
 
   public var json: JSON {
     .obj([
+      ("identity", .str(identity.map { String($0.rawValue) })),
+      ("event_type", .int(eventType.map { Int($0.rawValue) })),
       ("kind", .string(kind)), ("window", .int(window)),
       ("global", Geometry.json(globalLocation)), ("key_code", .int(keyCode.map(Int.init))),
       ("characters_length", .int(characters?.count)), ("modifiers", .int(Int(modifiers))),
       ("event_uptime", .double(timestamp)), ("received_uptime", .double(receivedUptime)),
+      ("received_monotonic_ms", .double(receivedMonotonicMs)),
     ])
   }
 }
@@ -133,11 +139,16 @@ public final class RecordingView: NSView {
     let screenPoint = window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? .zero
     onEvent?(
       ReceivedEvent(
+        identity: event.cgEvent.flatMap {
+          EventIdentity($0.getIntegerValueField(.eventSourceUserData))
+        },
+        eventType: event.cgEvent?.type,
         kind: kind, window: window?.windowNumber ?? 0,
         globalLocation: Geometry.globalPoint(fromCocoa: screenPoint),
         keyCode: isKey ? event.keyCode : nil,
         characters: isKey ? event.characters : nil, modifiers: event.modifierFlags.rawValue,
-        timestamp: event.timestamp, receivedUptime: ProcessInfo.processInfo.systemUptime))
+        timestamp: event.timestamp, receivedUptime: ProcessInfo.processInfo.systemUptime,
+        receivedMonotonicMs: Clock.monoMs()))
   }
 
   public override func mouseDown(with event: NSEvent) { record("left_down", event) }
@@ -146,6 +157,8 @@ public final class RecordingView: NSView {
   public override func mouseMoved(with event: NSEvent) { record("mouse_moved", event) }
   public override func rightMouseDown(with event: NSEvent) { record("right_down", event) }
   public override func rightMouseUp(with event: NSEvent) { record("right_up", event) }
+  public override func otherMouseDown(with event: NSEvent) { record("other_down", event) }
+  public override func otherMouseUp(with event: NSEvent) { record("other_up", event) }
   public override func scrollWheel(with event: NSEvent) { record("scroll", event) }
   public override func keyDown(with event: NSEvent) { record("key_down", event) }
   public override func keyUp(with event: NSEvent) { record("key_up", event) }
