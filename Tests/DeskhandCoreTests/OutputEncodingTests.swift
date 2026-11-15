@@ -189,7 +189,13 @@ private enum Examples {
             state: .paused,
             operationID: op("call_01HZX3M9Q5"),
             operation: .result(OperationView(status: .aborted, eventsPosted: 5)),
-            measured: pointerMeasured),
+            measured: Measured(
+                frontmostApp: textEdit, targetApp: textEdit, windowTitle: "notes.txt",
+                globalPoint: GlobalPoint(x: 220.49426751592355, y: 293.92805519053877),
+                dragEnd: DragEnd(
+                    targetApp: textEdit, windowTitle: "notes.txt",
+                    globalPoint: GlobalPoint(x: 381.92101910828023, y: 470.06471747700397)),
+                measuredAt: at(1_794_668_539_730))),
         "pointer.output.error-stale-frame.json": ToolError(
             .staleFrame(.pixelsChanged(pointIndex: 0)),
             message: "The pixels around the target changed since the frame was captured. Take a new screenshot.",

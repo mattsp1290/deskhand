@@ -7,6 +7,7 @@ import Testing
         "keyboard.input.hold-too-long.json": "/action/hold_ms",
         "keyboard.input.holder-trailing-newline.json": "/holder_id",
         "keyboard.input.missing-holder.json": "",
+        "keyboard.input.permitted-app-trailing-newline.json": "/permitted_apps/0",
         "keyboard.input.press-with-text.json": "/action",
         "keyboard.input.text-empty.json": "/action/text",
         "keyboard.input.text-too-long.json": "/action/text",
