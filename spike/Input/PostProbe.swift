@@ -3,9 +3,6 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// Item 2 (does posting work with the current grants), item 7 (a window still receives posted
-/// clicks; exclusion is capture-only) and item 8 (pointer mapping on every display, including
-/// negative origins). All clicks and keys land on the harness's own window.
 enum PostProbe {
   static let spec = ProbeSpec(
     name: "input-post", items: ["2", "7", "8"],
@@ -60,7 +57,6 @@ enum PostProbe {
     }
     report.set("keys", .obj(keys))
 
-    // postToPid needs no window under the pointer: does it need the grant?
     rig.window.clearReceived()
     if InputGuard.ownsKeyboard(),
       let event = CGEvent(keyboardEventSource: Post.source(), virtualKey: 7, keyDown: true),
@@ -72,7 +68,6 @@ enum PostProbe {
       report.set("post_to_pid_key_down_received", .int(rig.window.received("key_down").count))
     }
 
-    // Pointer mapping: move to known global points on every display and read back.
     var mapping: [JSON] = []
     for id in Displays.onlineIDs() where CGDisplayIsActive(id) != 0 {
       let bounds = CGDisplayBounds(id)

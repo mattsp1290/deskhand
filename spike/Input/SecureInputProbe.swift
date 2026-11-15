@@ -3,10 +3,6 @@ import Carbon.HIToolbox
 import Foundation
 import SpikeKit
 
-/// Item 6 (harness-owned targets): `IsSecureEventInputEnabled` with the harness's own secure
-/// text field focused, whether posted keys reach that field, and whether they reach a normal
-/// field while the harness holds secure input explicitly. Other apps' password fields, the
-/// unlock screen and system prompts are the secure-input trial.
 enum SecureInputProbe {
   static let spec = ProbeSpec(
     name: "input-secure", items: ["6"],

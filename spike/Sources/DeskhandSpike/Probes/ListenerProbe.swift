@@ -2,10 +2,6 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// Item 9: an inbound TCP listener bound to the LAN address (as deskhand v0 binds it), a
-/// same-host connection to it, the agent's own listener, and an outbound LAN connection to the
-/// gateway (the usual symptom of a Local Network denial is EHOSTUNREACH). Inbound from another
-/// host needs the peer Mac or the Lima guest (run-spike.sh --remote, bean ealq).
 enum ListenerProbe {
   static let spec = ProbeSpec(
     name: "listener", items: ["9"],
@@ -90,7 +86,6 @@ enum ListenerProbe {
     return report
   }
 
-  /// Owners of on-screen windows at or above the modal-panel level (where consent prompts sit).
   static func alertOwners() -> Set<String> {
     let level = Int(CGWindowLevelForKey(.modalPanelWindow))
     return Set(

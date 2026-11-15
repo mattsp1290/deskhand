@@ -13,8 +13,6 @@ public enum Signals {
   /// `kCGAnyInputEventType`; imported C enums accept any raw value.
   public static let anyInputEvent = CGEventType(rawValue: ~0)!
 
-  // MARK: Permissions
-
   public static func preflights() -> JSON {
     .obj([
       ("screen_recording", .bool(CGPreflightScreenCaptureAccess())),
@@ -43,8 +41,6 @@ public enum Signals {
     }
   }
 
-  // MARK: Idle counters
-
   /// Seconds since the last input event, by source and type, plus IOHIDSystem's `HIDIdleTime`.
   public static func idle() -> JSON {
     func seconds(_ state: CGEventSourceStateID, _ type: CGEventType) -> JSON {
@@ -69,8 +65,6 @@ public enum Signals {
       service, "HIDIdleTime" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
     return (value as? NSNumber).map { $0.doubleValue / 1_000_000_000 }
   }
-
-  // MARK: Session, lock and console
 
   public static func sessionDictionary() -> [String: Any] {
     (CGSessionCopyCurrentDictionary() as? [String: Any]) ?? [:]

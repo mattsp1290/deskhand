@@ -4,9 +4,6 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// "Held synthetic input after process exit": a child process posts a key-down, a modifier
-/// down or a mouse-button down over the harness window and exits; the parent reads the key,
-/// flag and button state afterwards, then releases what is still held.
 enum HeldInputProbe {
   static let spec = ProbeSpec(
     name: "input-held", items: ["held-input"],
@@ -102,7 +99,6 @@ enum HeldInputProbe {
     }
   }
 
-  /// Runs this executable as the child (same bundle, same TCC responsibility).
   static func runChild(_ arguments: [String]) async -> JSON {
     let path = Bundle.main.executablePath ?? CommandLine.arguments[0]
     let started = Clock.monoMs()
@@ -113,7 +109,6 @@ enum HeldInputProbe {
     ])
   }
 
-  /// The child side: post one "down" event and exit without releasing it.
   static func child(_ arguments: [String]) async -> Int32 {
     guard arguments.first == "hold", arguments.count >= 2 else { return 2 }
     let x = Double(arguments.count > 2 ? arguments[2] : "") ?? 0

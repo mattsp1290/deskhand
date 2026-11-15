@@ -39,8 +39,6 @@ public enum CaptureTools {
     ])
   }
 
-  // MARK: Pixels
-
   /// RGBA8 sRGB pixels of `image` scaled to `width`×`height`.
   public struct Pixels {
     public let width: Int

@@ -1,10 +1,6 @@
 import Foundation
 import SpikeKit
 
-/// Item 4 and the plan's lock-detection bar: 20 trials per lock path, recording every lock
-/// candidate before, during and after. The harness triggers the lock where it can (the
-/// Control-Command-Q shortcut, display sleep, a Lock Screen hot corner); the person only
-/// unlocks with Touch ID. Lid, menu, idle and fast user switching need the person.
 enum LockTrial {
   static var spec: TrialSpec {
     TrialSpec(
@@ -43,7 +39,6 @@ enum LockTrial {
       timeoutMs: 1_800_000),
   ]
 
-  /// Candidates that, if any reads true, mean "locked". `on_console` false also counts.
   static let strong = [
     "session_screen_is_locked", "io_console_users_screen_locked", "loginwindow_shield",
   ]
@@ -107,7 +102,6 @@ enum LockTrial {
       case "hot-corner": trigger = await env.act("hot-corner", corner ?? "tl")
       default: env.say(path.instruction)
       }
-      // Sample fast until locked, then 3 s more so slower candidates show their latency.
       var samples = await env.poll(everyMs: 200, timeoutMs: path.timeoutMs) { looksLocked($0) }
       let sawLock = samples.last.map(looksLocked) ?? false
       if sawLock { samples += await env.poll(everyMs: 200, timeoutMs: 3000) }
@@ -165,8 +159,6 @@ enum LockTrial {
     env.finish()
   }
 
-  /// For each candidate: when it first read "locked" (ms after the trigger), and whether it read
-  /// "unlocked" again before the unlock phase began.
   static func analyse(_ samples: [JSON], t0: Double, lockedPhaseEnd: Int) -> JSON {
     let keys = samples.first?["lock"]?.members?.map(\.key) ?? []
     var result: [(String, JSON)] = []
@@ -199,7 +191,6 @@ enum LockTrial {
     return .obj(result)
   }
 
-  /// Transitions only, so 20 trials stay readable.
   static func timelines(_ samples: [JSON], t0: Double) -> JSON {
     let keys = samples.first?["lock"]?.members?.map(\.key) ?? []
     var result: [(String, JSON)] = []

@@ -3,9 +3,6 @@ import Foundation
 @preconcurrency import ScreenCaptureKit
 import SpikeKit
 
-/// Item 8: places harness markers at known global points on every display, captures each
-/// display, finds the markers in the pixels and compares with the plan's mapping
-/// `pixel = (global - display.origin) * pointPixelScale`. Pointer mapping is in input-post.
 enum CoordinatesProbe {
   static let spec = ProbeSpec(
     name: "coordinates", items: ["8"],

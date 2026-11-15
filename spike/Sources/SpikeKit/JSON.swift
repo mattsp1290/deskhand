@@ -91,8 +91,6 @@ public nonisolated enum JSON: Sendable, Equatable {
     return .object(members)
   }
 
-  // MARK: Serialization
-
   public func compact() -> String {
     var out = ""
     write(into: &out, indent: nil, level: 0)
@@ -173,8 +171,6 @@ public nonisolated enum JSON: Sendable, Equatable {
     }
     out += "\""
   }
-
-  // MARK: Parsing and bridging
 
   /// Parses one JSON document; `nil` when it is not valid JSON.
   public static func parse(_ text: String) -> JSON? {

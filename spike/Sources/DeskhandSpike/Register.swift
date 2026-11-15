@@ -2,8 +2,6 @@ import Foundation
 import ServiceManagement
 import SpikeKit
 
-/// Registers the bundled LaunchAgent (`Contents/Library/LaunchAgents/homes.birb.deskhand.agent.plist`)
-/// with `SMAppService.agent(plistName:)`, as deskhand v0 will.
 enum Register {
   static var plistName: String {
     (Bundle.main.bundleIdentifier ?? RunContext.bundleIdentifier) + ".agent.plist"
@@ -39,8 +37,6 @@ enum Register {
       do {
         try await service.unregister()
       } catch {
-        // Unregistering something that is not registered is not a failure for an idempotent
-        // uninstall.
         result.append(("error", .string("\(error)")))
         if service.status != .notRegistered { code = 1 }
       }

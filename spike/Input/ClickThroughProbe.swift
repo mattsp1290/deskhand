@@ -3,10 +3,6 @@ import ApplicationServices
 import Foundation
 import SpikeKit
 
-/// deskhand-7t13 (d): a click-through window (one that ignores mouse events) over another
-/// window. Which window does `CGWindowListCopyWindowInfo` say is topmost, which does
-/// `NSWindow.windowNumber(at:)` say a click would hit, what does Accessibility hit-test to,
-/// and which window actually receives a posted click?
 enum ClickThroughProbe {
   static let spec = ProbeSpec(
     name: "input-click-through", items: ["7t13-d"],

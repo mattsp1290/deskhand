@@ -2,7 +2,6 @@ import Foundation
 import SpikeInput
 import SpikeKit
 
-/// Every probe and trial the harness knows.
 enum Catalog {
   static var probes: [ProbeSpec] {
     [
@@ -19,10 +18,7 @@ enum Catalog {
   static func trial(_ name: String) -> TrialSpec? { trials.first { $0.name == name } }
 }
 
-/// Runs one harness command and emits JSON lines. The same code serves the command line, the
-/// LaunchAgent's control socket and in-process trials.
 enum Dispatcher {
-  /// Set by the agent so `status` can report it.
   static var agentStatus: (() -> JSON)?
 
   static func run(_ words: [String], emit: (JSON) -> Void) async {
@@ -53,8 +49,6 @@ enum Dispatcher {
     }
   }
 
-  /// `probe <name>|all-automatic|list [--exclude-bundle-id ID]... [--save-images]
-  /// [--listener-port N]`.
   static func runProbes(_ words: [String], emit: (JSON) -> Void) async {
     var options = ProbeOptions()
     var names: [String] = []

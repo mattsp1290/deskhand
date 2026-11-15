@@ -1,8 +1,6 @@
 import Foundation
 import SpikeKit
 
-/// Condenses the LaunchAgent's log into one result (items 1, 2, 4, 9 over time): when capture
-/// checks failed or looked wallpaper-only, when permissions changed, and who connected.
 enum AgentLog {
   static func report() -> ProbeReport {
     var report = ProbeReport("agent-log", items: ["1", "2", "9", "add-wallpaper-only"])

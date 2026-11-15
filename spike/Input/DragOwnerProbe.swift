@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// A view that starts a real AppKit drag session on the first mouse-dragged event.
 final class DragSourceView: NSView, NSDraggingSource {
   var started = false
   var ended = false
@@ -37,13 +36,9 @@ final class DragSourceView: NSView, NSDraggingSource {
   }
 }
 
-/// deskhand-7t13 (b): which process owns the window that carries the drag image. Samples the
-/// on-screen windows at the dragging level (and anything under the pointer above normal level)
-/// while a drag is in progress.
 enum DragOwner {
   static var draggingLevel: Int { Int(CGWindowLevelForKey(.draggingWindow)) }
 
-  /// One sample: windows at or above the dragging level, and the stack at `point`.
   static func sample(at point: CGPoint) -> JSON {
     let windows = WindowList.onScreen()
     let dragLevel = windows.filter { ($0.layer ?? 0) >= draggingLevel - 1 }
@@ -55,7 +50,6 @@ enum DragOwner {
     ])
   }
 
-  /// Distinct owners of drag-level windows across samples, with their code signatures.
   static func owners(_ samples: [JSON]) -> JSON {
     var seen: [Int: JSON] = [:]
     for sample in samples {

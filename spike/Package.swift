@@ -1,8 +1,5 @@
 // swift-tools-version: 6.2
 
-// The deskhand spike harness: a throwaway package, separate from the main deskhand package, that
-// measures what macOS allows (bn request deskhand-r-waw0). See scripts/run-spike.sh.
-
 import PackageDescription
 
 let settings: [SwiftSetting] = [.defaultIsolation(MainActor.self)]

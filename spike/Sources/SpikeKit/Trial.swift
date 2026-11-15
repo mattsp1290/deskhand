@@ -106,8 +106,6 @@ public struct InProcessExecutor: Executor {
     options["path"].map { "\(name)-\($0)" } ?? name
   }
 
-  // MARK: Talking to the person
-
   public func say(_ text: String) {
     print(text)
     fflush(stdout)
@@ -155,8 +153,6 @@ public struct InProcessExecutor: Executor {
     _ = await readLine()
   }
 
-  // MARK: Harness calls
-
   public func call(_ words: [String]) async -> [JSON] {
     guard persistenceError == nil else {
       return [.obj([("error", .string("evidence persistence failed"))])]
@@ -196,8 +192,6 @@ public struct InProcessExecutor: Executor {
     }
     return samples
   }
-
-  // MARK: Recording
 
   public func record(_ attempt: JSON) {
     attempts.append(attempt)

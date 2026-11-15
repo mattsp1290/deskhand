@@ -3,7 +3,6 @@ import Carbon.HIToolbox
 import Foundation
 import SpikeKit
 
-/// Counts hot-key presses from the Carbon handler, which runs outside Swift concurrency.
 nonisolated final class HotKeyCounter: @unchecked Sendable {
   static let shared = HotKeyCounter()
   private let lock = NSLock()
@@ -25,11 +24,6 @@ nonisolated func hotKeyCallback(
   return noErr
 }
 
-/// deskhand-7t13 default denied shortcuts and the "modifier chords vs global hot keys" and
-/// "RegisterEventHotKey modifiers" items: which system shortcuts are enabled, which modifier
-/// combinations `RegisterEventHotKey` accepts, whether posted chords fire global hot keys
-/// (deskhand's kill switch must not be reachable by its own posts), and whether posted
-/// ctrl+F2/F3/F8 and cmd+space take effect.
 enum HotKeyProbe {
   static let spec = ProbeSpec(
     name: "input-hotkeys", items: ["hotkeys", "7t13-shortcuts"],
@@ -63,7 +57,6 @@ enum HotKeyProbe {
     Combo(name: "cmd+space", key: kVK_Space, carbon: cmdKey, modifierKeys: [kVK_Command]),
   ]
 
-  /// The contract's default denied chords that are system shortcuts, as (name, key, Carbon mods).
   static let deniedDefaults: [(String, Int, Int)] =
     [
       ("ctrl+f2", kVK_F2, controlKey), ("ctrl+f3", kVK_F3, controlKey),
@@ -150,7 +143,6 @@ enum HotKeyProbe {
           + (fired.map { "; posted chord " + $0.joined(separator: ", ") } ?? ""))
     }
 
-    // System shortcuts posted by the harness: do they take effect?
     var effects: [(String, JSON)] = []
     if await rig.focus() {
       effects.append(("cmd+space", await spotlightEffect()))
@@ -210,7 +202,6 @@ enum HotKeyProbe {
     }
   }
 
-  /// Symbolic hot keys report Carbon modifiers; mask to the four that matter.
   static func carbonModifiers(_ entry: JSON) -> Int {
     (entry["modifiers"]?.intValue ?? 0) & (cmdKey | shiftKey | optionKey | controlKey)
   }

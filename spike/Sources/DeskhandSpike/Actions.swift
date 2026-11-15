@@ -7,10 +7,7 @@ import IOKit.pwr_mgt
 @preconcurrency import ScreenCaptureKit
 import SpikeKit
 
-/// Single actions the trials ask the harness (normally the LaunchAgent) to take. None of them
-/// types anything but the literal "xyz", and none handles a password.
 enum Actions {
-  /// The admin prompt started for the secure-input trial, so it can be dismissed afterwards.
   private static var authPrompt: Process?
 
   static func run(_ words: [String]) async -> JSON {
@@ -19,7 +16,6 @@ enum Actions {
     var result: [(String, JSON)] = [("action", .string(name)), ("before", Clock.stamp())]
     switch name {
     case "lock-shortcut":
-      // Control-Command-Q: the documented Lock Screen shortcut.
       result.append(("preflight_post_event", .bool(CGPreflightPostEventAccess())))
       let posted = await Post.chord(kVK_ANSI_Q, modifiers: [kVK_Control, kVK_Command])
       result.append(("posted", .bool(posted)))
@@ -44,7 +40,6 @@ enum Actions {
       await Clock.sleep(ms: 1200)
       result.append(("reached", Geometry.json(Post.location())))
       result.append(("started_at", Geometry.json(start)))
-      // Leave the corner so the next trial approaches it again.
       await Post.glide(to: CGPoint(x: main.midX, y: main.midY), steps: 10)
     case "declare-activity":
       let before = Signals.displaysAsleep()
@@ -60,7 +55,6 @@ enum Actions {
       result.append(("idle_after", Signals.idle()))
       if assertion != 0 { IOPMAssertionRelease(assertion) }
     case "nudge-pointer":
-      // A 1 px pointer move and back: shows whether posted events are processed in this state.
       let start = Post.location()
       Post.move(to: CGPoint(x: start.x + 1, y: start.y))
       await Clock.sleep(ms: 150)
@@ -106,8 +100,6 @@ enum Actions {
       authPrompt = nil
       result.append(("dismissed", .bool(true)))
     case "open-settings":
-      // An x-apple.systempreferences URL; opened by the harness so the pane belongs to the
-      // person's session even when the driver runs over SSH.
       if let text = argument, text.hasPrefix("x-apple.systempreferences:"),
         let url = URL(string: text)
       {
@@ -124,8 +116,6 @@ enum Actions {
   }
 }
 
-/// A short capture health check for the agent log and the lock trials: SCK window list, one
-/// capture of the main display and its wallpaper-only comparison. Numbers only, no pixels.
 enum CaptureCheck {
   static func quick() async -> JSON {
     var result: [(String, JSON)] = [

@@ -2,9 +2,6 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// The LaunchAgent mode: an inbound TCP listener on the LAN address (item 9), periodic state
-/// samples and capture checks to a log (items 1, 2, 4 over time), and the owner-only control
-/// socket the driver uses to run probes and trial actions with deskhand's own TCC grants.
 enum Agent {
   static var logURL: URL {
     FileManager.default.homeDirectoryForCurrentUser
@@ -139,8 +136,6 @@ enum Agent {
     }
   }
 
-  /// Binds the LAN address, retrying every 5 s (the address may not exist yet at login) and
-  /// rebinding when it changes.
   private static func keepListening(port: Int) async {
     var bound: String?
     while true {

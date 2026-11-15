@@ -1,16 +1,12 @@
 import Foundation
 import SpikeKit
 
-/// Item 4 snapshot: every lock, console and display-sleep candidate signal right now, plus the
-/// settings that decide which lock paths the trials can drive (require-password delay, hot
-/// corners, fast user switching).
 enum SessionProbe {
   static let spec = ProbeSpec(
     name: "session", items: ["4", "lock-signal", "login-window"],
     summary: "session dictionary, lock candidates, console user, display sleep, lid, lock settings",
     run: run)
 
-  /// Hot-corner action codes in com.apple.dock.
   static let cornerActions = [
     0: "none", 1: "none", 2: "mission_control", 3: "app_windows", 4: "desktop",
     5: "start_screen_saver", 6: "disable_screen_saver", 7: "dashboard", 10: "display_sleep",

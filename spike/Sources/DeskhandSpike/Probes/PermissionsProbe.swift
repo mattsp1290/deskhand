@@ -2,9 +2,6 @@ import Foundation
 import SQLite3
 import SpikeKit
 
-/// Item 2 and the spike additions on a separate event-synthesizing grant and the Remote Desktop
-/// setting: the preflight APIs, which TCC services this macOS knows, and (only when the
-/// responsible process has Full Disk Access) deskhand's rows in the TCC databases.
 enum PermissionsProbe {
   static let spec = ProbeSpec(
     name: "permissions", items: ["2", "3", "add-event-synthesizing", "add-remote-desktop"],
@@ -58,8 +55,6 @@ enum PermissionsProbe {
     return report
   }
 
-  /// The localized prompt texts for the capture services (shows whether Remote Desktop has its
-  /// own consent text).
   private static func promptStrings() -> JSON {
     let path =
       "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/Resources/Localizable.loctable"
@@ -75,8 +70,6 @@ enum PermissionsProbe {
     return .obj(keys.sorted().map { ($0, .from(foundation: english[$0])) })
   }
 
-  /// deskhand's rows in a TCC database. Reading needs Full Disk Access for the responsible
-  /// process, so "unreadable" is the normal answer.
   private static func readTCC(_ path: String) -> JSON {
     var db: OpaquePointer?
     guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {

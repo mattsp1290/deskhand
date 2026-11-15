@@ -3,10 +3,6 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// deskhand-7t13 (c) Mac App Store apps vs the team anchor requirement, Apple platform binaries
-/// (no team identifier), and contract item 73: which process owns the menu bar, the status
-/// items, the Dock and the desktop, and whether each has a bundle identifier. Also the
-/// harness's own signature, which TCC grants are bound to (item 3).
 enum IdentityProbe {
   static let spec = ProbeSpec(
     name: "identity", items: ["3", "7t13-c", "7t13-apple-team", "contract-73"],
@@ -22,7 +18,6 @@ enum IdentityProbe {
         + "\(me["adhoc"]?.boolValue == true), hardened runtime \(me["hardened_runtime"]?.boolValue == true), "
         + "designated requirement: \(me["designated_requirement"]?.stringValue ?? "none")")
 
-    // Owners of the system UI, by the topmost window at characteristic points.
     let windows = WindowList.onScreen()
     let main = CGDisplayBounds(CGMainDisplayID())
     let points: [(String, CGPoint)] = [
@@ -75,7 +70,6 @@ enum IdentityProbe {
       ))
     report.set("system_ui_owners", .obj(owners))
 
-    // Named system processes.
     var system: [(String, JSON)] = []
     for name in [
       "WindowServer", "Dock", "SystemUIServer", "ControlCenter", "loginwindow", "Finder",
@@ -92,7 +86,6 @@ enum IdentityProbe {
     }
     report.set("system_processes", .obj(system))
 
-    // Every regular app: Apple, Developer ID or Mac App Store, and the team-anchor check.
     var apps: [JSON] = []
     var masTotal = 0
     var masTeamAnchor = 0

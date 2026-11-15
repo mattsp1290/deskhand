@@ -2,10 +2,6 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// deskhand-7t13 (e): is the AX focused application the right keyboard-focus signal? Compares
-/// it with the frontmost app when the harness is active, and when a non-activating panel of the
-/// harness holds keyboard focus while another app (Finder) stays frontmost; then posts keys and
-/// sees who gets them.
 enum FocusProbe {
   static let spec = ProbeSpec(
     name: "input-focus", items: ["7t13-e"],
@@ -22,7 +18,6 @@ enum FocusProbe {
     let active = await rig.focus()
     report.set("harness_active", .obj([("owns_keyboard", .bool(active)), ("focus", Focus.json())]))
 
-    // A non-activating panel takes key focus while Finder stays frontmost.
     var panelResult: [(String, JSON)] = []
     if let finder = NSRunningApplication.runningApplications(
       withBundleIdentifier: "com.apple.finder"

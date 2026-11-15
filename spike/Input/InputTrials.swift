@@ -2,10 +2,7 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// Guided input trials. The harness never asks for, types or stores a password: it types only
-/// the literal "xyz", and the person cancels every prompt.
 enum InputTrials {
-  // MARK: Item 6
 
   static var secureInput: TrialSpec {
     TrialSpec(
@@ -20,7 +17,6 @@ enum InputTrials {
         let own = await env.call(["probe", "input-secure"]).last.orNull
         env.record(.obj([("target", .string("harness_secure_field")), ("probe", own)]))
 
-        // A system authentication prompt (SecurityAgent).
         env.step(
           "An administrator prompt will appear. Click into its password field within 8 seconds; do not type."
         )
@@ -40,7 +36,6 @@ enum InputTrials {
             ("typed", typed), ("dots_seen", .string(dots)),
           ]))
 
-        // A password field in System Settings.
         _ = await env.act(
           "open-settings", "x-apple.systempreferences:com.apple.Touch-ID-Settings.extension")
         env.step(
@@ -61,7 +56,6 @@ enum InputTrials {
             ("typed", settingsTyped), ("dots_seen", .string(settingsDots)),
           ]))
 
-        // The unlock screen.
         env.step(
           "The harness will lock the screen and type 'xyz' at the lock screen. Look at the "
             + "password field, then unlock with Touch ID (clear the field first if you would type)."
@@ -103,8 +97,6 @@ enum InputTrials {
         env.finish()
       })
   }
-
-  // MARK: deskhand-7t13 (b)
 
   static var dragOwner: TrialSpec {
     TrialSpec(

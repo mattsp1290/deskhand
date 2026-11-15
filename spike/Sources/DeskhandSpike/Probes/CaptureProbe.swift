@@ -3,16 +3,12 @@ import Foundation
 @preconcurrency import ScreenCaptureKit
 import SpikeKit
 
-/// Items 1 and 7 plus the blank/wallpaper-only spike additions: ScreenCaptureKit window list,
-/// one capture per display, a wallpaper-only comparison, and capture exclusion of the harness's
-/// own window and of any running sensitive app.
 enum CaptureProbe {
   static let spec = ProbeSpec(
     name: "capture", items: ["1", "7", "add-wallpaper-only", "add-blank-frame"],
     summary: "SCK window list, per-display capture, wallpaper-only and blank detection, exclusion",
     run: run)
 
-  /// Password managers, messaging and mail apps (from deskhand v0's default deny list).
   static let sensitiveBundleIDs = [
     "com.1password.1password", "com.agilebits.onepassword7", "com.bitwarden.desktop",
     "org.keepassxc.keepassxc", "com.apple.Passwords", "com.apple.keychainaccess",
@@ -30,7 +26,6 @@ enum CaptureProbe {
     report.set("preflight_screen_recording", .bool(preflight))
     report.set("lock_candidates", Signals.lockCandidates())
 
-    // The marker is the harness's own window, used to check exclusion and the pixel mapping.
     let main = CGDisplayBounds(CGMainDisplayID())
     let markerRect = CGRect(x: main.midX - 100, y: main.midY - 100, width: 200, height: 200)
     let marker = HarnessWindow(
@@ -102,7 +97,6 @@ enum CaptureProbe {
           width: rect.width * scale, height: rect.height * scale)
       }
 
-      // Wallpaper-only: compare with a capture of the desktop-level windows alone.
       let desktopWindows = content.windows.filter {
         $0.windowLayer < 0 && $0.frame.intersects(display.frame)
       }
@@ -132,7 +126,6 @@ enum CaptureProbe {
           + "wallpaper-only suspected: \(wallpaperOnly.map { $0 ? "YES" : "no" } ?? "n/a"), "
           + "blank suspected: \(blank ? "YES" : "no")")
 
-      // The harness's own window: visible in a plain capture, gone when its app is excluded.
       if display.frame.contains(markerRect), let me {
         let inner = pixels(markerRect.insetBy(dx: 30, dy: 30))
         let shown = CaptureTools.colorFraction(full, in: inner, color: magenta)
@@ -164,7 +157,6 @@ enum CaptureProbe {
             + "\(works ? "works" : "DID NOT behave as expected"))")
       }
 
-      // Sensitive apps that are running with windows on this display.
       for app in content.applications where wanted.contains(app.bundleIdentifier) {
         let windows = normalOnScreen.filter {
           $0.owningApplication?.processID == app.processID && $0.frame.intersects(display.frame)

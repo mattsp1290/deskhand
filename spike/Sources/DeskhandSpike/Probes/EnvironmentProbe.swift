@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// Item 1 (macOS version) and item 8 (display geometry dump).
 enum EnvironmentProbe {
   static let spec = ProbeSpec(
     name: "environment", items: ["1", "8"],

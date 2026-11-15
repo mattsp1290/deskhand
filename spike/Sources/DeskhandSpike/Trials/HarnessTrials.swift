@@ -2,15 +2,12 @@ import AppKit
 import Foundation
 import SpikeKit
 
-/// The guided trials that live in the harness itself; the input trials are in SpikeInput.
 enum HarnessTrials {
   static var all: [TrialSpec] {
     [
       PermissionsTrial.spec, LockTrial.spec, wake, exclusion, coordinates,
     ]
   }
-
-  // MARK: Item 5
 
   static var wake: TrialSpec {
     TrialSpec(
@@ -64,8 +61,6 @@ enum HarnessTrials {
       })
   }
 
-  // MARK: Item 7
-
   static var exclusion: TrialSpec {
     TrialSpec(
       name: "exclusion", items: ["7"], effort: 4,
@@ -99,7 +94,6 @@ enum HarnessTrials {
         var words = ["probe", "capture", "--save-images"]
         for id in ids { words += ["--exclude-bundle-id", id] }
         let result = await env.call(words).last.orNull
-        // Still clickable: the topmost window at each excluded window's centre is the app's own.
         var clickable: [JSON] = []
         let windows = WindowList.onScreen()
         for app in chosen {
@@ -138,8 +132,6 @@ enum HarnessTrials {
         env.finish()
       })
   }
-
-  // MARK: Item 8
 
   static var coordinates: TrialSpec {
     TrialSpec(

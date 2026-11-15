@@ -1,7 +1,6 @@
 import Foundation
 import SpikeKit
 
-/// What each spike item asks, for summary.md.
 enum Items {
   static let titles: [(String, String)] = [
     ("1", "macOS version; periodic screen-recording prompt for a signed bundle using SCK only"),
@@ -43,13 +42,11 @@ enum Items {
   ]
 }
 
-/// One manual step of the checklist, least effort first.
 struct ChecklistEntry {
   let command: String
   let effort: Int
   let items: [String]
   let actions: String
-  /// Result file relative to the Mac's results directory.
   let file: String
 }
 
@@ -132,7 +129,6 @@ enum RunDirectory {
   }
 }
 
-/// Writes `summary.md` from the selected run in a Mac's directory.
 enum Summary {
   struct Loaded {
     let path: String

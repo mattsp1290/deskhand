@@ -3,9 +3,6 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// deskhand-7t13 (a) and (g): which idle counters the harness's own posts reset, for every
-/// event-source state and tap, and how far the idle signal's implied "last event" time lands
-/// from the post (the echo the 50 ms tolerance must cover).
 enum IdleProbe {
   static let spec = ProbeSpec(
     name: "input-idle", items: ["7t13-a", "7t13-echo"],
@@ -24,7 +21,6 @@ enum IdleProbe {
     var report = ProbeReport("input-idle", items: spec.items)
     guard InputGuard.begin(&report) else { return report }
     guard CGPreflightPostEventAccess() else { return report }
-    // The counters only say something when the person is not using the Mac.
     var waited = 0
     while CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: Signals.anyInputEvent)
       < 2, waited < 30
@@ -46,7 +42,6 @@ enum IdleProbe {
     var personOnlyCandidates: [String] = []
     for (stateName, state) in states {
       for (tapName, tap) in taps {
-        // Let every counter pass 1.2 s so a reset is visible.
         await Clock.sleep(ms: 1300)
         let before = Signals.idle()
         rig.window.clearReceived()
@@ -90,7 +85,6 @@ enum IdleProbe {
         : "HID idle stays person-only for posts via: \(personOnlyCandidates.joined(separator: ", "))"
     )
 
-    // Echo: how far after the post the idle signal places the last event.
     var offsets: [String: [Double]] = [:]
     for _ in 0..<25 {
       await Clock.sleep(ms: 400)

@@ -1,9 +1,6 @@
 import Foundation
 import SpikeKit
 
-/// The one up-front permission session (items 1, 2, 9 and the spike additions). It grants one
-/// permission at a time and, after each, checks from the running LaunchAgent whether the grant
-/// is visible and works without a restart.
 enum PermissionsTrial {
   static var spec: TrialSpec {
     TrialSpec(
@@ -35,7 +32,6 @@ enum PermissionsTrial {
       sample["permissions"]?[key]?.boolValue == true
     }
 
-    // 1. Screen Recording.
     if granted(baseline, "screen_recording") {
       env.say("Screen Recording is already granted.")
     } else {
@@ -74,7 +70,6 @@ enum PermissionsTrial {
       "Quit & Reopen prompt: \(quitReopen); separate Remote Desktop list in Settings: \(remoteDesktop)"
     )
 
-    // 2. Accessibility alone, then posting.
     let afterScreen = await env.sample()
     if !granted(afterScreen, "accessibility") {
       env.step("Accessibility (only this one for now)")
@@ -125,7 +120,6 @@ enum PermissionsTrial {
       choices: [])
     env.report.finding("lists showing deskhand-spike (person): \(lists)")
 
-    // 3. Local network (item 9).
     env.step("Local network")
     let listener = await env.call(["probe", "listener"]).last.orNull
     env.record(.obj([("step", .string("listener_probe")), ("result", listener)]))
@@ -144,8 +138,6 @@ enum PermissionsTrial {
     env.finish()
   }
 
-  /// Whether posting works from the agent right now: a 1 px pointer nudge, then the harness's
-  /// input-post probe when it is available.
   static func postingCheck(_ env: TrialEnv, label: String) async -> Bool {
     let nudge = await env.act("nudge-pointer")
     let probe = await env.call(["probe", "input-post"]).last.orNull

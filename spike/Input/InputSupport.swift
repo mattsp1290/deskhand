@@ -4,12 +4,7 @@ import CoreGraphics
 import Foundation
 import SpikeKit
 
-/// Safety rules for every input probe: never post while locked, off the console or with the
-/// display asleep; clicks only land on the harness's own topmost window; keys only go out while
-/// the harness is frontmost with its own window key. A probe that cannot meet a rule skips that
-/// part and says why.
 enum InputGuard {
-  /// `false` (and the report marked skipped or blocked) when the probe must not post at all.
   static func begin(_ report: inout ProbeReport) -> Bool {
     let (safe, why) = Signals.safeToPost()
     report.set("preflights", Signals.preflights())
@@ -23,20 +18,16 @@ enum InputGuard {
     return true
   }
 
-  /// Whether the topmost window at `point` is one of the harness's.
   static func ownsTopmost(at point: CGPoint) -> Bool {
     WindowList.stack(at: point).first?.ownerPID == getpid()
   }
 
-  /// Whether keystrokes posted now would reach the harness.
   static func ownsKeyboard() -> Bool {
     NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid()
       && NSApplication.shared.keyWindow != nil
   }
 }
 
-/// A target window at the centre of the main display that records what it receives, made key
-/// by a posted click when posting works (or by activation otherwise).
 final class InputRig {
   let window: HarnessWindow
   let previousFrontmost = NSWorkspace.shared.frontmostApplication
@@ -55,8 +46,6 @@ final class InputRig {
     await settle(ms: 400)
   }
 
-  /// Clicks into the window (posted) so the harness becomes frontmost with the window key.
-  /// Returns whether the harness then owns the keyboard.
   func focus() async -> Bool {
     let point = window.globalCenter
     if InputGuard.ownsTopmost(at: point) {
@@ -72,7 +61,6 @@ final class InputRig {
     return InputGuard.ownsKeyboard()
   }
 
-  /// Closes the window, puts the pointer back and returns focus to whoever had it.
   func tearDown() async {
     window.close()
     Post.move(to: startPointer)
@@ -83,9 +71,7 @@ final class InputRig {
   }
 }
 
-/// Accessibility readings of keyboard focus.
 enum Focus {
-  /// The pid of the AX focused application (system-wide), or an error text.
   static func focusedApplicationPID() -> (pid: pid_t?, error: String?) {
     guard AXIsProcessTrusted() else { return (nil, "accessibility_untrusted") }
     var value: CFTypeRef?
@@ -100,7 +86,6 @@ enum Focus {
     return (pid, nil)
   }
 
-  /// Role and owning pid of the AX focused UI element.
   static func focusedElement() -> JSON {
     guard AXIsProcessTrusted() else { return .obj([("error", .string("accessibility_untrusted"))]) }
     var value: CFTypeRef?
@@ -136,7 +121,6 @@ enum Focus {
   }
 }
 
-/// Percentiles of a sample, for latency findings.
 func percentiles(_ values: [Double]) -> JSON {
   guard !values.isEmpty else { return .null }
   let sorted = values.sorted()

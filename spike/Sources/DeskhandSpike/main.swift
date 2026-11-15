@@ -3,7 +3,6 @@ import Foundation
 import SpikeInput
 import SpikeKit
 
-/// deskhand-spike: the throwaway probe harness for bn request deskhand-r-waw0.
 enum Main {
   static let usage = """
     usage: deskhand-spike <command> [arguments]
@@ -93,7 +92,6 @@ enum Main {
     }
   }
 
-  /// Prints one result line; with `--out`, also writes `<out>/<probe>.json`.
   @discardableResult
   static func emit(_ line: JSON, out: URL?) -> Bool {
     print(line.compact())

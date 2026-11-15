@@ -3,9 +3,6 @@ import Foundation
 import IOKit.pwr_mgt
 import SpikeKit
 
-/// Item 5 (automatic part) and deskhand-7t13 (a): the HID idle counters, and whether
-/// `IOPMAssertionDeclareUserActivity` resets them. The effect on a sleeping display is the wake
-/// trial, because it needs the display asleep and a person to unlock afterwards.
 enum ActivityProbe {
   static let spec = ProbeSpec(
     name: "activity", items: ["5", "7t13-a"],
