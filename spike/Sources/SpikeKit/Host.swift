@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// Wall-clock and monotonic timestamps. The monotonic clock keeps counting while the Mac sleeps,
 /// so lock and wake timelines from the agent and from the trial driver line up.
@@ -101,12 +102,15 @@ public nonisolated enum Shell {
       return Result(status: -1, stdout: "", stderr: "\(error)", timedOut: false)
     }
     // Drain both pipes while the tool runs, so a chatty tool never blocks on a full pipe.
-    let outBox = DataBox()
-    let errBox = DataBox()
+    let outBox = PipeCapture()
+    let errBox = PipeCapture()
     let group = DispatchGroup()
     for (pipe, box) in [(out, outBox), (err, errBox)] {
       let handle = pipe.fileHandleForReading
-      DispatchQueue.global().async(group: group) { box.data = handle.readDataToEndOfFile() }
+      DispatchQueue.global().async(group: group) {
+        let data = handle.readDataToEndOfFile()
+        box.data.withLock { $0 = data }
+      }
     }
     let deadline = Date().addingTimeInterval(timeout)
     var timedOut = false
@@ -119,14 +123,20 @@ public nonisolated enum Shell {
       usleep(10_000)
     }
     process.waitUntilExit()
-    _ = group.wait(timeout: .now() + 2)
+    let captureComplete = group.wait(timeout: .now() + 2) == .success
+    let stdout = outBox.data.withLock { String(decoding: $0, as: UTF8.self) }
+    var stderr = errBox.data.withLock { String(decoding: $0, as: UTF8.self) }
+    if !captureComplete {
+      if !stderr.isEmpty { stderr += "\n" }
+      stderr += "output capture incomplete: pipes did not reach EOF within 2 seconds"
+    }
     return Result(
-      status: process.terminationStatus, stdout: String(decoding: outBox.data, as: UTF8.self),
-      stderr: String(decoding: errBox.data, as: UTF8.self), timedOut: timedOut)
+      status: process.terminationStatus, stdout: stdout, stderr: stderr,
+      timedOut: timedOut || !captureComplete)
   }
 
-  private final class DataBox: @unchecked Sendable {
-    var data = Data()
+  private final class PipeCapture: Sendable {
+    let data = Mutex(Data())
   }
 
   /// Runs off the main actor so the run loop keeps serving windows and notifications.

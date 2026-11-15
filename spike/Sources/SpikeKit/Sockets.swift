@@ -134,7 +134,7 @@ public nonisolated enum Net {
 
 /// A TCP listener on one address. Every accepted connection gets a one-line greeting and is
 /// closed; `onAccept` reports the peer.
-public nonisolated final class TCPListener: @unchecked Sendable {
+public nonisolated final class TCPListener {
   public let host: String
   public let port: Int
   private var fd: Int32 = -1
@@ -199,7 +199,7 @@ public nonisolated final class TCPListener: @unchecked Sendable {
 
 /// The agent's control socket: a Unix-domain socket in an owner-only directory. A client sends
 /// one line of space-separated words and reads lines until the agent closes the connection.
-public nonisolated final class ControlServer: @unchecked Sendable {
+public nonisolated final class ControlServer {
   public typealias Handler =
     @MainActor @Sendable (
       _ words: [String], _ emit: @escaping @Sendable (String) -> Void
@@ -212,7 +212,6 @@ public nonisolated final class ControlServer: @unchecked Sendable {
   }
 
   private let path: String
-  private var fd: Int32 = -1
 
   public init(path: String = ControlServer.defaultPath) {
     self.path = path
@@ -253,7 +252,6 @@ public nonisolated final class ControlServer: @unchecked Sendable {
       return error
     }
     chmod(path, 0o600)
-    fd = socketFD
     Thread.detachNewThread {
       while true {
         let client = accept(socketFD, nil, nil)
