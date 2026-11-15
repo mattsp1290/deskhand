@@ -3,8 +3,6 @@ import Foundation
 import Synchronization
 import Testing
 
-/// Starts one stop from inside a seam the executor awaits, and returns once the executor has taken
-/// it, so the next check of the call in the section sees it. Later starts do nothing.
 final class StopStarter: Sendable {
     private let task = Mutex<Task<ExecutorStop, Never>?>(nil)
     let executor: InputExecutor
@@ -22,7 +20,6 @@ final class StopStarter: Sendable {
         while !(await executor.isStopping), !Task.isCancelled { await Task.yield() }
     }
 
-    /// `nil` before ``start()``, or once the calling task is cancelled.
     var stop: ExecutorStop? {
         get async {
             guard let task = task.withLock({ $0 }) else { return nil }
@@ -31,14 +28,10 @@ final class StopStarter: Sendable {
     }
 }
 
-/// `body`'s answer, or `nil` once the calling task is cancelled, as at the end of its test's time
-/// limit: a stop that never returns fails its test instead of hanging the run.
 func bounded<T: Sendable>(_ body: @escaping @Sendable () async -> T) async -> T? {
     await finished(Task { await body() })
 }
 
-/// The executor's part of a process stop (contract 15.2): the call in flight ends with the restart
-/// statuses and an exact count, its input is released or stays owed, and no later call runs.
 @Suite("Stop: the executor", .timeLimit(.minutes(1)))
 struct ExecutorStopTests {
     static let shiftK: JSONValue = ["type": "press", "key": "k", "modifiers": ["shift"], "hold_ms": 500]
@@ -48,7 +41,6 @@ struct ExecutorStopTests {
         mac.change { $0.report = locked }
     }
 
-    /// The executor a restart would build over the same disks.
     static func restarted(_ harness: Harness) throws -> Harness {
         try Harness(mac: harness.mac, frames: harness.frames, loader: harness.loader)
     }
@@ -184,7 +176,7 @@ struct ExecutorStopTests {
     )
     func stopDoesNotWaitForTheOutcomeEntry() async throws {
         let mac = FakeMac()
-        // The wait limits never pass on their own: only the gate decides when the outcome append returns.
+
         let harness = try Harness(mac: mac, waitTimer: ManualWaitLimits())
         let starter = StopStarter(harness.executor)
         let gate = Gate()
@@ -216,8 +208,7 @@ struct ExecutorStopTests {
         "a stop returns while a refusal entry is held back for a late intent; the entries wait for it, written once, after it"
     )
     func entriesWaitForHeldRefusal() async throws {
-        // The intent's append gives up only when the test lets the limits pass; the held refusal
-        // entry's append then waits for the intent with the limits held again.
+
         let limits = ManualWaitLimits()
         let harness = try Harness(waitTimer: limits)
         let gate = Gate()
@@ -236,8 +227,7 @@ struct ExecutorStopTests {
             settled.withLock { $0 = true }
             return logged
         }
-        // Neither the gate nor a limit lets anything through until the test says so: however long
-        // this runs, a correct executor cannot settle the entries here.
+
         for _ in 0..<1_000 { await Task.yield() }
         #expect(!settled.withLock { $0 }, "the entries settled while the refusal entry was still held back")
 

@@ -145,7 +145,6 @@ struct StateEndToEndTests {
         }
     }
 
-    /// A press that holds its key until the test opens `proceed`, and the call's task.
     static func holdKey(on stack: DeskhandStack) async throws -> (Task<WireResponse, any Error>, proceed: Latch) {
         let frame = try await stack.ready()
         let (entered, proceed) = (Latch(), Latch())
@@ -160,7 +159,6 @@ struct StateEndToEndTests {
         return (held, proceed)
     }
 
-    /// The press of ``holdKey(on:)`` aborted with `secure_input` after its key-down, and its key let up.
     static func expectAbortedBySecureInput(_ held: Task<WireResponse, any Error>, on stack: DeskhandStack)
         async throws
     {
@@ -175,8 +173,7 @@ struct StateEndToEndTests {
     func blipAbortsTheEffect() async throws {
         try await DeskhandStack.with { stack in
             let (held, proceed) = try await Self.holdKey(on: stack)
-            // Two reductions back to back, as two of the watchdog's reads make them, before its
-            // executor loop looks at the snapshot: by then it shows `ok` and nothing to stop.
+
             stack.platform.report([.secureInput], conditions: [])
             await stack.stateOwner.reduceNow(allowanceChanged: false)
             stack.platform.report([], conditions: [])
@@ -192,8 +189,7 @@ struct StateEndToEndTests {
     func blipDeliveredTwice() async throws {
         try await DeskhandStack.with { stack in
             let (held, proceed) = try await Self.holdKey(on: stack)
-            // A signal change: the owner passes the reduction's interruption, then the watchdog's
-            // evaluation passes the same one again from the snapshot.
+
             await stack.hold([.secureInput])
             await stack.hold([])
             proceed.open()

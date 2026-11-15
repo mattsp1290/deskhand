@@ -45,7 +45,6 @@ extension InputExecutor {
         return answer
     }
 
-    /// From the admission section's start to the call's answer, outcome entry included.
     private func runSection(_ call: EffectCall, keyboardPlan: ActionPlan?) async -> EffectAnswer {
         switch await admit(call, keyboardPlan: keyboardPlan) {
         case .admitted(let execution):

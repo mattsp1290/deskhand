@@ -9,7 +9,7 @@ private let editorPID: pid_t = 100
 private let viewerPID: pid_t = 200
 private let windowServerPID: pid_t = 300
 private let dockPID: pid_t = 400
-/// Team-signed, but its bundle claims to be the window server.
+
 private let impostorPID: pid_t = 500
 private let unreadablePID: pid_t = 600
 
@@ -25,8 +25,6 @@ private let signatures: [pid_t: CodeSignatureLookup] = [
 private let cursorLayer = Int(CGWindowLevelForKey(.cursorWindow))
 private let draggingLayer = Int(CGWindowLevelForKey(.draggingWindow))
 
-/// Front to back: the pointer, the menu bar, the Dock, then Editor over Preview on a display to the
-/// left of the main one (negative x).
 private let desktop: [IdentityWindowEntry] = [
     F.window(pid: windowServerPID, layer: cursorLayer, 95, 95, 28, 40),
     F.window(pid: windowServerPID, layer: 24, -1000, 0, 2512, 33, title: "Menubar"),
@@ -163,8 +161,6 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(hit.owner.name == "Gone")
     }
 
-    /// The start time read with the window list is the one the measurement must still match, so a pid
-    /// taken over after the list was read is caught, not only one taken over during the signature read.
     @Test func ownerWhosePidIsReusedAfterTheWindowListIsGone() {
         let system = FakeIdentitySystem(windows: desktop, signatures: signatures, reused: [editorPID])
         let hits = probe(system).windowOwners(at: [GlobalPoint(x: -500, y: 300), GlobalPoint(x: 500, y: 700)])
@@ -289,7 +285,7 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
 
 @Suite struct WindowTitleTests {
     @Test func cutsUnicodeScalarsNotCharacters() {
-        // Each "e\u{301}" is one Character but two scalars, so a Character cut would keep twice as much.
+
         let decomposed = String(repeating: "e\u{301}", count: 300)
         let cut = WindowTitle.cut(decomposed)
         #expect(cut.unicodeScalars.count == 512)

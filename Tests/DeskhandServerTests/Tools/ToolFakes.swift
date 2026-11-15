@@ -149,7 +149,7 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
         var patch: PatchVerdict = .unchanged
         var logAppends: [Bool] = []
         var onSleep: (@Sendable () async -> Void)?
-        /// Runs once, inside the next recapture of target patches.
+
         var onVerify: (@Sendable () async -> Void)?
     }
 

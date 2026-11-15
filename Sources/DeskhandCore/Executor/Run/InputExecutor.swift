@@ -83,19 +83,16 @@ public actor InputExecutor {
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
     var logAttempts = ActionLogAttempts()
-    /// Set by ``stop()`` and never cleared: every later call is dropped, and the call in the
-    /// section ends at its next check (contract 15.2).
+
     var stopRequested = false
-    /// Calls that entered the admission section and have not answered yet: a call that left the
-    /// section is still writing its outcome entry, which ``awaitStopEntries()`` waits for.
+
     var callsAnswering = 0
     var stopWaiters: [StopWaiter] = []
-    /// The operation the stop ended, once its record was written.
+
     var stoppedOperation: StoppedOperation?
-    /// The stopped operation's outcome entry was committed.
+
     var stoppedOutcomeLogged = false
-    /// Refusal entries held back until their call's intent append returns (``PendingIntent``),
-    /// which ``awaitStopEntries()`` waits for as it waits for an outcome entry.
+
     var refusalsHeld = 0
     var outstandingRead: OutstandingRead?
 
@@ -214,8 +211,6 @@ public actor InputExecutor {
         }
     }
 
-    /// Writes a refusal entry ``logRefusal(_:after:)`` held back, once its intent append returned.
-    /// ``awaitStopEntries()`` returns after it, so the entry is written once, after its intent.
     func logHeldRefusal(_ entry: ActionLogRefusal) async {
         await logRefusal(entry)
         refusalsHeld -= 1

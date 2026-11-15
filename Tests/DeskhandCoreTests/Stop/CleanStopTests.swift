@@ -2,7 +2,6 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// What a clean stop did, in order, across the host, the executor and the exit.
 final class StopTrace: Sendable {
     enum Step: Hashable, Sendable {
         case beginStop
@@ -29,7 +28,6 @@ final class StopTrace: Sendable {
     }
 }
 
-/// A host that records each step, and holds step 1 until `accepting` opens when there is one.
 struct RecordingStopHost: CleanStopHost {
     let trace: StopTrace
     var accepting: Gate?
@@ -43,7 +41,6 @@ struct RecordingStopHost: CleanStopHost {
     func closeConnections() async { trace.record(.close) }
 }
 
-/// An executor whose stop answers `answer`, after `gate` opens when there is one.
 actor FakeStoppableExecutor: StoppableExecutor {
     func beginStop() { trace.record(.beginStop) }
 
@@ -73,9 +70,6 @@ actor FakeStoppableExecutor: StoppableExecutor {
     }
 }
 
-/// The process stop (contract 15.2): one deadline, ``CleanStop/margin`` short of
-/// `DEADLINE_BOUND_MS` after the signal, for every wait; the executor marked stopping before step 1;
-/// the steps in order; one exit with status 0.
 @Suite("Stop: the clean stop", .timeLimit(.minutes(1)))
 struct CleanStopTests {
     static let deadlineMs = Int64(ContractConstants.deadlineBoundMs) - Int64(CleanStop.defaultMargin / .milliseconds(1))
@@ -88,8 +82,6 @@ struct CleanStopTests {
             exit: { trace.record(.exit($0)) })
     }
 
-    /// The executor is marked stopping before step 1, which runs alongside the executor's stop and
-    /// ends before the connections close; the other steps are in `rest`'s order.
     static func expectSteps(_ trace: StopTrace, beginStop: Bool = true, then rest: [StopTrace.Step]) {
         let steps = trace.steps
         if beginStop { #expect(steps.first == .beginStop, "\(steps)") }
@@ -123,7 +115,7 @@ struct CleanStopTests {
         let gate = Gate()
         let executor = FakeStoppableExecutor(trace: trace, gate: gate)
         let stop = Self.cleanStop(executor, trace: trace, scheduler: scheduler)
-        // The stop starts 300 ms after the signal arrived; the deadline runs from the signal.
+
         let signal = scheduler.now
         scheduler.advance(byMilliseconds: 300)
 

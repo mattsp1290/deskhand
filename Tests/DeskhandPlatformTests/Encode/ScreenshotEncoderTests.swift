@@ -5,7 +5,6 @@ import Testing
 
 @testable import DeskhandPlatform
 
-/// Large enough that no test image reaches it.
 private let unlimited = Int.max
 
 @Suite struct ScreenshotEncoderSizingTests {
@@ -48,7 +47,6 @@ private let unlimited = Int.max
 @Suite struct ScreenshotEncoderFormatTests {
     private static let noise = EncodeTestImages.noise(width: 512, height: 384)
 
-    /// The size of each JPEG step for the noise image, which shrinks strictly as quality drops.
     private static func jpegSizes() throws -> [JPEGQuality: Int] {
         let bitmap = try ScreenshotEncoder.render(noise, to: PixelSize(width: 512, height: 384))
         var sizes: [JPEGQuality: Int] = [:]
@@ -176,7 +174,6 @@ private let unlimited = Int.max
         #expect(types.isDisjoint(with: ["eXIf", "tEXt", "iTXt", "zTXt", "tIME"]), "chunks: \(chunks.map(\.type))")
     }
 
-    /// Marker bytes of the segments before the scan, or `nil` if the bytes are not a JPEG.
     private static func jpegMarkers(_ bytes: [UInt8]) -> Set<UInt8>? {
         guard bytes.starts(with: [0xFF, 0xD8]) else { return nil }
         var markers: Set<UInt8> = []
@@ -212,7 +209,6 @@ private let unlimited = Int.max
     private static let blue: EncodeTestImages.RGB = (0, 0, 255)
     private static let white: EncodeTestImages.RGB = (255, 255, 255)
 
-    /// Red top left, green top right, blue bottom left, white bottom right.
     private static func quadrants(width: Int, height: Int) -> CGImage {
         EncodeTestImages.image(width: width, height: height) { x, y in
             switch (x < width / 2, y < height / 2) {

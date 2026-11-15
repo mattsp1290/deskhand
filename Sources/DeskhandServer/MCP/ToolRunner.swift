@@ -49,7 +49,6 @@ struct ToolRunner {
     let dispatcher: any ToolDispatcher
     let caller: ToolCaller
 
-    /// `nil` when the call gets no answer (``ToolOutcome/init(_:)``).
     func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
         if let fault = arguments.strictFault {
             return .failure(await refusal(.invalidArguments(fault), tool, arguments))

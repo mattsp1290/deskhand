@@ -59,7 +59,6 @@ public enum WindowHitTest {
         return .noWindow
     }
 
-    /// Half-open on the far edges, so adjacent windows never both contain a point.
     static func contains(_ rect: GlobalRect, _ point: GlobalPoint) -> Bool {
         point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height
     }
@@ -153,8 +152,6 @@ public struct IdentityProbe: Sendable {
         }
     }
 
-    /// `started` is when the process running as `pid` started, read when the pid was obtained; `nil`
-    /// means it had already exited.
     private func measure(pid: pid_t, started: ProcessStartTime?, fallbackName: String?) -> MeasuredApp {
         let gone = MeasuredApp(pid: pid, signature: .processGone, name: fallbackName)
         guard let started else { return gone }

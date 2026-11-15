@@ -254,9 +254,6 @@ final class Latch: Sendable {
     }
 }
 
-/// `body`'s answer, or `nil` once the calling task is cancelled, as at the end of its test's time
-/// limit: a wait that would never end fails its test instead of hanging the run. `body` runs in a
-/// task of its own, which is left behind when the caller gives up.
 func bounded<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) async throws -> T? {
     let answer = Answer<T>()
     Task {
@@ -269,7 +266,6 @@ func bounded<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) asyn
     return try await answer.wait()?.get()
 }
 
-/// One result, set once, that a cancelled waiter stops waiting for.
 private final class Answer<T: Sendable>: Sendable {
     private struct State {
         var result: Result<T, any Error>?
@@ -288,7 +284,6 @@ private final class Answer<T: Sendable>: Sendable {
         waiter?.resume()
     }
 
-    /// The result, or `nil` once the calling task is cancelled.
     func wait() async -> Result<T, any Error>? {
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in

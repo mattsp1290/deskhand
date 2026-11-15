@@ -149,9 +149,6 @@ struct DeskhandStack: Sendable {
     var entries: [ActionLogEntry] { get async { await log.base.entries } }
 }
 
-/// The process stop's host over a running stack (contract 15.2). It records the steps and leaves
-/// the listener up, so a test sees what the listener does on its own with the calls a stop ended,
-/// and can still read over the wire afterwards.
 final class StackStopHost: CleanStopHost {
     enum Step: Hashable, Sendable {
         case stopAccepting
@@ -175,13 +172,12 @@ final class StackStopHost: CleanStopHost {
         }
     }
     func closeConnections() async { recorded.withLock { $0.steps.append(.close) } }
-    /// The process exit, which a test's stop only records.
+
     func exit(_ status: Int32) { recorded.withLock { $0.steps.append(.exit(status)) } }
 }
 
 extension DeskhandStack {
-    /// The clean stop over this stack, its deadline on the stack's clock, which only an executing
-    /// operation's waits or the test move: no step runs out of time on a slow machine.
+
     func cleanStop(host: StackStopHost) -> CleanStop {
         CleanStop(executor: executor, host: host, scheduler: FakeClockScheduler(clock: clock), exit: host.exit)
     }

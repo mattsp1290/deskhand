@@ -24,8 +24,7 @@ public final class DeskOwner: StateSource, FrameSource {
     public let stateConfiguration: StateConfiguration
     private let clock: @Sendable () -> ClockReading
     private let world: Mutex<World>
-    /// Held from a reduction's read of the signals to its change of the world, never by
-    /// ``snapshot()``: a slow read holds up the next reduction, not the executor.
+
     private let reducing = Mutex(())
 
     /// - Parameters:

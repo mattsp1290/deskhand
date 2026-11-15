@@ -3,12 +3,9 @@ import DeskhandPlatform
 import DeskhandTestSupport
 import Testing
 
-/// The signal wiring of the clean stop (contract 15.2): a signal delivered to this process runs the
-/// handler instead of its default action, which would end the test run.
 @Suite("Stop: the termination signal", .serialized, .timeLimit(.minutes(1)))
 struct TerminationSignalTests {
-    /// Sends `number` to this process `count` times with a ``TerminationSignal`` installed, and
-    /// returns once the handler has run that often.
+
     static func deliver(_ number: Int32, count: Int) async {
         let (runs, handled) = AsyncStream<Void>.makeStream()
         let signal = TerminationSignal(signal: number) { handled.yield() }

@@ -59,7 +59,7 @@ public enum ScreenshotEncoder {
         else { throw .renderFailed(output) }
         let bounds = CGRect(x: 0, y: 0, width: output.width, height: output.height)
         context.interpolationQuality = .high
-        // Transparent source pixels land on opaque black, never on whatever the buffer held.
+
         context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
         context.fill(bounds)
         context.draw(image, in: bounds)

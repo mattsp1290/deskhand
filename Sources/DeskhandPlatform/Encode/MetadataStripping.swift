@@ -1,9 +1,5 @@
 import DeskhandCore
 
-/// Rebuilds an encoded image from an allowlist of what decoding needs, so no metadata ImageIO writes
-/// (it always adds an EXIF block, and a Photoshop block in JPEG, which no destination option turns off)
-/// or might add in a later release is ever returned. Every segment or chunk is examined: one on the
-/// allowlist is kept, metadata that decoding never needs is dropped, and anything else refuses the image.
 enum MetadataStripping {
     enum Verdict: Equatable {
         case keep
@@ -19,8 +15,6 @@ enum MetadataStripping {
     /// Critical chunks a truecolour image can have, and the ancillary ones that affect how it decodes.
     static let pngChunks: Set<String> = ["IHDR", "PLTE", "IDAT", "IEND", "sRGB", "gAMA", "cHRM", "iCCP", "pHYs"]
 
-    /// `nil` when `bytes` are not laid out as ImageIO writes the format, or carry something that is
-    /// neither needed to decode nor safe to drop.
     static func strip(_ bytes: [UInt8], format: ImageFormat) -> [UInt8]? {
         switch format {
         case .jpeg: stripJPEG(bytes)
@@ -50,8 +44,6 @@ enum MetadataStripping {
         return segment.count == 18 && payload.starts(with: Array("JFIF\0".utf8)) && payload[12] == 0 && payload[13] == 0
     }
 
-    /// Walks every marker segment, including those between and after scans; entropy-coded data is copied as
-    /// is. The image must end at its EOI marker.
     private static func stripJPEG(_ bytes: [UInt8]) -> [UInt8]? {
         guard bytes.starts(with: jpegStart) else { return nil }
         var output = jpegStart

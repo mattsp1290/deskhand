@@ -65,13 +65,10 @@ public enum HeldInputAtStop: Hashable, Sendable, CustomStringConvertible {
     }
 }
 
-/// What a stop waits for.
 enum StopMilestone: Sendable {
-    /// No call is in the admission section: the stopped operation's releases are done and its
-    /// record is written.
+
     case sectionLeft
-    /// No call is left to answer and no refusal entry is held back: every action log entry of a
-    /// call the stop ended was written, or its append gave up.
+
     case entriesSettled
 }
 
@@ -127,9 +124,6 @@ extension InputExecutor {
         return stoppedOperation.map { _ in stoppedOutcomeLogged }
     }
 
-    /// Ends an admitted call because deskhand is stopping: the releases it owes, its record through
-    /// ``OperationStore/interrupt(_:eventsPosted:)``, and its outcome entry. The caller gets no
-    /// answer: it sees the connection close.
     func endStopped(_ execution: Execution, _ outcome: ActionOutcome) async -> EffectAnswer {
         if !execution.pressed.isEmpty { releaseOperationInput(execution.pressed) }
         var recorded = false
@@ -138,7 +132,7 @@ extension InputExecutor {
                 try store.interrupt(execution.ticket, eventsPosted: execution.eventsPosted)
                 recorded = true
             } catch {
-                // As for a final write the store refused while still available (``end(_:_:)``).
+
                 if store.isAvailable { self.store = nil }
             }
         }
@@ -163,7 +157,6 @@ extension InputExecutor {
         return .dropped
     }
 
-    /// Resumes the stops waiting for a milestone that has now been reached.
     func resumeStopWaiters() {
         guard !stopWaiters.isEmpty else { return }
         var waiting: [StopWaiter] = []

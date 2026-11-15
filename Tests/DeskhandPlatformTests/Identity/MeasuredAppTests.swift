@@ -24,7 +24,6 @@ struct SignatureCase: Sendable, CustomTestStringConvertible {
     }
 }
 
-/// `issued`: an Apple-issued certificate names `team` (`satisfiesTeamAnchor`).
 private func facts(
     _ validity: CodeSignatureFacts.Validity, adHoc: Bool = false, apple: Bool = false, team: String? = nil,
     issued: Bool = false, sealed: String? = nil, atPath: String? = nil
@@ -89,8 +88,6 @@ private let signatureCases: [SignatureCase] = [
         #expect(app.pid == 42)
     }
 
-    /// Whatever the uncertainty, the policy must refuse, even one that allows every bundle identifier
-    /// in the table under every signer.
     @Test(arguments: signatureCases)
     func uncertainIdentityIsAlwaysRefused(_ testCase: SignatureCase) {
         let app = MeasuredApp(pid: 42, signature: testCase.lookup, name: nil)

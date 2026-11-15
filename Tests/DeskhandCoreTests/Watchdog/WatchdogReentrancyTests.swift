@@ -104,7 +104,7 @@ struct WatchdogReentrancyTests {
         await watch.waitUntilWatched()
         await desk.waitForReductions(1)
         await executor.hold()
-        // The refresh from inside this reduction must not wait on the executor, which answers no more.
+
         watch.fire()
         await executor.waitUntilHeld()
         await desk.waitForReductions(2)

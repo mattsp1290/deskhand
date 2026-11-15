@@ -2,7 +2,6 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
-/// Synthetic captures: 8-bit RGBX buffers whose first row is the top of the image.
 enum EncodeTestImages {
     typealias RGB = (r: UInt8, g: UInt8, b: UInt8)
 
@@ -23,14 +22,12 @@ enum EncodeTestImages {
         return image(width: width, height: height, space: space, bytes: bytes)
     }
 
-    /// Cheap at screen sizes, where a per-pixel closure is slow in debug builds.
     static func gray(width: Int, height: Int, level: UInt8) -> CGImage {
         image(
             width: width, height: height, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bytes: [UInt8](repeating: level, count: width * height * 4))
     }
 
-    /// Uniform random bytes from a fixed seed: incompressible, so encoded sizes are large and stable.
     static func noise(width: Int, height: Int, seed: UInt64 = 0x5EED) -> CGImage {
         var generator = SplitMix64(state: seed)
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -55,7 +52,6 @@ enum EncodeTestImages {
             provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
     }
 
-    /// What ImageIO reads back from encoded bytes.
     static func decode(_ bytes: [UInt8]) -> (source: CGImageSource, image: CGImage)? {
         guard let source = CGImageSourceCreateWithData(Data(bytes) as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)

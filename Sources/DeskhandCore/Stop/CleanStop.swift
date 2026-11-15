@@ -125,8 +125,7 @@ public actor CleanStop {
         let start = signal ?? scheduler.now
         let deadline = start.advanced(by: bound - margin)
         let task = Task {
-            // Before step 1: a host that closes connections must not turn the stopped effect into a
-            // cancelled one.
+
             _ = await Self.within(deadline, on: scheduler) { await executor.beginStop() }
             let accepting = Task { await host.stopAcceptingCalls() }
             let ended = await Self.within(deadline, on: scheduler) { await executor.stop() }
@@ -136,7 +135,7 @@ public actor CleanStop {
                 executor: ended, outcomeLogged: entries ?? nil, leaseDropped: dropped,
                 elapsed: start.duration(to: scheduler.now))
             host.logStop(report)
-            // Past the deadline the exit closes what is still open.
+
             _ = await Self.within(deadline, on: scheduler) {
                 await accepting.value
                 await host.closeConnections()
@@ -148,8 +147,6 @@ public actor CleanStop {
         return await task.value
     }
 
-    /// `operation`'s answer, or `nil` once `deadline` passed first. The operation runs in a task of
-    /// its own and is left to finish unobserved.
     private static func within<T: Sendable>(
         _ deadline: ContinuousClock.Instant, on scheduler: any WatchdogScheduler,
         _ operation: @escaping @Sendable () async -> T

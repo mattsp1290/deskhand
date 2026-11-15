@@ -33,7 +33,6 @@ import Testing
     }
 }
 
-/// The running code of `pid`, as the Security framework hands it out.
 private func guestCode(of pid: pid_t) -> SecCode? {
     var code: SecCode?
     let attributes = [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary
@@ -49,8 +48,6 @@ private func sleeper() throws -> Process {
     return process
 }
 
-/// Reads real code signatures and process start times. No grant or GUI session is needed to inspect a
-/// running process.
 @Suite struct LiveCodeSignatureTests {
     @Test func launchdIsSignedByApple() throws {
         let lookup = LiveIdentitySystem().codeSignature(of: 1)
@@ -108,7 +105,6 @@ struct LiveIdentitySessionTests {
     private let system = LiveIdentitySystem()
     private var probe: IdentityProbe { IdentityProbe(system: system) }
 
-    /// Without Accessibility the frontmost reading cannot be confirmed, so it is uncertain.
     @Test func frontmostAppIsIdentified() {
         let app = probe.frontmostApp()
         if AXIsProcessTrusted() {
@@ -146,8 +142,6 @@ struct LiveIdentitySessionTests {
         #expect(app.identity == AppIdentity(bundleID: BundleID(bundleID), signer: .apple))
     }
 
-    /// Every third-party app running now that carries a team identifier is vouched for by an Apple-issued
-    /// certificate for that team, and for no other team.
     @Test func runningTeamSignedAppsMeasureAsTheirTeam() throws {
         let other = try #require(TeamID("ZZZZZZZZZZ"))
         var checked = 0
@@ -165,8 +159,6 @@ struct LiveIdentitySessionTests {
         #expect(checked > 0, "no team-signed third-party app is running")
     }
 
-    /// The pointer (and a drag image, during a drag) are the window server's: what the hit test looks
-    /// through on this Mac.
     @Test func pointerLevelWindowsBelongToTheWindowServer() throws {
         let windows = try #require(system.onScreenWindows())
         for window in windows {

@@ -15,7 +15,6 @@ private func segment(_ marker: UInt8, _ payload: [UInt8]) -> [UInt8] {
     return [0xFF, marker, UInt8(length >> 8), UInt8(length & 0xFF)] + payload
 }
 
-/// The CRC is not checked, so it is left zero.
 private func chunk(_ type: String, _ data: [UInt8]) -> [UInt8] {
     let length = UInt32(data.count)
     return [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: length >> $0) } + Array(type.utf8) + data + [0, 0, 0, 0]
@@ -48,8 +47,6 @@ private let jfifWithThumbnail = segment(
         #expect(MetadataStripping.strip(swapped, format: .jpeg) == Array(clean.prefix(2)) + Array(clean.dropFirst(20)))
     }
 
-    /// Metadata before the frame, between the scan and EOI, or in a segment no current ImageIO writes
-    /// is all dropped, leaving exactly the clean image.
     @Test func jpegMetadataIsDroppedWhereverItIs() throws {
         let clean = try encoded(.jpeg)
         try #require(clean.suffix(2) == [0xFF, 0xD9])

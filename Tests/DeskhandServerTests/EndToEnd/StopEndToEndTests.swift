@@ -3,8 +3,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// A process stop in the middle of an operation (contract 15.2), as the caller sees it over the
-/// wire: no response, then the truth from the record after the restart.
 @Suite("end to end: clean stop", .timeLimit(.minutes(2)))
 struct StopEndToEndTests {
     @Test(
@@ -39,7 +37,6 @@ struct StopEndToEndTests {
             #expect(host.steps.filter { $0 != .stopAccepting } == [.dropLease, .log, .close, .exit(0)])
             #expect(host.report == report)
 
-            // The listener is still up: a read call is answered, an effect call is not.
             let record = try #require(try await first.lookUp("op-1"))
             #expect(record == ["status": "aborted_by_restart", "events_posted": 1])
             for call in [arguments, Wire.type("hi", frame: frame, "op-2")] {

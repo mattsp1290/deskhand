@@ -3,8 +3,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// The dispatcher's own effect errors (no source address, an unencodable result) carry `operation`
-/// only for a record, never for a call that is still being admitted (contract 9.2).
 @Suite("effect errors and a call still in admission", .timeLimit(.minutes(1)))
 struct AdmittingRecordTests {
     @Test("a call in admission is accepted to status, but gives the dispatcher's errors no operation")

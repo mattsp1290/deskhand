@@ -3,10 +3,6 @@ import DeskhandPlatform
 import Foundation
 import Synchronization
 
-/// An ``IdentitySystem`` that answers from fixed tables and counts signature lookups per process.
-///
-/// A process with a signature entry is running; any other pid has no process. A pid in `reused` is
-/// taken over by a new process right after its start time is first read.
 final class FakeIdentitySystem: IdentitySystem {
     let windows: [IdentityWindowEntry]?
     let frontmost: pid_t?
@@ -60,7 +56,6 @@ final class FakeIdentitySystem: IdentitySystem {
 enum IdentityFixtures {
     static let team = TeamID("ABCDE12345")!
 
-    /// Signed with an Apple-issued certificate for `team`.
     static func teamSigned(_ bundleID: String, team: String = "ABCDE12345") -> CodeSignatureLookup {
         .found(
             CodeSignatureFacts(

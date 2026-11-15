@@ -148,8 +148,6 @@ public struct LiveIdentitySystem: IdentitySystem {
         "anchor apple generic and certificate leaf[subject.OU] = \"\(team.rawValue)\""
     }
 
-    /// Dynamic code refuses the static-only validation flags; a repeat validation is cheap because the
-    /// Security framework caches the first one.
     static func satisfies(_ code: SecCode, _ requirementText: String) -> Bool {
         var requirement: SecRequirement?
         guard SecRequirementCreateWithString(requirementText as CFString, [], &requirement) == errSecSuccess,

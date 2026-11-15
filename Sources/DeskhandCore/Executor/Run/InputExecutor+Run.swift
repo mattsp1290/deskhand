@@ -58,7 +58,7 @@ enum Ending: Sendable {
     case completed
     case stopped(ToolErrorReason)
     case fault(String)
-    /// deskhand is stopping (contract 15.2): `aborted_by_restart` with the exact count.
+
     case processStop
 }
 
@@ -281,7 +281,7 @@ extension InputExecutor {
         case .fault(let message):
             return .failed(ToolError(.internalError, message: message, state: state), measured: measured)
         case .processStop:
-            // ``end(_:_:)`` hands a stop to ``endStopped(_:_:)``, which never finishes a record.
+
             return .failed(
                 ToolError(.internalError, message: "deskhand stopped during this operation.", state: state),
                 measured: measured)
