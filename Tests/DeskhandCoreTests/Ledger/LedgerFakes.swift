@@ -163,7 +163,8 @@ enum LedgerScenario: String, CaseIterable, Sendable {
                     try machine.post(.down(input))
                 }
             } catch {
-                _ = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+                let selected = ledger.pending()
+                _ = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
                 return
             }
             for input in inputs.reversed() {

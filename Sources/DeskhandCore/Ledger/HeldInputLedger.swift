@@ -26,18 +26,19 @@ public struct PressEntry: Hashable, Sendable {
     public let isNew: Bool
 }
 
-/// How ``HeldInputLedger/releasePending(authorization:postRelease:)`` ended.
+/// How ``HeldInputLedger/releasePending(_:authorization:postRelease:)`` ended.
 public enum CleanupOutcome: Sendable {
-    /// Every entry was released and cleared. The ledger and its file are empty.
+    /// Every selected recorded entry was released and cleared, and the ledger is available.
+    /// Unselected entries may remain. A retry may clear an already-posted release without reposting it.
     case complete
     /// Authorization was denied before the next release. Nothing more was posted.
     case deferred(Set<CleanupBlocker>)
-    /// Posting this input's release failed. Its entry and every older one stay, and nothing more
-    /// was posted.
+    /// Posting this input's release failed. Its entry and every older selected entry stay, and
+    /// nothing more was posted. Unselected entries are untouched.
     case postFailed(HeldInput, any Error)
-    /// Every release was posted, but the file may still hold entries: a clear failed, or the ledger
-    /// was already unavailable. ``HeldInputLedger/reload()``, then clean up again; the entries left
-    /// get their releases posted a second time, which does no harm.
+    /// No selected release remains unposted, but a clear failed or the ledger was unavailable.
+    /// ``HeldInputLedger/reload()``, then retry. The executor retries clears of releases already
+    /// posted without reposting them; recovery may safely post those releases again.
     case clearFailed(HeldInputLedgerError)
 }
 
@@ -51,7 +52,7 @@ public enum CleanupOutcome: Sendable {
 /// A failed write can still have reached the store, so after one the ledger no longer knows what
 /// is durable. It is then ``isAvailable`` `false`: it writes nothing and refuses every press until
 /// ``reload()`` reads the store again. Its entries still include everything that is down, so
-/// ``releasePending(authorization:postRelease:)`` still posts their releases.
+/// ``releasePending(_:authorization:postRelease:)`` still posts their releases.
 public struct HeldInputLedger: ~Copyable {
     private let store: any HeldInputStore
     private var entries: [HeldInput]
@@ -102,8 +103,8 @@ public struct HeldInputLedger: ~Copyable {
     }
 
     /// Clears `input` after its up event was posted, durably. If this throws, the entry stays, the
-    /// ledger is unavailable, and a later cleanup posts that release again. An input not recorded
-    /// is ignored.
+    /// ledger is unavailable, and a later cleanup retries the clear or safely posts that release
+    /// again. An input not recorded is ignored.
     public mutating func didRelease(_ input: HeldInput) throws(HeldInputLedgerError) {
         guard isAvailable else { throw .unavailable }
         guard let index = entries.firstIndex(of: input) else { return }
@@ -120,17 +121,18 @@ public struct HeldInputLedger: ~Copyable {
         isAvailable = true
     }
 
-    /// Releases every entry, newest first, posting only the matching up events. Before each one it
-    /// asks `authorization`, and stops at the first denial or failed post. A failed clear does not
-    /// stop it: the remaining releases still remove input, and the uncleared entries stay.
-    ///
-    /// An operation never starts while the ledger has entries (`cleanup_pending` refuses it), so on
-    /// an abort the entries are exactly what the aborted operation pressed.
+    /// Releases recorded entries selected by `inputs`, newest first in ledger order, posting only
+    /// their matching up events. Duplicate and absent inputs are ignored; unselected entries stay.
+    /// Before each release it asks `authorization` and stops at the first denial or failed post.
+    /// Either takes precedence over an earlier clear failure. A failed clear does not stop the
+    /// remaining releases, and the first clear error is reported if no denial or post failure follows.
+    /// An unavailable ledger is reported even when no recorded entries are selected.
     public mutating func releasePending(
-        authorization: () -> CleanupAuthorization, postRelease: (HeldInput) throws -> Void
+        _ inputs: [HeldInput], authorization: () -> CleanupAuthorization, postRelease: (HeldInput) throws -> Void
     ) -> CleanupOutcome {
+        let owned = Set(inputs)
         var clearFailure: HeldInputLedgerError?
-        for input in Array(entries.reversed()) {
+        for input in Array(entries.reversed()) where owned.contains(input) {
             if case .deferred(let blockers) = authorization() { return .deferred(blockers) }
             do { try postRelease(input) } catch { return .postFailed(input, error) }
             do { try didRelease(input) } catch { clearFailure = clearFailure ?? error }

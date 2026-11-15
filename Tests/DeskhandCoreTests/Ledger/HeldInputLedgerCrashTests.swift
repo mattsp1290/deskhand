@@ -49,7 +49,8 @@ import Testing
         #expect(machine.held.isSubset(of: entries), "missed key-up, crash \(crash)", sourceLocation: sourceLocation)
 
         let postedBefore = machine.posted.count
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let outcome = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .complete = outcome else {
             Issue.record("cleanup did not complete: \(outcome), crash \(crash)", sourceLocation: sourceLocation)
             return entries
@@ -123,7 +124,8 @@ import Testing
         probe.restart()
         var probeLedger = try HeldInputLedger(store: probe.store)
         let cleanupStart = probe.trace.count
-        _ = probeLedger.releasePending(authorization: { .authorized }, postRelease: probe.postRelease)
+        let selected = probeLedger.pending()
+        _ = probeLedger.releasePending(selected, authorization: { .authorized }, postRelease: probe.postRelease)
         let cleanupBoundaries = probe.trace.count - cleanupStart
         #expect(cleanupBoundaries == 4 * entries.count)
 
@@ -133,7 +135,9 @@ import Testing
             var ledger = try HeldInputLedger(store: machine.store)
             #expect(ledger.pending() == entries)
             machine.crashAt = machine.trace.count + offset
-            let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+            let selected = ledger.pending()
+            let outcome = ledger.releasePending(
+                selected, authorization: { .authorized }, postRelease: machine.postRelease)
             if case .complete = outcome { Issue.record("cleanup completed despite a crash at \(offset)") }
             #expect(machine.crashedAt != nil)
 

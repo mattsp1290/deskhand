@@ -184,7 +184,9 @@ import Testing
         #expect(pending == [control, keyA])
         machine.writeFault = nil
 
-        let unavailable = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let unavailable = ledger.releasePending(
+            selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .clearFailed(.unavailable) = unavailable else {
             Issue.record("\(unavailable)")
             return
@@ -194,7 +196,9 @@ import Testing
         #expect(try reopened(machine) == [control, keyA], "but clears nothing")
 
         try ledger.reload()
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let reloadedInputs = ledger.pending()
+        let outcome = ledger.releasePending(
+            reloadedInputs, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .complete = outcome else {
             Issue.record("\(outcome)")
             return
@@ -212,7 +216,8 @@ import Testing
         machine.writeFault = nil
         var pending = ledger.pending()
         #expect(pending.isEmpty)
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let outcome = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .clearFailed(.unavailable) = outcome else {
             Issue.record("\(outcome): the disk still lists \(keyA)")
             return
@@ -280,7 +285,8 @@ import Testing
         let machine = LedgerMachine()
         var ledger = try HeldInputLedger(store: machine.store)
         try press([control, keyA, left], &ledger, on: machine)
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let outcome = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .complete = outcome else {
             Issue.record("\(outcome)")
             return
@@ -295,8 +301,9 @@ import Testing
         var ledger = try HeldInputLedger(store: machine.store)
         try press([control, keyA], &ledger, on: machine)
         let writes = machine.writes
+        let selected = ledger.pending()
         let outcome = ledger.releasePending(
-            authorization: { .deferred([.locked, .loginWindow]) }, postRelease: machine.postRelease)
+            selected, authorization: { .deferred([.locked, .loginWindow]) }, postRelease: machine.postRelease)
         guard case .deferred(let blockers) = outcome else {
             Issue.record("\(outcome)")
             return
@@ -312,7 +319,9 @@ import Testing
         var ledger = try HeldInputLedger(store: machine.store)
         try press([control, keyA, left], &ledger, on: machine)
         var checks = 0
+        let selected = ledger.pending()
         let outcome = ledger.releasePending(
+            selected,
             authorization: {
                 checks += 1
                 return checks == 1 ? .authorized : .deferred([.secureInput])
@@ -331,7 +340,8 @@ import Testing
         var ledger = try HeldInputLedger(store: machine.store)
         try press([control, keyA], &ledger, on: machine)
         machine.failPosts = true
-        let failed = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let failed = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .postFailed(let input, let error) = failed else {
             Issue.record("\(failed)")
             return
@@ -340,7 +350,9 @@ import Testing
         #expect(try reopened(machine) == [control, keyA])
 
         machine.failPosts = false
-        let retried = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let retryInputs = ledger.pending()
+        let retried = ledger.releasePending(
+            retryInputs, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .complete = retried else {
             Issue.record("\(retried)")
             return
@@ -353,7 +365,8 @@ import Testing
         var ledger = try HeldInputLedger(store: machine.store)
         try press([control, keyA, left], &ledger, on: machine)
         machine.writeFault = .lost
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let outcome = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .clearFailed(.writeFailed(let error)) = outcome else {
             Issue.record("\(outcome)")
             return
