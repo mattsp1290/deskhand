@@ -3,7 +3,16 @@
   "displays": [
     {
       "display_id": 1,
-      "name": "Built-in Retina Display"
+      "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+      "name": "Built-in Retina Display",
+      "is_main": true,
+      "is_builtin": true,
+      "asleep": false,
+      "pixel_size": {
+        "width": 3456,
+        "height": 2234
+      },
+      "point_pixel_scale": 2
     }
   ]
 }
