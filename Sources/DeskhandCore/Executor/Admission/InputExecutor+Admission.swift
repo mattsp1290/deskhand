@@ -10,10 +10,24 @@ extension InputExecutor {
     /// 12.3). Call it from the task of the request: a connection that closes before admission drops
     /// the call, and one that closes later aborts it with `cancelled`.
     ///
-    /// Once ``beginStop()`` was called every call is ``EffectAnswer/dropped`` at once, as is the
-    /// call the stop ends (contract 15.2).
+    /// Returns ``EffectAnswer/dropped`` if stopping began before the final actor decision,
+    /// including while awaiting admission or logging. Already-final operation records stay final.
     public func perform(_ call: EffectCall) async -> EffectAnswer {
-        guard !stopRequested else { return .dropped }
+        await answering { executor in await executor.compute(call) } ?? .dropped
+    }
+
+    private func answering<T: Sendable>(
+        _ work: @Sendable (isolated InputExecutor) async -> T
+    ) async -> T? {
+        guard !stopRequested else { return nil }
+        callsAnswering += 1
+        let answer = await work(self)
+        callsAnswering -= 1
+        resumeStopWaiters()
+        return stopRequested ? nil : answer
+    }
+
+    private func compute(_ call: EffectCall) async -> EffectAnswer {
         let snapshot = seams.state.snapshot()
         if let blocking = snapshot.state.blocking {
             return await refuse(call, Refusal(.blocked(blocking), operation: recordView(call.key, at: snapshot)))
@@ -38,11 +52,7 @@ extension InputExecutor {
             return .dropped
         }
         section = .admitting(SectionClaim(key: call.key, digest: call.digest))
-        callsAnswering += 1
-        let answer = await runSection(call, keyboardPlan: keyboardPlan)
-        callsAnswering -= 1
-        resumeStopWaiters()
-        return answer
+        return await runSection(call, keyboardPlan: keyboardPlan)
     }
 
     private func runSection(_ call: EffectCall, keyboardPlan: ActionPlan?) async -> EffectAnswer {
@@ -62,33 +72,52 @@ extension InputExecutor {
         }
     }
 
-    /// The refusal of a call whose arguments did not validate: the state's name while the state is
-    /// not `ok`, otherwise `invalid_argument`, each with `operation` when a record exists for the
-    /// handles that could be read (contract 9.5 steps 1 and 2). The dispatcher calls this instead of
-    /// ``perform(_:)``.
-    public func refusal(
-        for error: ArgumentError, tool: ToolName, handles: EffectHandles, principal: Principal,
-        nodeAddress: NodeAddress
-    ) async -> ToolError {
+    /// Applies effect refusal precedence and record context. Returns nil when stopping began
+    /// before the final actor decision, including during refusal logging. Calls arriving after
+    /// stop do no lookup or logging. Invalid arguments log only when the source address is known;
+    /// missing-address, digest and serialization failures do not add refusal entries.
+    public func refusal(_ reason: EffectRefusal, context: EffectRefusalContext) async -> ToolError? {
+        await answering { executor in await executor.computeRefusal(reason, context: context) }
+    }
+
+    private func computeRefusal(_ refusal: EffectRefusal, context: EffectRefusalContext) async -> ToolError {
         let snapshot = seams.state.snapshot()
-        let reason: ToolErrorReason = snapshot.state.blocking.map { .blocked($0) } ?? .invalidArgument(error.pointer)
+        let handles = context.handles
+        let reason: ToolErrorReason
+        let message: String
+        switch refusal {
+        case .invalidArguments(let error):
+            reason = snapshot.state.blocking.map { .blocked($0) } ?? .invalidArgument(error.pointer)
+            message = reason.code == .invalidArgument ? error.description : ExecutorMessages.message(for: reason)
+        case .missingNodeAddress:
+            reason = snapshot.state.blocking.map { .blocked($0) } ?? .internalError
+            message =
+                snapshot.state.blocking == nil
+                ? "The connection's source address could not be read." : ExecutorMessages.message(for: reason)
+        case .digestUnavailable:
+            return ToolError(
+                .internalError, message: "The request digest could not be computed.", state: snapshot.state,
+                operationID: handles.operationID)
+        case .unencodableResult:
+            reason = .internalError
+            message = "The tool result could not be serialized."
+        }
         var view: OperationView?
         if let holderID = handles.holderID, let operationID = handles.operationID {
             view = recordView(
-                OperationKey(principal: principal, holderID: holderID, operationID: operationID), at: snapshot)
+                OperationKey(principal: context.principal, holderID: holderID, operationID: operationID), at: snapshot)
         }
-        let toolError = ToolError(
-            reason,
-            message: reason.code == .invalidArgument ? error.description : ExecutorMessages.message(for: reason),
-            state: reason.reportedState(otherwise: snapshot.state), operationID: handles.operationID,
-            operation: view.map { .existing($0) })
-        await logRefusal(
-            ActionLogRefusal(
-                time: snapshot.reading.wall, nodeAddress: nodeAddress, principal: principal, tool: tool,
-                holderID: handles.holderID, operationID: handles.operationID, frameID: handles.frameID,
-                frameSHA256: nil,
-                action: nil, frontmostApp: nil, code: toolError.code))
-        return toolError
+        let error = ToolError(
+            reason, message: message, state: reason.reportedState(otherwise: snapshot.state),
+            operationID: handles.operationID, operation: view.map { .existing($0) })
+        if case .invalidArguments = refusal, let nodeAddress = context.nodeAddress {
+            await logRefusal(
+                ActionLogRefusal(
+                    time: snapshot.reading.wall, nodeAddress: nodeAddress, principal: context.principal,
+                    tool: context.tool, holderID: handles.holderID, operationID: handles.operationID,
+                    frameID: handles.frameID, frameSHA256: nil, action: nil, frontmostApp: nil, code: error.code))
+        }
+        return error
     }
 
     func admit(_ call: EffectCall, keyboardPlan: ActionPlan?) async -> AdmissionResult {

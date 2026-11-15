@@ -126,7 +126,7 @@ final class FakeDispatcher: ToolDispatcher {
     }
 
     func refusal(_ refusal: ToolRefusal, tool: ToolName, handles: EffectHandles, caller: ToolCaller) async
-        -> ToolError
+        -> ToolError?
     {
         record.withLock {
             $0.calls.append(.refusal(refusal, tool, handles))

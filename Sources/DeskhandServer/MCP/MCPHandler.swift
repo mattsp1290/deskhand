@@ -46,7 +46,9 @@ public struct MCPHandler: RequestHandler {
         let runner = ToolRunner(dispatcher: dispatcher, caller: caller)
         guard let outcome = await runner.run(tool, arguments) else { return .closeWithoutResponse }
         if let body = try? JSONRPCEnvelope.result(outcome.result(), id: id) { return .json(body) }
-        let fallback = ToolOutcome.failure(await runner.refusal(.unencodableResult, tool, arguments))
+        guard let fallback = await runner.refusal(.unencodableResult, tool, arguments) else {
+            return .closeWithoutResponse
+        }
         if let body = try? JSONRPCEnvelope.result(fallback.result(), id: id) { return .json(body) }
         return internalError("The tool result could not be serialized.", id: id)
     }

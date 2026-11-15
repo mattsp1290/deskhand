@@ -29,8 +29,9 @@ struct AdmittingRecordTests {
         let accepted = OperationView(status: .accepted, eventsPosted: 0)
         #expect(try await harness.status(StatusArguments(operation: query)).operation == .found(accepted))
         let handles = EffectHandles(arguments: raw)
-        let unencodable = await harness.dispatcher.refusal(
-            .unencodableResult, tool: .pointer, handles: handles, caller: ToolFixture.caller)
+        let unencodable = try #require(
+            await harness.dispatcher.refusal(
+                .unencodableResult, tool: .pointer, handles: handles, caller: ToolFixture.caller))
         #expect(unencodable.code == .internalError)
         #expect(unencodable.operation == nil)
         let noNode = await harness.dispatcher.effect(
@@ -44,8 +45,9 @@ struct AdmittingRecordTests {
             Issue.record("the admitted call did not complete")
             return
         }
-        let after = await harness.dispatcher.refusal(
-            .unencodableResult, tool: .pointer, handles: handles, caller: ToolFixture.caller)
+        let after = try #require(
+            await harness.dispatcher.refusal(
+                .unencodableResult, tool: .pointer, handles: handles, caller: ToolFixture.caller))
         #expect(after.operationView?.status == .completed)
     }
 }

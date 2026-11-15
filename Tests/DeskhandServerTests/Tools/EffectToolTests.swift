@@ -137,20 +137,20 @@ struct EffectToolTests {
             await harness.dispatcher.refusal(
                 .invalidArguments(Self.badPointer), tool: .pointer, handles: Self.handles, caller: caller)
         }
-        var error = await refusal(ToolFixture.caller)
+        var error = try #require(await refusal(ToolFixture.caller))
         #expect(error.code == .invalidArgument)
         #expect(error.jsonValue["details"] == ["argument": "/action/x"])
         #expect(error.operationID == OperationID("op-1"))
         #expect(error.operation == nil)
 
         _ = try await harness.type("hi", frame: frame)
-        error = await refusal(ToolFixture.caller)
+        error = try #require(await refusal(ToolFixture.caller))
         #expect(error.code == .invalidArgument)
         #expect(error.operationView?.status == .completed)
-        #expect(await refusal(ToolFixture.otherCaller).operation == nil)
+        #expect(try #require(await refusal(ToolFixture.otherCaller)).operation == nil)
 
         harness.hold([.disarmed])
-        error = await refusal(ToolFixture.caller)
+        error = try #require(await refusal(ToolFixture.caller))
         #expect(error.code == .disarmed)
         #expect(error.state == .disarmed)
         #expect(error.operationView?.status == .completed)
@@ -163,20 +163,23 @@ struct EffectToolTests {
         harness.hold([.gated])
         let fault = ArgumentError(at: JSONPointer(["holder_id"]), "must be 1 to 128 characters")
         for tool in [ToolName.status, .lease] {
-            let error = await harness.dispatcher.refusal(
-                .invalidArguments(fault), tool: tool, handles: Self.handles, caller: ToolFixture.caller)
+            let error = try #require(
+                await harness.dispatcher.refusal(
+                    .invalidArguments(fault), tool: tool, handles: Self.handles, caller: ToolFixture.caller))
             #expect(error.code == .invalidArgument)
             #expect(error.state == .gated)
             #expect(error.operationID == nil)
         }
         for tool in [ToolName.displays, .screenshot] {
-            let error = await harness.dispatcher.refusal(
-                .invalidArguments(fault), tool: tool, handles: Self.handles, caller: ToolFixture.caller)
+            let error = try #require(
+                await harness.dispatcher.refusal(
+                    .invalidArguments(fault), tool: tool, handles: Self.handles, caller: ToolFixture.caller))
             #expect(error.code == .gated)
         }
         harness.hold([])
-        let error = await harness.dispatcher.refusal(
-            .invalidArguments(fault), tool: .screenshot, handles: Self.handles, caller: ToolFixture.caller)
+        let error = try #require(
+            await harness.dispatcher.refusal(
+                .invalidArguments(fault), tool: .screenshot, handles: Self.handles, caller: ToolFixture.caller))
         #expect(error.code == .disarmed)
     }
 
@@ -188,13 +191,15 @@ struct EffectToolTests {
         #expect(answer.code == .internalError)
         #expect(answer.toolError?.operationID == OperationID("op-1"))
         #expect(harness.desk.posted.isEmpty)
-        let refusal = await harness.dispatcher.refusal(
-            .invalidArguments(Self.badPointer), tool: .pointer, handles: Self.handles, caller: caller)
+        let refusal = try #require(
+            await harness.dispatcher.refusal(
+                .invalidArguments(Self.badPointer), tool: .pointer, handles: Self.handles, caller: caller))
         #expect(refusal.code == .invalidArgument)
         #expect(refusal.operationID == OperationID("op-1"))
         harness.hold([.locked])
-        let blocked = await harness.dispatcher.refusal(
-            .invalidArguments(Self.badPointer), tool: .pointer, handles: Self.handles, caller: caller)
+        let blocked = try #require(
+            await harness.dispatcher.refusal(
+                .invalidArguments(Self.badPointer), tool: .pointer, handles: Self.handles, caller: caller))
         #expect(blocked.code == .locked)
     }
 

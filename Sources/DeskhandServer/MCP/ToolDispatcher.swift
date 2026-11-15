@@ -62,7 +62,8 @@ public protocol ToolDispatcher: Sendable {
 
     /// The tool error for a refusal found before or after the tool ran. `handles` are the
     /// `holder_id` and `operation_id` that could be read from the arguments, so that the error can
-    /// echo `operation_id` and describe an existing record (contract 9.5).
+    /// echo `operation_id` and describe an existing record (contract 9.5). Returns nil when an
+    /// effect response is suppressed by process stop; read refusals always return an error.
     func refusal(_ refusal: ToolRefusal, tool: ToolName, handles: EffectHandles, caller: ToolCaller) async
-        -> ToolError
+        -> ToolError?
 }

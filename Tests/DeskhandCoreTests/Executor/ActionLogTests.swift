@@ -260,13 +260,17 @@ struct ActionLogTests {
         let handles = EffectHandles(arguments: arguments)
         let error = ArgumentError(at: JSONPointer(["action"]), "must be an object")
         _ = await harness.executor.refusal(
-            for: error, tool: .keyboard, handles: handles, principal: ExecutorFixture.principal,
-            nodeAddress: ExecutorFixture.node)
+            .invalidArguments(error),
+            context: EffectRefusalContext(
+                tool: .keyboard, handles: handles, principal: ExecutorFixture.principal,
+                nodeAddress: ExecutorFixture.node))
         let paused = ExecutorFixture.report([.paused], at: harness.mac.reading)
         harness.mac.change { $0.report = paused }
         _ = await harness.executor.refusal(
-            for: error, tool: .keyboard, handles: handles, principal: ExecutorFixture.principal,
-            nodeAddress: ExecutorFixture.node)
+            .invalidArguments(error),
+            context: EffectRefusalContext(
+                tool: .keyboard, handles: handles, principal: ExecutorFixture.principal,
+                nodeAddress: ExecutorFixture.node))
         let refusals = await harness.logEntries.compactMap { entry -> ActionLogRefusal? in
             guard case .refusal(let refusal) = entry else { return nil }
             return refusal

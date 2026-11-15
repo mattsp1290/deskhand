@@ -51,13 +51,13 @@ struct ToolRunner {
 
     func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
         if let fault = arguments.strictFault {
-            return .failure(await refusal(.invalidArguments(fault), tool, arguments))
+            return await refusal(.invalidArguments(fault), tool, arguments)
         }
         let call: ToolCall
         do {
             call = try ToolCall(tool: tool, arguments: arguments.object)
         } catch {
-            return .failure(await refusal(.invalidArguments(error), tool, arguments))
+            return await refusal(.invalidArguments(error), tool, arguments)
         }
         do {
             return try await perform(call, received: arguments.object)
@@ -66,8 +66,9 @@ struct ToolRunner {
         }
     }
 
-    func refusal(_ refusal: ToolRefusal, _ tool: ToolName, _ arguments: ToolArguments) async -> ToolError {
-        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller)
+    func refusal(_ refusal: ToolRefusal, _ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
+        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller).map(
+            ToolOutcome.failure)
     }
 
     private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome? {

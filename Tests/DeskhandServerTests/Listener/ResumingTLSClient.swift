@@ -24,6 +24,7 @@ final class ResumingTLSClient: @unchecked Sendable {
     }
 
     struct Exchange: Sendable {
+        let bytes: [UInt8]
         let resumed: Bool
         let status: Int?
         let issued: Session?
@@ -109,7 +110,7 @@ final class ResumingTLSClient: @unchecked Sendable {
         SSL_set_fd(ssl, socket)
         SSL_set_tlsext_host_name(ssl, serverName)
         if let session { SSL_set_session(ssl, session.pointer) }
-        guard SSL_connect(ssl) == 1 else { return Exchange(resumed: false, status: nil, issued: nil) }
+        guard SSL_connect(ssl) == 1 else { return Exchange(bytes: [], resumed: false, status: nil, issued: nil) }
         let resumed = SSL_session_reused(ssl) == 1
 
         let width = fragmentSize ?? max(1, request.count)
@@ -131,6 +132,7 @@ final class ResumingTLSClient: @unchecked Sendable {
         let first = sessions.isEmpty ? nil : sessions.removeFirst()
         for extra in sessions { SSL_SESSION_free(OpaquePointer(bitPattern: extra)) }
         return Exchange(
+            bytes: response,
             resumed: resumed,
             status: Self.status(of: response),
             issued: first.flatMap { OpaquePointer(bitPattern: $0) }.map(Session.init)
