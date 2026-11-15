@@ -77,9 +77,13 @@ enum IdentityProbe {
 
     // Named system processes.
     var system: [(String, JSON)] = []
-    for name in ["WindowServer", "Dock", "SystemUIServer", "ControlCenter", "loginwindow", "Finder"] {
-      let pids = windows.filter { $0.ownerName == name || $0.ownerName == "Window Server" && name == "WindowServer" }
-        .compactMap(\.ownerPID)
+    for name in [
+      "WindowServer", "Dock", "SystemUIServer", "ControlCenter", "loginwindow", "Finder",
+    ] {
+      let pids = windows.filter {
+        $0.ownerName == name || $0.ownerName == "Window Server" && name == "WindowServer"
+      }
+      .compactMap(\.ownerPID)
       let pid =
         pids.first
         ?? NSWorkspace.shared.runningApplications.first { $0.localizedName == name }?

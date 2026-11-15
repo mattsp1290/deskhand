@@ -45,7 +45,7 @@ public struct InProcessExecutor: Executor {
 }
 
 /// A guided trial: tells the person one action at a time and records what happened.
-public struct TrialSpec {
+@MainActor public struct TrialSpec {
   public let name: String
   public let items: [String]
   /// Lower runs earlier in the checklist: roughly the person's effort in minutes.
@@ -53,11 +53,11 @@ public struct TrialSpec {
   public let summary: String
   /// What the person will do, in one line.
   public let humanActions: String
-  public let run: (TrialEnv) async -> Void
+  public let run: @MainActor (TrialEnv) async -> Void
 
   public init(
     name: String, items: [String], effort: Int, summary: String, humanActions: String,
-    run: @escaping (TrialEnv) async -> Void
+    run: @escaping @MainActor (TrialEnv) async -> Void
   ) {
     self.name = name
     self.items = items
@@ -69,12 +69,14 @@ public struct TrialSpec {
 }
 
 /// What a trial sees: prompts on the terminal, the executor, and its result file.
-public final class TrialEnv {
+@MainActor public final class TrialEnv {
   public let name: String
   public let executor: Executor
   public let count: Int
   public let options: [String: String]
   public var report: ProbeReport
+  public private(set) var persistenceError: String?
+  public var executorContext: JSON = .null
   private let file: URL?
   private var attempts: [JSON] = []
   private var answers: [(String, JSON)] = []
@@ -90,7 +92,6 @@ public final class TrialEnv {
     report = ProbeReport("trial-\(spec.name)", items: spec.items)
     if let outDirectory {
       let trials = outDirectory.appendingPathComponent("trials")
-      try? FileManager.default.createDirectory(at: trials, withIntermediateDirectories: true)
       file = trials.appendingPathComponent(Self.fileStem(spec.name, options) + ".json")
     } else {
       file = nil
@@ -190,17 +191,26 @@ public final class TrialEnv {
 
   public func save(final: Bool = false) {
     report.set("executor", .string(executor.label))
+    report.set("executor_context", executorContext)
     report.set("answers", .obj(answers))
     report.set("attempts", .array(attempts))
-    report.set("complete", .bool(final))
+    report.set("complete", .bool(final && persistenceError == nil))
     report.needsHuman = !final
     guard let file else { return }
     let text = report.json(context: RunContext.json).pretty()
-    try? text.write(to: file, atomically: true, encoding: .utf8)
+    do {
+      try EvidenceWriter.write(text, to: file)
+    } catch {
+      report.fail("evidence persistence failed")
+      report.set("complete", .bool(false))
+      persistenceError = "evidence write failed at \(file.path): \(error)"
+      FileHandle.standardError.write(Data((persistenceError! + "\n").utf8))
+    }
   }
 
   public func finish() {
     save(final: true)
+    guard persistenceError == nil else { return }
     say("\nRecorded \(attempts.count) attempt(s)\(file.map { " in \($0.path)" } ?? "").")
     for finding in report.findings { say("  - \(finding)") }
   }

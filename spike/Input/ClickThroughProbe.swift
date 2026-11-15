@@ -57,7 +57,8 @@ enum ClickThroughProbe {
     overlay.close()
     below.close()
     func name(_ number: Int?) -> String {
-      number == overlay.windowNumber ? "overlay" : number == below.windowNumber ? "below" : "\(number ?? 0)"
+      number == overlay.windowNumber
+        ? "overlay" : number == below.windowNumber ? "below" : "\(number ?? 0)"
     }
     report.finding(
       "click-through overlay: CGWindowList topmost = \(name(listTop)), NSWindow.windowNumber(at:) = "
@@ -72,7 +73,9 @@ enum ClickThroughProbe {
     var element: AXUIElement?
     let error = AXUIElementCopyElementAtPosition(
       AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &element)
-    guard error == .success, let element else { return .obj([("error", .string("AXError \(error.rawValue)"))]) }
+    guard error == .success, let element else {
+      return .obj([("error", .string("AXError \(error.rawValue)"))])
+    }
     var pid: pid_t = 0
     _ = AXUIElementGetPid(element, &pid)
     var role: CFTypeRef?

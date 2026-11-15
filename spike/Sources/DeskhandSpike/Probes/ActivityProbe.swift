@@ -18,7 +18,8 @@ enum ActivityProbe {
     report.set("idle_before", before)
     report.set("displays", Signals.displaysAsleep())
     guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else {
-      report.skip("main display is asleep; declaring activity would wake it (trial wake covers this)")
+      report.skip(
+        "main display is asleep; declaring activity would wake it (trial wake covers this)")
       return report
     }
     let hidBefore = before["hid_any_s"]?.doubleValue ?? 0

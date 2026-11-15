@@ -98,7 +98,10 @@ public enum CaptureTools {
     return .obj([
       ("width", .int(image.width)), ("height", .int(image.height)),
       ("mean_luminance", .double((mean * 10).rounded() / 10)),
-      ("luminance_stddev", .double((max(0, sumSquares / count - mean * mean).squareRoot() * 10).rounded() / 10)),
+      (
+        "luminance_stddev",
+        .double((max(0, sumSquares / count - mean * mean).squareRoot() * 10).rounded() / 10)
+      ),
       ("near_black_fraction", .double((Double(black) / count * 1000).rounded() / 1000)),
       ("coarse_colors", .int(colors.count)),
     ])
@@ -131,7 +134,8 @@ public enum CaptureTools {
   public static func colorFraction(
     _ image: CGImage, in rect: CGRect, color: (Int, Int, Int), tolerance: Int = 40
   ) -> Double? {
-    let bounded = rect.integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    let bounded = rect.integral.intersection(
+      CGRect(x: 0, y: 0, width: image.width, height: image.height))
     guard !bounded.isEmpty, let crop = image.cropping(to: bounded) else { return nil }
     let w = min(crop.width, 64)
     let h = min(crop.height, 64)

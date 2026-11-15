@@ -7,6 +7,7 @@ import SpikeKit
 enum Main {
   static let usage = """
     usage: deskhand-spike <command> [arguments]
+      selfcheck                                    deterministic checks only
       agent [--interval S] [--capture-interval S] [--port N]   LaunchAgent mode
       probe <name>...|all-automatic|list [--out DIR] [--exclude-bundle-id ID]... [--save-images]
       trial <name>|list [--out DIR] [--count N] [--path P] [--in-process]
@@ -26,12 +27,23 @@ enum Main {
     var rest = Array(arguments.dropFirst())
     let out = take("--out", from: &rest).map { URL(fileURLWithPath: $0) }
     switch command {
+    case "selfcheck":
+      do {
+        print(try SelfCheck.run().compact())
+        return 0
+      } catch {
+        print("selfcheck failed: \(error)")
+        return 1
+      }
     case "agent":
       await Agent.run(rest)
       return 0
     case "probe":
-      await Dispatcher.run(["probe"] + rest) { line in emit(line, out: out) }
-      return 0
+      var failed = false
+      await Dispatcher.run(["probe"] + rest) { line in
+        if !emit(line, out: out) || line["error"] != nil { failed = true }
+      }
+      return failed ? 1 : 0
     case "sample", "act", "ping", "status":
       await Dispatcher.run(arguments) { line in print(line.compact()) }
       return 0
@@ -41,9 +53,11 @@ enum Main {
         return 2
       }
       let lines = await AgentExecutor().call(rest)
-      for line in lines { emit(line, out: out) }
-      return lines.contains { $0["error"]?.stringValue?.hasPrefix("agent not reachable") == true }
-        ? 3 : 0
+      var failed = false
+      for line in lines {
+        if !emit(line, out: out) || line["error"] != nil { failed = true }
+      }
+      return failed ? 3 : 0
     case "trial":
       return await runTrial(rest, out: out)
     case "register", "unregister", "service-status":
@@ -55,15 +69,19 @@ enum Main {
         print(usage)
         return 2
       }
-      print(Summary.write(directory: URL(fileURLWithPath: directory)).path)
-      return 0
+      do {
+        print(try Summary.write(directory: URL(fileURLWithPath: directory)).path)
+        return 0
+      } catch {
+        print("summary write failed: \(error)")
+        return 1
+      }
     case "checklist":
       let directory = take("--dir", from: &rest) ?? FileManager.default.currentDirectoryPath
       Checklist.print(directory: URL(fileURLWithPath: directory), idsOnly: rest.contains("--ids"))
       return 0
     case "agent-log":
-      emit(AgentLog.report().json(context: RunContext.json), out: out)
-      return 0
+      return emit(AgentLog.report().json(context: RunContext.json), out: out) ? 0 : 1
     case InputCatalog.childCommand:
       return await InputCatalog.runChild(rest)
     case "help", "--help", "-h":
@@ -76,13 +94,18 @@ enum Main {
   }
 
   /// Prints one result line; with `--out`, also writes `<out>/<probe>.json`.
-  static func emit(_ line: JSON, out: URL?) {
+  @discardableResult
+  static func emit(_ line: JSON, out: URL?) -> Bool {
     print(line.compact())
     fflush(stdout)
-    guard let out, let name = line["probe"]?.stringValue else { return }
-    try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-    try? line.pretty().write(
-      to: out.appendingPathComponent("\(name).json"), atomically: true, encoding: .utf8)
+    guard let out, let name = line["probe"]?.stringValue else { return true }
+    do {
+      try EvidenceWriter.write(line.pretty(), to: out.appendingPathComponent("\(name).json"))
+      return true
+    } catch {
+      FileHandle.standardError.write(Data(("evidence write failed: \(error)\n").utf8))
+      return false
+    }
   }
 
   static func take(_ flag: String, from words: inout [String]) -> String? {
@@ -105,7 +128,9 @@ enum Main {
     }
     if name == "list" {
       for trial in Catalog.trials {
-        print("\(trial.name) (effort \(trial.effort), items \(trial.items.joined(separator: ", "))): \(trial.summary)")
+        print(
+          "\(trial.name) (effort \(trial.effort), items \(trial.items.joined(separator: ", "))): \(trial.summary)"
+        )
       }
       return 0
     }
@@ -116,24 +141,32 @@ enum Main {
     var executor: Executor = InProcessExecutor { words, emit in
       await Dispatcher.run(words, emit: emit)
     }
+    var executorContext = RunContext.json
     if !inProcess {
       let agent = AgentExecutor()
       let ping = await agent.call(["ping"]).first
       if ping?["pong"]?.boolValue == true {
         executor = agent
+        executorContext = ping?["context"] ?? .null
       } else {
         print(
-          "The LaunchAgent is not reachable; running in this process (TCC grants are this "
-            + "terminal's). Install with scripts/install.sh to measure deskhand's own grants.")
+          "The LaunchAgent is required. Install with spike/scripts/install.sh or explicitly use --in-process for diagnostics."
+        )
+        return 3
       }
     }
     let env = TrialEnv(
       spec: spec, executor: executor, outDirectory: out, count: count ?? (name == "lock" ? 20 : 3),
       options: options)
+    env.executorContext = executorContext
+    if name == "drag-owner" || name == "exclusion" {
+      env.report.set("measurement_context", RunContext.json)
+      env.report.note("Includes driver-only measurement. Excluded from LaunchAgent conclusions.")
+    }
     print("deskhand-spike trial \(name) on \(Host.macName), executor \(executor.label)")
     print("This harness never asks for, types or stores your password.")
     await spec.run(env)
-    return 0
+    return env.persistenceError == nil ? 0 : 1
   }
 }
 

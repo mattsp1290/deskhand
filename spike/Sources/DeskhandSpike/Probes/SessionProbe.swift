@@ -57,11 +57,15 @@ enum SessionProbe {
       }
     let pmset = Shell.run("/usr/bin/pmset", ["-g"], timeout: 5).stdout
       .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-      .filter { $0.hasPrefix("sleep") || $0.hasPrefix("displaysleep") || $0.hasPrefix("lowpowermode") }
+      .filter {
+        $0.hasPrefix("sleep") || $0.hasPrefix("displaysleep") || $0.hasPrefix("lowpowermode")
+      }
     var corners: [(String, JSON)] = []
     for corner in ["tl", "tr", "bl", "br"] {
-      let action = CFPreferencesCopyAppValue("wvous-\(corner)-corner" as CFString, "com.apple.dock" as CFString)
-      let modifier = CFPreferencesCopyAppValue("wvous-\(corner)-modifier" as CFString, "com.apple.dock" as CFString)
+      let action = CFPreferencesCopyAppValue(
+        "wvous-\(corner)-corner" as CFString, "com.apple.dock" as CFString)
+      let modifier = CFPreferencesCopyAppValue(
+        "wvous-\(corner)-modifier" as CFString, "com.apple.dock" as CFString)
       let code = (action as? NSNumber)?.intValue
       corners.append(
         (

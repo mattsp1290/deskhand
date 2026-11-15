@@ -84,7 +84,11 @@ public enum Displays {
     let h = b?["height"]?.doubleValue ?? 0
     var tags: [String] = []
     if display["main"]?.boolValue == true { tags.append("main") }
-    if display["builtin"]?.boolValue == true { tags.append("built-in") } else { tags.append("external") }
+    if display["builtin"]?.boolValue == true {
+      tags.append("built-in")
+    } else {
+      tags.append("external")
+    }
     if display["negative_origin"]?.boolValue == true { tags.append("negative origin") }
     if display["scaled_from_native"]?.boolValue == true { tags.append("scaled") }
     let scale = display["point_pixel_scale"]?.doubleValue ?? 0

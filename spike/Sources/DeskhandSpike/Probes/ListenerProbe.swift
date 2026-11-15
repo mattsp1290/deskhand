@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import SpikeKit
 
@@ -11,7 +12,7 @@ enum ListenerProbe {
     summary: "LAN listener bind/accept, agent listener reachability, outbound LAN connect",
     run: run)
 
-  private final class Peers: @unchecked Sendable {
+  private nonisolated final class Peers: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [String] = []
     var all: [String] { lock.withLock { stored } }
@@ -45,7 +46,8 @@ enum ListenerProbe {
       report.set("probe_listener_accepted", .strings(peers.all))
       report.finding(
         "own listener on \(lan.address):\(port): same-host connect "
-          + "\(connect["connected"]?.boolValue == true ? "succeeded" : "FAILED (\(connect["error"]?.stringValue ?? "?"))")")
+          + "\(connect["connected"]?.boolValue == true ? "succeeded" : "FAILED (\(connect["error"]?.stringValue ?? "?"))")"
+      )
     } else {
       report.finding("own listener on \(lan.address):\(port): bind failed: \(bindError ?? "")")
     }

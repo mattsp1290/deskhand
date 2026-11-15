@@ -5,12 +5,21 @@ import SpikeKit
 enum Items {
   static let titles: [(String, String)] = [
     ("1", "macOS version; periodic screen-recording prompt for a signed bundle using SCK only"),
-    ("2", "permissions posting needs (Accessibility, Input Monitoring, post-event); restart after grant"),
+    (
+      "2",
+      "permissions posting needs (Accessibility, Input Monitoring, post-event); restart after grant"
+    ),
     ("3", "grants survive installing a new build signed with the same identity"),
-    ("4", "capture and input when locked, display asleep, lid closed, fast user switching, login window"),
+    (
+      "4",
+      "capture and input when locked, display asleep, lid closed, fast user switching, login window"
+    ),
     ("5", "a user-activity assertion wakes a sleeping display; does the lock screen follow"),
     ("6", "synthetic keys into password fields, unlock screen, auth prompt, System Settings"),
-    ("7", "capture exclusion hides password manager and messaging apps; excluded apps still clickable"),
+    (
+      "7",
+      "capture exclusion hides password manager and messaging apps; excluded apps still clickable"
+    ),
     ("8", "coordinate mapping: Retina, non-Retina external, display left of main, scaled"),
     ("9", "inbound LAN listener as a LaunchAgent and the Local Network prompt"),
     ("10", "Lima guest reachability (bean deskhand-ealq, not this harness)"),
@@ -80,7 +89,7 @@ enum Checklist {
     result.append(
       ChecklistEntry(
         command: "script remote", effort: 40, items: ["1", "2", "3", "4", "9"],
-        actions: "repeat on m1max2021 (ssh lunus@10.0.0.96 once the key is added)",
+        actions: "repeat on m1max2021 (ssh punk1290@10.0.0.96)",
         file: "../m1max2021/summary.md"))
     return result.sorted { $0.effort < $1.effort }
   }
@@ -89,7 +98,8 @@ enum Checklist {
     let url = directory.appendingPathComponent(entry.file)
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
     guard entry.file.hasSuffix(".json"), let json = JSON.parse(text) else { return true }
-    return json["evidence"]?["complete"]?.boolValue ?? true
+    return json["status"]?.stringValue == "measured"
+      && (json["evidence"]?["complete"]?.boolValue ?? false)
   }
 
   static func print(directory: URL, idsOnly: Bool) {
@@ -105,7 +115,8 @@ enum Checklist {
         " [\(mark)] \(index + 1). \(entry.command)  (items \(entry.items.joined(separator: ", ")))")
       Swift.print("        you: \(entry.actions)")
     }
-    Swift.print(" [-] item 10 (Lima guest reachability) is bean deskhand-ealq; not run by this harness.")
+    Swift.print(
+      " [-] item 10 (Lima guest reachability) is bean deskhand-ealq; not run by this harness.")
     _ = pending
   }
 }
@@ -133,7 +144,13 @@ enum Summary {
     return results.sorted { $0.path < $1.path }
   }
 
-  static func write(directory: URL) -> URL {
+  static func executionContext(_ json: JSON) -> JSON {
+    json["evidence"]?["measurement_context"]
+      ?? json["evidence"]?["executor_context"]
+      ?? json["context"] ?? .null
+  }
+
+  static func write(directory: URL) throws -> URL {
     let results = load(directory)
     var lines: [String] = []
     let mac = results.first?.json["mac"]?.stringValue ?? directory.lastPathComponent
@@ -143,8 +160,8 @@ enum Summary {
     lines.append(
       "Generated \(Clock.iso()) by `deskhand-spike summarize` from \(results.count) result files. "
         + "macOS \(macos).")
-    let contexts = Set(results.compactMap { $0.json["context"]?["launched_by"]?.stringValue })
-    let teams = Set(results.compactMap { $0.json["context"]?["team_id"]?.stringValue })
+    let contexts = Set(results.compactMap { executionContext($0.json)["launched_by"]?.stringValue })
+    let teams = Set(results.compactMap { executionContext($0.json)["team_id"]?.stringValue })
     lines.append(
       "Run contexts: \(contexts.sorted().joined(separator: ", ")); signing team(s): "
         + (teams.isEmpty ? "none (unsigned or ad-hoc)" : teams.sorted().joined(separator: ", "))
@@ -168,7 +185,7 @@ enum Summary {
       }
       for result in covering {
         let status = result.json["status"]?.stringValue ?? "?"
-        let context = result.json["context"]?["launched_by"]?.stringValue ?? "?"
+        let context = executionContext(result.json)["launched_by"]?.stringValue ?? "?"
         let findings = result.json["findings"]?.arrayValue?.compactMap(\.stringValue) ?? []
         let human = result.json["needs_human"]?.boolValue == true ? ", needs a person" : ""
         lines.append("- `\(result.path)` (\(status), \(context)\(human))")
@@ -191,7 +208,8 @@ enum Summary {
         .joined(separator: ", ")
       lines.append(
         "| `\(result.path)` | \(result.json["status"]?.stringValue ?? "?") | "
-          + "\(result.json["context"]?["launched_by"]?.stringValue ?? "?") | \(blocked) | \(notes) |")
+          + "\(executionContext(result.json)["launched_by"]?.stringValue ?? "?") | \(blocked) | \(notes) |"
+      )
     }
     lines.append("")
     lines.append("## Manual steps")
@@ -203,7 +221,7 @@ enum Summary {
           + "(items \(entry.items.joined(separator: ", ")))")
     }
     let url = directory.appendingPathComponent("summary.md")
-    try? (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    try EvidenceWriter.write(lines.joined(separator: "\n") + "\n", to: url)
     return url
   }
 }

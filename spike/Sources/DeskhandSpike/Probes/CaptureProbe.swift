@@ -80,7 +80,8 @@ enum CaptureProbe {
       var entry: [(String, JSON)] = [
         ("display_id", .int(Int(display.displayID))), ("frame", Geometry.json(display.frame)),
       ]
-      let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+      let filter = SCContentFilter(
+        display: display, excludingApplications: [], exceptingWindows: [])
       entry.append(("filter", CaptureTools.filterInfo(filter)))
       let full: CGImage
       do {
@@ -88,7 +89,8 @@ enum CaptureProbe {
       } catch {
         entry.append(("capture_error", CaptureTools.errorJSON(error)))
         displayResults.append(.obj(entry))
-        report.finding("display \(display.displayID): capture failed: \(error.localizedDescription)")
+        report.finding(
+          "display \(display.displayID): capture failed: \(error.localizedDescription)")
         continue
       }
       let stats = CaptureTools.stats(full)
@@ -141,7 +143,9 @@ enum CaptureProbe {
           hidden = CaptureTools.colorFraction(excluded, in: inner, color: magenta)
           if let directory = options.imageDirectory {
             CaptureTools.savePNG(
-              excluded, to: directory.appendingPathComponent("display-\(display.displayID)-excluded-self.png"))
+              excluded,
+              to: directory.appendingPathComponent("display-\(display.displayID)-excluded-self.png")
+            )
           }
         }
         entry.append(
@@ -170,9 +174,11 @@ enum CaptureProbe {
         var perWindow: [JSON] = []
         for window in windows {
           let rect = pixels(window.frame.intersection(display.frame))
-          guard let a = full.cropping(to: rect.integral), let b = excluded.cropping(to: rect.integral)
+          guard let a = full.cropping(to: rect.integral),
+            let b = excluded.cropping(to: rect.integral)
           else { continue }
-          let topmost = WindowList.stack(at: CGPoint(x: window.frame.midX, y: window.frame.midY))
+          let topmost =
+            WindowList.stack(at: CGPoint(x: window.frame.midX, y: window.frame.midY))
             .first?.ownerPID == app.processID
           perWindow.append(
             .obj([
@@ -190,7 +196,8 @@ enum CaptureProbe {
         }
         sensitiveResults.append(
           .obj([
-            ("bundle_id", .string(app.bundleIdentifier)), ("display_id", .int(Int(display.displayID))),
+            ("bundle_id", .string(app.bundleIdentifier)),
+            ("display_id", .int(Int(display.displayID))),
             ("windows", .array(perWindow)),
           ]))
       }
@@ -212,7 +219,8 @@ enum CaptureProbe {
       }
     }
     if RunContext.launchedBy != .launchAgent {
-      report.note("not run as the LaunchAgent: wallpaper-only behaviour must be read from the agent run")
+      report.note(
+        "not run as the LaunchAgent: wallpaper-only behaviour must be read from the agent run")
     }
     return report
   }

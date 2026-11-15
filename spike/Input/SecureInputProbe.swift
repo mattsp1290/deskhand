@@ -61,10 +61,13 @@ enum SecureInputProbe {
 
     report.set(
       "own_secure_field",
-      .obj([("secure_input", secureFocused), ("posted", .int(3)), ("received", .int(secureReceived))]))
+      .obj([
+        ("secure_input", secureFocused), ("posted", .int(3)), ("received", .int(secureReceived)),
+      ]))
     report.set(
       "own_plain_field",
-      .obj([("secure_input", plainFocused), ("posted", .int(3)), ("received", .int(plainReceived))]))
+      .obj([("secure_input", plainFocused), ("posted", .int(3)), ("received", .int(plainReceived))])
+    )
     report.set(
       "own_plain_field_with_enable_secure_event_input",
       .obj([("secure_input", explicit), ("posted", .int(3)), ("received", .int(explicitReceived))]))
@@ -78,7 +81,8 @@ enum SecureInputProbe {
       "own plain field: secure input \(on(plainFocused)), received \(plainReceived)/3; with "
         + "EnableSecureEventInput: secure input \(on(explicit)), received \(explicitReceived)/3")
     report.needsHuman = true
-    report.note("other apps' password fields, auth prompts and the unlock screen: trial secure-input")
+    report.note(
+      "other apps' password fields, auth prompts and the unlock screen: trial secure-input")
     return report
   }
 }

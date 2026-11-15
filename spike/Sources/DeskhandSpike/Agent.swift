@@ -75,7 +75,9 @@ enum Agent {
       Agent.log("control", .strings(words))
       await Dispatcher.run(words) { emit($0.compact()) }
     }
-    log("control_socket", .obj([("path", .string(ControlServer.defaultPath)), ("error", .str(controlError))]))
+    log(
+      "control_socket",
+      .obj([("path", .string(ControlServer.defaultPath)), ("error", .str(controlError))]))
 
     Dispatcher.agentStatus = {
       .obj([
@@ -113,13 +115,15 @@ enum Agent {
         bound = nil
         if let address {
           let candidate = TCPListener(host: address, port: port)
-          let error = candidate.start(greeting: { "deskhand-spike agent \(Host.macName)" }) { peer in
-            Task { @MainActor in
-              let entry = JSON.obj([("peer", .string(peer)), ("t", Clock.stamp())])
-              Agent.accepted.append(entry)
-              Agent.log("accept", entry)
-            }
-          }
+          let error = candidate.start(
+            greeting: { "deskhand-spike agent \(Host.macName)" },
+            onAccept: { peer in
+              Task { @MainActor in
+                let entry = JSON.obj([("peer", .string(peer)), ("t", Clock.stamp())])
+                Agent.accepted.append(entry)
+                Agent.log("accept", entry)
+              }
+            })
           listenerState = .obj([
             ("address", .string(address)), ("port", .int(port)), ("error", .str(error)),
           ])

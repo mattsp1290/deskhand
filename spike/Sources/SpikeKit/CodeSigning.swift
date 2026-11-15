@@ -9,8 +9,14 @@ public nonisolated enum CodeSigning {
   public static let requirementChecks: [(String, String)] = [
     ("anchor_apple", "anchor apple"),
     ("anchor_apple_generic", "anchor apple generic"),
-    ("mac_app_store_leaf", "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists"),
-    ("developer_id_leaf", "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"),
+    (
+      "mac_app_store_leaf",
+      "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists"
+    ),
+    (
+      "developer_id_leaf",
+      "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+    ),
   ]
 
   public static func facts(pid: pid_t) -> JSON {

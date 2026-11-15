@@ -213,5 +213,10 @@ public nonisolated enum JSON: Sendable, Equatable {
 
 extension Optional where Wrapped == JSON {
   /// The value, or JSON `null`; cheaper for the type checker than `?? .null` in long literals.
-  public nonisolated var orNull: JSON { self.orNull }
+  public nonisolated var orNull: JSON {
+    switch self {
+    case .some(let value): value
+    case .none: .null
+    }
+  }
 }

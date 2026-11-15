@@ -44,14 +44,18 @@ enum HotKeyProbe {
   }
 
   static let combos: [Combo] = [
-    Combo(name: "cmd+opt+ctrl+k", key: kVK_ANSI_K, carbon: cmdKey | optionKey | controlKey,
-          modifierKeys: [kVK_Command, kVK_Option, kVK_Control]),
-    Combo(name: "ctrl+opt+k", key: kVK_ANSI_K, carbon: controlKey | optionKey,
-          modifierKeys: [kVK_Control, kVK_Option]),
-    Combo(name: "cmd+ctrl+k", key: kVK_ANSI_K, carbon: cmdKey | controlKey,
-          modifierKeys: [kVK_Command, kVK_Control]),
-    Combo(name: "cmd+opt+k", key: kVK_ANSI_K, carbon: cmdKey | optionKey,
-          modifierKeys: [kVK_Command, kVK_Option]),
+    Combo(
+      name: "cmd+opt+ctrl+k", key: kVK_ANSI_K, carbon: cmdKey | optionKey | controlKey,
+      modifierKeys: [kVK_Command, kVK_Option, kVK_Control]),
+    Combo(
+      name: "ctrl+opt+k", key: kVK_ANSI_K, carbon: controlKey | optionKey,
+      modifierKeys: [kVK_Control, kVK_Option]),
+    Combo(
+      name: "cmd+ctrl+k", key: kVK_ANSI_K, carbon: cmdKey | controlKey,
+      modifierKeys: [kVK_Command, kVK_Control]),
+    Combo(
+      name: "cmd+opt+k", key: kVK_ANSI_K, carbon: cmdKey | optionKey,
+      modifierKeys: [kVK_Command, kVK_Option]),
     Combo(name: "ctrl+k", key: kVK_ANSI_K, carbon: controlKey, modifierKeys: [kVK_Control]),
     Combo(name: "opt+k", key: kVK_ANSI_K, carbon: optionKey, modifierKeys: [kVK_Option]),
     Combo(name: "shift+k", key: kVK_ANSI_K, carbon: shiftKey, modifierKeys: [kVK_Shift]),
@@ -67,10 +71,14 @@ enum HotKeyProbe {
       ("ctrl+space", kVK_Space, controlKey), ("ctrl+left", kVK_LeftArrow, controlKey),
       ("ctrl+right", kVK_RightArrow, controlKey), ("ctrl+up", kVK_UpArrow, controlKey),
       ("ctrl+down", kVK_DownArrow, controlKey), ("shift+cmd+3", kVK_ANSI_3, shiftKey | cmdKey),
-      ("shift+cmd+4", kVK_ANSI_4, shiftKey | cmdKey), ("shift+cmd+5", kVK_ANSI_5, shiftKey | cmdKey),
+      ("shift+cmd+4", kVK_ANSI_4, shiftKey | cmdKey),
+      ("shift+cmd+5", kVK_ANSI_5, shiftKey | cmdKey),
       ("f11", kVK_F11, 0), ("cmd+f5", kVK_F5, cmdKey),
     ]
-    + [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+    + [
+      kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7,
+      kVK_ANSI_8, kVK_ANSI_9,
+    ]
     .enumerated().map { ("ctrl+\($0.offset + 1)", $0.element, controlKey) }
 
   static func run(_ options: ProbeOptions) async -> ProbeReport {
@@ -82,17 +90,24 @@ enum HotKeyProbe {
       let match = symbolic.first { entry in
         entry["key_code"]?.intValue == key && carbonModifiers(entry) == mods
       }
-      denied.append((name, match.map { .bool($0["enabled"]?.boolValue == true) } ?? .string("not a symbolic hot key")))
+      denied.append(
+        (
+          name,
+          match.map { .bool($0["enabled"]?.boolValue == true) } ?? .string("not a symbolic hot key")
+        ))
     }
     report.set("denied_defaults_enabled", .obj(denied))
     let enabled = denied.filter { $0.1.boolValue == true }.map(\.0)
-    report.finding("default-denied chords that are enabled system shortcuts here: \(enabled.joined(separator: ", "))")
+    report.finding(
+      "default-denied chords that are enabled system shortcuts here: \(enabled.joined(separator: ", "))"
+    )
 
     guard InputGuard.begin(&report) else { return report }
     let rig = InputRig()
     await rig.show()
     var handler: EventHandlerRef?
-    var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    var eventSpec = EventTypeSpec(
+      eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
     InstallEventHandler(GetApplicationEventTarget(), hotKeyCallback, 1, &eventSpec, nil, &handler)
 
     var rows: [JSON] = []
@@ -103,7 +118,9 @@ enum HotKeyProbe {
         UInt32(combo.key), UInt32(combo.carbon), id, GetApplicationEventTarget(), 0, &ref)
       var fired: [(String, JSON)] = []
       if status == noErr {
-        for (tapName, tap) in [("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap)] {
+        for (tapName, tap) in [
+          ("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap),
+        ] {
           guard await rig.focus() else {
             fired.append((tapName, .string("skipped: harness does not own the keyboard")))
             continue
@@ -125,7 +142,9 @@ enum HotKeyProbe {
     if let handler { RemoveEventHandler(handler) }
     report.set("register_event_hot_key", .array(rows))
     for row in rows {
-      let fired = row["posted_chord_fired"]?.members?.map { "\($0.key) \($0.value.boolValue.map { $0 ? "fired" : "did not fire" } ?? $0.value.stringValue ?? "?")" }
+      let fired = row["posted_chord_fired"]?.members?.map {
+        "\($0.key) \($0.value.boolValue.map { $0 ? "fired" : "did not fire" } ?? $0.value.stringValue ?? "?")"
+      }
       report.finding(
         "RegisterEventHotKey \(row["combo"]?.stringValue ?? "?"): status \(row["register_status"]?.intValue ?? 0)"
           + (fired.map { "; posted chord " + $0.joined(separator: ", ") } ?? ""))
@@ -150,7 +169,10 @@ enum HotKeyProbe {
             name,
             .obj([
               ("focus_before", before), ("focus_after", after),
-              ("focus_moved", .bool(before["pid"] != after["pid"] || before["role"] != after["role"])),
+              (
+                "focus_moved",
+                .bool(before["pid"] != after["pid"] || before["role"] != after["role"])
+              ),
             ])
           ))
       }
@@ -160,7 +182,8 @@ enum HotKeyProbe {
     report.set("system_shortcut_effects", .obj(effects))
     for (name, effect) in effects {
       if name == "cmd+space" {
-        report.finding("posted cmd+space opened Spotlight: \(effect["spotlight_appeared"]?.boolValue == true)")
+        report.finding(
+          "posted cmd+space opened Spotlight: \(effect["spotlight_appeared"]?.boolValue == true)")
       } else {
         let after = effect["focus_after"]
         report.finding(
@@ -175,7 +198,8 @@ enum HotKeyProbe {
 
   static func symbolicHotKeys() -> [JSON] {
     var array: Unmanaged<CFArray>?
-    guard CopySymbolicHotKeys(&array) == noErr, let list = array?.takeRetainedValue() as? [[String: Any]]
+    guard CopySymbolicHotKeys(&array) == noErr,
+      let list = array?.takeRetainedValue() as? [[String: Any]]
     else { return [] }
     return list.map { entry in
       .obj([

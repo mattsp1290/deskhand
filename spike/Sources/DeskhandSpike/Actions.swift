@@ -108,7 +108,9 @@ enum Actions {
     case "open-settings":
       // An x-apple.systempreferences URL; opened by the harness so the pane belongs to the
       // person's session even when the driver runs over SSH.
-      if let text = argument, text.hasPrefix("x-apple.systempreferences:"), let url = URL(string: text) {
+      if let text = argument, text.hasPrefix("x-apple.systempreferences:"),
+        let url = URL(string: text)
+      {
         result.append(("opened", .bool(NSWorkspace.shared.open(url))))
       } else {
         result.append(("error", .string("needs an x-apple.systempreferences: URL")))

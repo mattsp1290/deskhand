@@ -61,14 +61,17 @@ enum AgentLog {
     report.set("wallpaper_only", .array(wallpaperOnly.suffix(50)))
     report.set("permission_changes", .array(permissionChanges.suffix(50)))
     report.set("inbound_accepted", .array(accepted.suffix(50)))
-    report.set("event_counts", .obj(eventCounts.sorted { $0.key < $1.key }.map { ($0.key, .int($0.value)) }))
+    report.set(
+      "event_counts", .obj(eventCounts.sorted { $0.key < $1.key }.map { ($0.key, .int($0.value)) }))
     report.finding(
       "agent log \(first["t"]?["at"]?.stringValue ?? "?") to \(last["t"]?["at"]?.stringValue ?? "?"): "
-        + "\(checks) capture checks, \(failures.count) failed, \(wallpaperOnly.count) looked wallpaper-only")
+        + "\(checks) capture checks, \(failures.count) failed, \(wallpaperOnly.count) looked wallpaper-only"
+    )
     report.finding(
       "permission readings changed \(max(0, permissionChanges.count - 1)) time(s); "
         + "\(accepted.count) inbound connection(s) accepted")
-    let peers = Set(accepted.compactMap { $0["peer"]?.stringValue?.split(separator: ":").first.map(String.init) })
+    let peers = Set(
+      accepted.compactMap { $0["peer"]?.stringValue?.split(separator: ":").first.map(String.init) })
     if !peers.isEmpty { report.finding("inbound peers: \(peers.sorted().joined(separator: ", "))") }
     report.needsHuman = true
     report.note("rerun after days/weeks: the periodic consent prompt shows up as capture failures")

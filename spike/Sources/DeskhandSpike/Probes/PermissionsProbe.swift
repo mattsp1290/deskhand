@@ -61,7 +61,8 @@ enum PermissionsProbe {
   /// The localized prompt texts for the capture services (shows whether Remote Desktop has its
   /// own consent text).
   private static func promptStrings() -> JSON {
-    let path = "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/Resources/Localizable.loctable"
+    let path =
+      "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/Resources/Localizable.loctable"
     guard let data = FileManager.default.contents(atPath: path),
       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
         as? [String: Any],

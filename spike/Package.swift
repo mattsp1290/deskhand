@@ -17,6 +17,7 @@ let package = Package(
     .target(name: "SpikeKit", path: "Sources/SpikeKit", swiftSettings: settings),
     .target(
       name: "SpikeInput", dependencies: ["SpikeKit"], path: "Input", swiftSettings: settings),
+    .testTarget(name: "SpikeKitTests", dependencies: ["SpikeKit"], swiftSettings: settings),
     .executableTarget(
       name: "DeskhandSpike",
       dependencies: ["SpikeKit", "SpikeInput"],

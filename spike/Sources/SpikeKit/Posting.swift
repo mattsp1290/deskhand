@@ -125,7 +125,9 @@ public enum Post {
     let start = location()
     for step in 1...steps {
       let t = CGFloat(step) / CGFloat(steps)
-      move(to: CGPoint(x: start.x + (point.x - start.x) * t, y: start.y + (point.y - start.y) * t), tap: tap)
+      move(
+        to: CGPoint(x: start.x + (point.x - start.x) * t, y: start.y + (point.y - start.y) * t),
+        tap: tap)
       await Clock.sleep(ms: 10)
     }
   }

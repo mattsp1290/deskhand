@@ -24,7 +24,9 @@ enum FocusProbe {
 
     // A non-activating panel takes key focus while Finder stays frontmost.
     var panelResult: [(String, JSON)] = []
-    if let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first {
+    if let finder = NSRunningApplication.runningApplications(
+      withBundleIdentifier: "com.apple.finder"
+    ).first {
       finder.activate()
       await settle(ms: 600)
       let main = CGDisplayBounds(CGMainDisplayID())
@@ -71,7 +73,8 @@ enum FocusProbe {
         "non-activating panel key: frontmost \(panelFocus["frontmost_bundle_id"]?.stringValue ?? "?"), "
           + "AX focused app \(panelFocus["ax_focused_bundle_id"]?.stringValue ?? panelFocus["ax_error"]?.stringValue ?? "?"), "
           + "posted keys received by the panel: "
-          + "\(panelResult.first { $0.0 == "panel_received" }?.1.intValue.map(String.init) ?? "not posted")")
+          + "\(panelResult.first { $0.0 == "panel_received" }?.1.intValue.map(String.init) ?? "not posted")"
+      )
     }
     return report
   }

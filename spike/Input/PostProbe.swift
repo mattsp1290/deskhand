@@ -9,7 +9,8 @@ import SpikeKit
 enum PostProbe {
   static let spec = ProbeSpec(
     name: "input-post", items: ["2", "7", "8"],
-    summary: "posted pointer/click/keys reach the harness window via HID and session taps; pointer mapping",
+    summary:
+      "posted pointer/click/keys reach the harness window via HID and session taps; pointer mapping",
     run: run)
 
   static func run(_ options: ProbeOptions) async -> ProbeReport {
@@ -20,7 +21,9 @@ enum PostProbe {
     let center = rig.window.globalCenter
     var deliveredAny = false
     var clicks: [(String, JSON)] = []
-    for (label, tap) in [("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap)] {
+    for (label, tap) in [
+      ("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap),
+    ] {
       guard InputGuard.ownsTopmost(at: center) else {
         clicks.append((label, .obj([("skipped", .string("harness window not topmost"))])))
         continue
@@ -41,7 +44,9 @@ enum PostProbe {
     var keys: [(String, JSON)] = []
     let focused = await rig.focus()
     report.set("harness_owns_keyboard", .bool(focused))
-    for (label, tap) in [("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap)] {
+    for (label, tap) in [
+      ("hid", CGEventTapLocation.cghidEventTap), ("session", .cgSessionEventTap),
+    ] {
       guard InputGuard.ownsKeyboard() else {
         keys.append((label, .obj([("skipped", .string("harness does not own the keyboard"))])))
         continue
@@ -96,7 +101,8 @@ enum PostProbe {
       entries.map { "\($0.0) \($0.1[key]?.intValue.map(String.init) ?? "skipped")" }
         .joined(separator: ", ")
     }
-    report.finding("posted clicks received by the harness window: " + summary(clicks, "left_down_received"))
+    report.finding(
+      "posted clicks received by the harness window: " + summary(clicks, "left_down_received"))
     report.finding("posted keys (3 each) received: " + summary(keys, "key_down_received"))
     let errors = mapping.compactMap { $0["error_points"]?.doubleValue }
     report.finding(

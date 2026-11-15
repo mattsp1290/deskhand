@@ -5,16 +5,20 @@ import SpikeKit
 /// permission at a time and, after each, checks from the running LaunchAgent whether the grant
 /// is visible and works without a restart.
 enum PermissionsTrial {
-  static let spec = TrialSpec(
-    name: "permissions", items: ["1", "2", "9", "add-event-synthesizing", "add-remote-desktop"],
-    effort: 1,
-    summary: "grant Screen Recording, then Accessibility, then (only if needed) Input Monitoring",
-    humanActions: "toggle deskhand-spike on in 2-3 System Settings lists, answer 4-6 y/n questions",
-    run: run)
+  static var spec: TrialSpec {
+    TrialSpec(
+      name: "permissions", items: ["1", "2", "9", "add-event-synthesizing", "add-remote-desktop"],
+      effort: 1,
+      summary: "grant Screen Recording, then Accessibility, then (only if needed) Input Monitoring",
+      humanActions:
+        "toggle deskhand-spike on in 2-3 System Settings lists, answer 4-6 y/n questions",
+      run: run)
+  }
 
   static let panes = [
     "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-    "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    "accessibility":
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
     "listen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
     "local_network": "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
   ]
@@ -67,7 +71,8 @@ enum PermissionsTrial {
       "In Screen & System Audio Recording, is there a separate 'Remote Desktop' section or list?",
       choices: ["y", "n", "unsure"])
     env.report.finding(
-      "Quit & Reopen prompt: \(quitReopen); separate Remote Desktop list in Settings: \(remoteDesktop)")
+      "Quit & Reopen prompt: \(quitReopen); separate Remote Desktop list in Settings: \(remoteDesktop)"
+    )
 
     // 2. Accessibility alone, then posting.
     let afterScreen = await env.sample()
@@ -133,7 +138,8 @@ enum PermissionsTrial {
       "local_network_listed",
       "Is deskhand-spike listed under Privacy & Security > Local Network?",
       choices: ["y", "n", "unsure"])
-    env.report.finding("Local Network prompt seen: \(prompt); listed under Local Network: \(listed)")
+    env.report.finding(
+      "Local Network prompt seen: \(prompt); listed under Local Network: \(listed)")
     env.report.finding("posting works at the end of the session: \(posting ? "yes" : "NO")")
     env.finish()
   }
@@ -153,7 +159,8 @@ enum PermissionsTrial {
       ]))
     env.report.finding(
       "posting (\(label)): pointer nudge moved \(moved), input-post delivered "
-        + "\(delivered.map { "\($0)" } ?? "n/a"), preflights \(nudge["sample"]?["permissions"]?.compact() ?? "?")")
+        + "\(delivered.map { "\($0)" } ?? "n/a"), preflights \(nudge["sample"]?["permissions"]?.compact() ?? "?")"
+    )
     return works
   }
 }

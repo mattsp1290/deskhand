@@ -6,11 +6,13 @@ import SpikeKit
 /// Control-Command-Q shortcut, display sleep, a Lock Screen hot corner); the person only
 /// unlocks with Touch ID. Lid, menu, idle and fast user switching need the person.
 enum LockTrial {
-  static let spec = TrialSpec(
-    name: "lock", items: ["4", "lock-signal", "login-window"], effort: 10,
-    summary: "20 lock/unlock cycles per path with every lock candidate sampled",
-    humanActions: "unlock with Touch ID after each harness-triggered lock",
-    run: run)
+  static var spec: TrialSpec {
+    TrialSpec(
+      name: "lock", items: ["4", "lock-signal", "login-window"], effort: 10,
+      summary: "20 lock/unlock cycles per path with every lock candidate sampled",
+      humanActions: "unlock with Touch ID after each harness-triggered lock",
+      run: run)
+  }
 
   struct LockPath {
     let name: String
@@ -42,7 +44,9 @@ enum LockTrial {
   ]
 
   /// Candidates that, if any reads true, mean "locked". `on_console` false also counts.
-  static let strong = ["session_screen_is_locked", "io_console_users_screen_locked", "loginwindow_shield"]
+  static let strong = [
+    "session_screen_is_locked", "io_console_users_screen_locked", "loginwindow_shield",
+  ]
 
   static func looksLocked(_ sample: JSON) -> Bool {
     let lock = sample["lock"]
@@ -176,7 +180,9 @@ enum LockTrial {
         let locked = key == "on_console" ? raw?.boolValue == false : raw?.boolValue == true
         if locked, firstLocked == nil { firstLocked = at }
         if !locked, firstLocked != nil {
-          if index < lockedPhaseEnd { flippedBack = true } else if firstUnlockedAfter == nil {
+          if index < lockedPhaseEnd {
+            flippedBack = true
+          } else if firstUnlockedAfter == nil {
             firstUnlockedAfter = at
           }
         }
@@ -228,12 +234,14 @@ enum LockTrial {
     while true {
       let corners = SessionProbe.settings()["hot_corners"]?.members ?? []
       if let corner = corners.first(where: {
-        $0.value["action"]?.stringValue == "lock_screen" && ($0.value["modifier"]?.intValue ?? 0) == 0
+        $0.value["action"]?.stringValue == "lock_screen"
+          && ($0.value["modifier"]?.intValue ?? 0) == 0
       }) {
         env.say("Using the \(corner.key) hot corner (set to Lock Screen).")
         return corner.key
       }
-      _ = await env.act("open-settings", "x-apple.systempreferences:com.apple.Desktop-Settings.extension")
+      _ = await env.act(
+        "open-settings", "x-apple.systempreferences:com.apple.Desktop-Settings.extension")
       env.say(
         "No hot corner is set to Lock Screen (without a modifier). In Desktop & Dock > Hot "
           + "Corners…, set one corner to Lock Screen.")

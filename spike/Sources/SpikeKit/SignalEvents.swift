@@ -50,10 +50,14 @@ public final class SignalEvents {
     }
     let app = NotificationCenter.default
     let appNames: [(Notification.Name, String)] = [
-      (NSNotification.Name.NSApplicationProtectedDataWillBecomeUnavailable,
-        "protected_data_will_become_unavailable"),
-      (NSNotification.Name.NSApplicationProtectedDataDidBecomeAvailable,
-        "protected_data_did_become_available"),
+      (
+        NSNotification.Name.NSApplicationProtectedDataWillBecomeUnavailable,
+        "protected_data_will_become_unavailable"
+      ),
+      (
+        NSNotification.Name.NSApplicationProtectedDataDidBecomeAvailable,
+        "protected_data_did_become_available"
+      ),
       (NSApplication.didChangeScreenParametersNotification, "screen_parameters_changed"),
     ]
     for (name, label) in appNames {

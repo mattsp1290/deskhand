@@ -55,9 +55,11 @@ enum CoordinatesProbe {
     var results: [JSON] = []
     var worst = 0.0
     for display in content.displays {
-      let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+      let filter = SCContentFilter(
+        display: display, excludingApplications: [], exceptingWindows: [])
       guard let image = try? await CaptureTools.capture(filter) else {
-        results.append(.obj([("display_id", .int(Int(display.displayID))), ("capture", .string("failed"))]))
+        results.append(
+          .obj([("display_id", .int(Int(display.displayID))), ("capture", .string("failed"))]))
         continue
       }
       let info = SCShareableContent.info(for: filter)
@@ -79,7 +81,7 @@ enum CoordinatesProbe {
             ("found_px", hit.map { Geometry.json($0.point) } ?? .null),
             ("pixel_count", .int(hit?.count)),
             ("expected_pixel_count", .int(Int((markerSize * scale) * (markerSize * scale)))),
-            ("error_px", .num(error)),
+            ("error_px", .num(error.map(Double.init))),
           ]))
       }
       results.append(
@@ -97,7 +99,9 @@ enum CoordinatesProbe {
     }
     report.set("displays", .array(results))
     report.set("max_error_px", .double(worst))
-    if worst > 2 { report.finding("WARNING: a marker was more than 2 px from where the mapping put it") }
+    if worst > 2 {
+      report.finding("WARNING: a marker was more than 2 px from where the mapping put it")
+    }
     return report
   }
 }

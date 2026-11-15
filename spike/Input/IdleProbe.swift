@@ -87,7 +87,8 @@ enum IdleProbe {
     report.finding(
       personOnlyCandidates.isEmpty
         ? "no source/tap delivers events without resetting the HID idle counter: the HID signal is any-origin"
-        : "HID idle stays person-only for posts via: \(personOnlyCandidates.joined(separator: ", "))")
+        : "HID idle stays person-only for posts via: \(personOnlyCandidates.joined(separator: ", "))"
+    )
 
     // Echo: how far after the post the idle signal places the last event.
     var offsets: [String: [Double]] = [:]
@@ -98,7 +99,9 @@ enum IdleProbe {
       Post.move(to: center)
       await Clock.sleep(ms: 60)
       let read = Clock.monoMs()
-      for (key, state) in [("hid_any", CGEventSourceStateID.hidSystemState), ("combined_any", .combinedSessionState)] {
+      for (key, state) in [
+        ("hid_any", CGEventSourceStateID.hidSystemState), ("combined_any", .combinedSessionState),
+      ] {
         let idle = CGEventSource.secondsSinceLastEventType(state, eventType: Signals.anyInputEvent)
         offsets[key, default: []].append(((read - idle * 1000) - posted).rounded())
       }
@@ -106,7 +109,9 @@ enum IdleProbe {
         offsets["iohid", default: []].append(((read - iohid * 1000) - posted).rounded())
       }
     }
-    report.set("echo_offset_ms", .obj(offsets.sorted { $0.key < $1.key }.map { ($0.key, percentiles($0.value)) }))
+    report.set(
+      "echo_offset_ms",
+      .obj(offsets.sorted { $0.key < $1.key }.map { ($0.key, percentiles($0.value)) }))
     for (key, values) in offsets.sorted(by: { $0.key < $1.key }) {
       let stats = percentiles(values)
       report.finding(

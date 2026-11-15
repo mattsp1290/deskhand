@@ -6,7 +6,8 @@ import SpikeKit
 enum EnvironmentProbe {
   static let spec = ProbeSpec(
     name: "environment", items: ["1", "8"],
-    summary: "macOS version, hardware, display geometry (scales, native vs scaled, negative origins)",
+    summary:
+      "macOS version, hardware, display geometry (scales, native vs scaled, negative origins)",
     run: run)
 
   static func run(_ options: ProbeOptions) async -> ProbeReport {

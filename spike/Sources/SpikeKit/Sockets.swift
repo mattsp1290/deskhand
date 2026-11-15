@@ -179,7 +179,8 @@ public nonisolated final class TCPListener: @unchecked Sendable {
         var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         inet_ntop(AF_INET, &peer.sin_addr, &text, socklen_t(INET_ADDRSTRLEN))
         let bytes = text.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-        let peerText = String(decoding: bytes, as: UTF8.self) + ":\(UInt16(bigEndian: peer.sin_port))"
+        let peerText =
+          String(decoding: bytes, as: UTF8.self) + ":\(UInt16(bigEndian: peer.sin_port))"
         Net.writeAll(client, greeting() + "\n")
         close(client)
         onAccept(peerText)
@@ -199,9 +200,10 @@ public nonisolated final class TCPListener: @unchecked Sendable {
 /// The agent's control socket: a Unix-domain socket in an owner-only directory. A client sends
 /// one line of space-separated words and reads lines until the agent closes the connection.
 public nonisolated final class ControlServer: @unchecked Sendable {
-  public typealias Handler = @MainActor @Sendable (
-    _ words: [String], _ emit: @escaping @Sendable (String) -> Void
-  ) async -> Void
+  public typealias Handler =
+    @MainActor @Sendable (
+      _ words: [String], _ emit: @escaping @Sendable (String) -> Void
+    ) async -> Void
 
   public static var defaultPath: String {
     FileManager.default.homeDirectoryForCurrentUser

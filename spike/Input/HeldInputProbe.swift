@@ -76,7 +76,10 @@ enum HeldInputProbe {
     case "key":
       return .obj([
         ("hid", .bool(CGEventSource.keyState(.hidSystemState, key: CGKeyCode(kVK_ANSI_X)))),
-        ("combined", .bool(CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_ANSI_X)))),
+        (
+          "combined",
+          .bool(CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_ANSI_X)))
+        ),
       ])
     case "shift":
       return .obj([

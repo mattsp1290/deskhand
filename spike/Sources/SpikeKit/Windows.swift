@@ -53,7 +53,8 @@ public enum WindowList {
 
   /// The window AppKit says a mouse-down at `point` would hit (`NSWindow.windowNumber(at:)`).
   public static func eventTargetWindowNumber(at point: CGPoint) -> Int {
-    NSWindow.windowNumber(at: Geometry.cocoaPoint(fromGlobal: point), belowWindowWithWindowNumber: 0)
+    NSWindow.windowNumber(
+      at: Geometry.cocoaPoint(fromGlobal: point), belowWindowWithWindowNumber: 0)
   }
 }
 
