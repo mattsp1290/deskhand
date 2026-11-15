@@ -138,21 +138,35 @@ public final class DeskOwner: StateSource, FrameSource {
         }
     }
 
-    func beginCapture() -> CaptureStart {
+    func beginRead() -> ReadStart {
         world.withLock { world in
             let reading = clock()
-            return CaptureStart(
+            return ReadStart(
                 reading: reading, state: world.report.state(at: reading), policy: world.policy,
                 epoch: world.frames.epoch)
         }
     }
 
-    func record(_ capture: FrameCapture, for scope: FrameScope, startedIn start: CaptureStart) throws(FrameRefusal)
+    func checkRead(since start: ReadStart) throws(FrameRefusal) {
+        try world.withLock { world throws(FrameRefusal) in
+            try Self.checkRead(since: start, in: world, at: clock())
+        }
+    }
+
+    private static func checkRead(since start: ReadStart, in world: World, at reading: ClockReading)
+        throws(FrameRefusal)
+    {
+        if let blocking = world.report.state(at: reading).blocking { throw .blocked(blocking) }
+        if world.frames.epoch != start.epoch { throw .blocked(world.invalidatedBy ?? .permissionStale) }
+        if Task.isCancelled { throw .cancelled }
+    }
+
+    func record(_ capture: FrameCapture, for scope: FrameScope, startedIn start: ReadStart) throws(FrameRefusal)
         -> Frame
     {
         try world.withLock { world throws(FrameRefusal) in
             let reading = clock()
-            if let blocking = world.report.state(at: reading).blocking { throw .blocked(blocking) }
+            try Self.checkRead(since: start, in: world, at: reading)
             var leaseHolder: FrameScope?
             if case .held(let lease) = world.lease.state(at: reading) {
                 leaseHolder = FrameScope(principal: lease.holder.principal, holderID: lease.holder.holderID)
@@ -184,7 +198,7 @@ struct StatusView: Sendable {
     var state: DeskhandState { activeStates.current }
 }
 
-struct CaptureStart: Sendable {
+struct ReadStart: Sendable {
     let reading: ClockReading
     let state: DeskhandState
     let policy: AppPolicy
@@ -194,4 +208,5 @@ struct CaptureStart: Sendable {
 enum FrameRefusal: Error, Hashable, Sendable {
     case blocked(BlockingState)
     case inconsistentCapture
+    case cancelled
 }

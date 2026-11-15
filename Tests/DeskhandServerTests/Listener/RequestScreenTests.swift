@@ -24,14 +24,10 @@ import Testing
     }
 
     private static let oversize = String(ContractConstants.maxRequestBodyBytes + 1)
-    private static let filler = String(repeating: "x", count: ContractConstants.maxRequestHeaderBytes)
 
     static let headCases: [Case] = [
         Case(label: "valid", expected: nil),
         Case(label: "query on /mcp", uri: "/mcp?x=1", expected: nil),
-        Case(
-            label: "header block over the limit beats a wrong path", uri: "/other",
-            changes: [("X-Filler", filler)], expected: .headerTooLarge),
         Case(label: "wrong path beats wrong method", method: .GET, uri: "/other", expected: .notFound),
         Case(label: "trailing slash", uri: "/mcp/", expected: .notFound),
         Case(
@@ -124,12 +120,6 @@ import Testing
     @Test func bodyLimitIsInclusive() {
         #expect(Self.screen.screenBody(byteCount: ContractConstants.maxRequestBodyBytes) == nil)
         #expect(Self.screen.screenBody(byteCount: ContractConstants.maxRequestBodyBytes + 1) == .bodyTooLarge)
-    }
-
-    @Test func headerBlockSizeCountsTheCanonicalBytes() {
-        let head = HTTPRequestHead(
-            version: .http1_1, method: .POST, uri: "/mcp", headers: HTTPHeaders([("Host", "h:1")]))
-        #expect(RequestScreen.headerBlockSize(head) == "POST /mcp HTTP/1.1\r\nHost: h:1\r\n\r\n".utf8.count)
     }
 
     @Test func refusalsCarryTheirStatusAndHeaders() {

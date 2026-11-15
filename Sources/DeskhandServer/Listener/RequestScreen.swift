@@ -43,18 +43,15 @@ struct AdmittedHead {
 
 struct RequestScreen: Sendable {
     let hosts: HostAllowlist
-    let maxHeaderBytes: Int
     let maxBodyBytes: Int
 
     init(_ configuration: ListenerConfiguration) {
         hosts = configuration.hosts
-        maxHeaderBytes = configuration.maxRequestHeaderBytes
         maxBodyBytes = configuration.maxRequestBodyBytes
     }
 
-    init(hosts: HostAllowlist, maxHeaderBytes: Int, maxBodyBytes: Int) {
+    init(hosts: HostAllowlist, maxBodyBytes: Int) {
         self.hosts = hosts
-        self.maxHeaderBytes = maxHeaderBytes
         self.maxBodyBytes = maxBodyBytes
     }
 
@@ -63,7 +60,6 @@ struct RequestScreen: Sendable {
         tokens: AcceptedTokens,
         now: ContinuousClock.Instant
     ) -> Result<AdmittedHead, HTTPRefusal> {
-        guard Self.headerBlockSize(head) <= maxHeaderBytes else { return .failure(.headerTooLarge) }
         guard head.uri.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first == "/mcp" else {
             return .failure(.notFound)
         }
@@ -94,12 +90,6 @@ struct RequestScreen: Sendable {
 
     func screenAccept(_ head: AdmittedHead) -> HTTPRefusal? {
         Self.acceptAdmitsJSON(head.headers["Accept"]) ? nil : .notAcceptable
-    }
-
-    static func headerBlockSize(_ head: HTTPRequestHead) -> Int {
-        var size = head.method.rawValue.utf8.count + 1 + head.uri.utf8.count + 1 + "HTTP/1.1\r\n".utf8.count
-        for (name, value) in head.headers { size += name.utf8.count + 2 + value.utf8.count + 2 }
-        return size + 2
     }
 
     static func bearerToken(_ values: [String]) -> Substring? {

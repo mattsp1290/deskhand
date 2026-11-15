@@ -75,7 +75,8 @@ final class ResumingTLSClient: @unchecked Sendable {
     /// server closes; every read gives up after 10 seconds. The blocking socket calls run on a
     /// thread of their own: on the cooperative pool they could starve the listener's request
     /// handler, which runs there.
-    func exchange(port: Int, serverName: String, request: [UInt8], offering session: Session?) async throws
+    func exchange(port: Int, serverName: String, request: [UInt8], offering session: Session?, fragmentSize: Int? = nil)
+        async throws
         -> Exchange
     {
         try await withCheckedThrowingContinuation { continuation in
@@ -83,13 +84,16 @@ final class ResumingTLSClient: @unchecked Sendable {
                 continuation.resume(
                     with: Result {
                         try self.blockingExchange(
-                            port: port, serverName: serverName, request: request, offering: session)
+                            port: port, serverName: serverName, request: request, offering: session,
+                            fragmentSize: fragmentSize)
                     })
             }.start()
         }
     }
 
-    private func blockingExchange(port: Int, serverName: String, request: [UInt8], offering session: Session?) throws
+    private func blockingExchange(
+        port: Int, serverName: String, request: [UInt8], offering session: Session?, fragmentSize: Int? = nil
+    ) throws
         -> Exchange
     {
         let socket = try Self.connect(port: port)
@@ -108,7 +112,12 @@ final class ResumingTLSClient: @unchecked Sendable {
         guard SSL_connect(ssl) == 1 else { return Exchange(resumed: false, status: nil, issued: nil) }
         let resumed = SSL_session_reused(ssl) == 1
 
-        _ = request.withUnsafeBytes { SSL_write(ssl, $0.baseAddress, Int32($0.count)) }
+        let width = fragmentSize ?? max(1, request.count)
+        for offset in stride(from: 0, to: request.count, by: width) {
+            let bytes = Array(request[offset..<min(offset + width, request.count)])
+            let written = bytes.withUnsafeBytes { SSL_write(ssl, $0.baseAddress, Int32($0.count)) }
+            if written <= 0 { break }
+        }
         var response: [UInt8] = []
         var buffer = [UInt8](repeating: 0, count: 16_384)
         while true {

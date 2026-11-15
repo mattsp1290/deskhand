@@ -115,15 +115,21 @@ public struct DeskhandDispatcher: ToolDispatcher {
     }
 
     public func displays(caller: ToolCaller) async throws(ToolError) -> DisplaysResult {
-        try refuseUnlessOK()
-        let configuration: DisplayConfiguration
-        do {
-            configuration = try owner.displays.configuration()
+        let start = owner.beginRead()
+        if let blocking = start.state.blocking { throw Self.blocked(blocking) }
+        do throws(ToolError) {
+            let configuration: DisplayConfiguration
+            do {
+                configuration = try owner.displays.configuration()
+            } catch {
+                throw internalError(error.detail)
+            }
+            try checkRead(since: start)
+            return DisplaysResult(displayConfigGeneration: configuration.generation, displays: configuration.displays)
         } catch {
-            throw internalError(error.detail)
+            try checkRead(since: start)
+            throw error
         }
-        try refuseUnlessOK()
-        return DisplaysResult(displayConfigGeneration: configuration.generation, displays: configuration.displays)
     }
 
     /// A refused operation is an outcome, not an error (contract 5.1). Every live lease the call
@@ -167,8 +173,16 @@ public struct DeskhandDispatcher: ToolDispatcher {
         }
     }
 
-    func refuseUnlessOK() throws(ToolError) {
-        if let blocking = owner.snapshot().state.blocking { throw Self.blocked(blocking) }
+    func checkRead(since start: ReadStart) throws(ToolError) {
+        do {
+            try owner.checkRead(since: start)
+        } catch {
+            switch error {
+            case .blocked(let state): throw Self.blocked(state)
+            case .cancelled: throw internalError("The caller closed the connection.")
+            case .inconsistentCapture: throw internalError("The platform's capture does not match the request.")
+            }
+        }
     }
 
     static func blocked(_ state: BlockingState, operationID: OperationID? = nil) -> ToolError {

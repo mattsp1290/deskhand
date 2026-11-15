@@ -9,8 +9,19 @@ extension DeskhandDispatcher {
     public func screenshot(_ arguments: ScreenshotArguments, caller: ToolCaller) async throws(ToolError)
         -> CapturedScreenshot
     {
-        let start = owner.beginCapture()
+        let start = owner.beginRead()
         if let blocking = start.state.blocking { throw Self.blocked(blocking) }
+        do {
+            return try await capture(arguments, caller: caller, start: start)
+        } catch {
+            try checkRead(since: start)
+            throw error
+        }
+    }
+
+    private func capture(_ arguments: ScreenshotArguments, caller: ToolCaller, start: ReadStart)
+        async throws(ToolError) -> CapturedScreenshot
+    {
         let displays: DisplayConfiguration
         do {
             displays = try owner.displays.configuration()
@@ -42,7 +53,6 @@ extension DeskhandDispatcher {
         do {
             image = try await platform.capturer.capture(request)
         } catch {
-            try refuseUnlessOK()
             switch error {
             case .imageTooLarge(let imageBytes):
                 throw ToolError(
@@ -57,11 +67,9 @@ extension DeskhandDispatcher {
             let geometry = FrameGeometry(
                 captureRect: area.captureRect, outputPixelSize: expected.output, displayBounds: area.display.bounds)
         else {
-            try refuseUnlessOK()
             throw internalError("The platform's capture does not match the request.")
         }
         guard image.bytes.count <= request.maxImageBytes else {
-            try refuseUnlessOK()
             throw ToolError(
                 .imageTooLarge(imageBytes: image.bytes.count), message: Self.imageTooLargeMessage, state: start.state)
         }
@@ -79,6 +87,7 @@ extension DeskhandDispatcher {
         } catch {
             switch error {
             case .blocked(let state): throw Self.blocked(state)
+            case .cancelled: throw internalError("The caller closed the connection.")
             case .inconsistentCapture: throw internalError("The platform's capture does not match the request.")
             }
         }
