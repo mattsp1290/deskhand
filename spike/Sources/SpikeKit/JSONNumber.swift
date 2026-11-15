@@ -42,10 +42,9 @@ public nonisolated struct JSONNumber: Sendable, Equatable {
         index += 1
       }
       guard digit(index) else { return nil }
-      // Beyond this bound, no nonzero coefficient can cancel the exponent into an Int.
-      let cap = bytes.count + 32
+      let maximumRelevantExponent = bytes.count + 32
       while digit(index) {
-        power = min(cap, power * 10 + Int(bytes[index] - 48))
+        power = min(maximumRelevantExponent, power * 10 + Int(bytes[index] - 48))
         index += 1
       }
       if exponentNegative { power = -power }
