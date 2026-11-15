@@ -149,17 +149,23 @@ struct FailureTests {
             "holder_id": .string(ExecutorFixture.holder.rawValue), "operation_id": "op-1", "action": "bad",
         ])
         let error = ArgumentError(at: JSONPointer(["action"]), "must be an object")
-        let invalid = await harness.executor.refusal(
-            for: error, tool: .pointer, handles: handles, principal: ExecutorFixture.principal,
-            nodeAddress: ExecutorFixture.node)
+        let invalid = try #require(
+            await harness.executor.refusal(
+                .invalidArguments(error),
+                context: EffectRefusalContext(
+                    tool: .pointer, handles: handles, principal: ExecutorFixture.principal,
+                    nodeAddress: ExecutorFixture.node)))
         #expect(invalid.code == .invalidArgument)
         #expect(invalid.operation == .existing(OperationView(status: .completed, eventsPosted: 1)))
 
         let paused = ExecutorFixture.report([.paused], at: harness.mac.reading)
         harness.mac.change { $0.report = paused }
-        let blocked = await harness.executor.refusal(
-            for: error, tool: .pointer, handles: handles, principal: ExecutorFixture.principal,
-            nodeAddress: ExecutorFixture.node)
+        let blocked = try #require(
+            await harness.executor.refusal(
+                .invalidArguments(error),
+                context: EffectRefusalContext(
+                    tool: .pointer, handles: handles, principal: ExecutorFixture.principal,
+                    nodeAddress: ExecutorFixture.node)))
         #expect(blocked.code == .paused)
         #expect(blocked.state == .paused)
         #expect(blocked.operation == .existing(OperationView(status: .completed, eventsPosted: 1)))

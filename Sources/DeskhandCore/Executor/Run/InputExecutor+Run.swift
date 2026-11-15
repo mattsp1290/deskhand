@@ -58,6 +58,8 @@ enum Ending: Sendable {
     case completed
     case stopped(ToolErrorReason)
     case fault(String)
+
+    case processStop
 }
 
 extension InputExecutor {
@@ -70,6 +72,7 @@ extension InputExecutor {
 
     func execute(_ admitted: Execution) async -> EffectAnswer {
         var execution = admitted
+        if stopRequested { return await endStopped(execution, .failedBeforeExecution) }
         do throws(OperationStoreError) {
             guard let store else { throw .unavailable }
             try store.markExecuting(execution.ticket)
@@ -90,6 +93,7 @@ extension InputExecutor {
     }
 
     private func post(_ planned: PlannedEvent, _ execution: inout Execution) async -> Ending? {
+        if stopRequested { return .processStop }
         var press: PressEntry?
         if let input = planned.event.press {
             do throws(HeldInputLedgerError) {
@@ -196,11 +200,15 @@ extension InputExecutor {
                 of: execution.lease, leases: snapshot.lease, at: snapshot.reading)
             if deadline > now { wait = min(wait, now.duration(to: deadline)) }
             await seams.timer.sleep(for: wait)
+            if stopRequested { return .processStop }
             if let ending = look(at: target, beforeDown: false, &execution).ending { return ending }
         }
     }
 
     private func end(_ execution: inout Execution, _ ending: Ending) async -> EffectAnswer {
+        if stopRequested {
+            return await endStopped(execution, .abortedByRestart(eventsPosted: execution.eventsPosted))
+        }
         releaseOperationInput(execution.pressed)
         let snapshot = seams.state.snapshot()
         let measured = execution.lastLookMeasured ?? execution.admissionMeasured
@@ -272,6 +280,11 @@ extension InputExecutor {
                 measured: measured)
         case .fault(let message):
             return .failed(ToolError(.internalError, message: message, state: state), measured: measured)
+        case .processStop:
+
+            return .failed(
+                ToolError(.internalError, message: "deskhand stopped during this operation.", state: state),
+                measured: measured)
         }
     }
 }

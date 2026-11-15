@@ -90,6 +90,40 @@ struct WatchdogReentrancyTests {
         _ = await finished(running)
     }
 
+    @Test("an owner that refreshes from inside its reduction holds up no read while the executor does not answer")
+    func refreshInsideTheReductionWithABusyExecutor() async {
+        let clock = ManualScheduler()
+        let desk = FakeDesk(clock: clock, leaseTTLMs: 60_000)
+        let owner = RefreshingOwner(desk: desk)
+        let executor = HeldExecutor()
+        let watch = FakeFileWatch()
+        let watchdog = Watchdog(
+            owner: owner, executor: executor, activity: StaticActivity(), fileChanges: [watch], scheduler: clock)
+        owner.watchdog.withLock { $0 = watchdog }
+        let running = Task { await watchdog.run() }
+        await watch.waitUntilWatched()
+        await desk.waitForReductions(1)
+        await executor.hold()
+
+        watch.fire()
+        await executor.waitUntilHeld()
+        await desk.waitForReductions(2)
+
+        for read in 1...4 {
+            await clock.waitUntil { $0.contains(WatchdogFixture.at(Int64(read) * 500).monotonic) }
+            clock.advance(to: WatchdogFixture.at(Int64(read) * 500).monotonic)
+            await desk.waitForReductions(2 + read)
+        }
+        #expect(desk.read(\.reductions.count) >= 6, "the periodic read waited on the executor")
+        desk.change { $0.allowanceFile = .missing }
+        watch.fire()
+        await desk.waitForReductions(7)
+        #expect(desk.snapshot().state == .gated, "the executor would read an allowance that was removed")
+        await executor.release()
+        running.cancel()
+        _ = await finished(running)
+    }
+
     @Test("while a reduction another task started outlasts the read interval, the owner's loop does not spin")
     func noSpinWhileReducing() async {
         let clock = ManualScheduler()

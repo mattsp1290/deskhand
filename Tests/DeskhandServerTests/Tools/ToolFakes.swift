@@ -149,6 +149,8 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
         var patch: PatchVerdict = .unchanged
         var logAppends: [Bool] = []
         var onSleep: (@Sendable () async -> Void)?
+
+        var onVerify: (@Sendable () async -> Void)?
     }
 
     let clock: ToolClock
@@ -210,6 +212,11 @@ final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCode
     func cleanupPendingDidChange(_ pending: Bool) {}
 
     func verify(_ frame: LiveFrame, patches: [TargetPatch]) async -> [PatchVerdict] {
+        let hook = world.withLock { world in
+            defer { world.onVerify = nil }
+            return world.onVerify
+        }
+        await hook?()
         let verdict = read(\.patch)
         return patches.map { _ in verdict }
     }

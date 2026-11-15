@@ -9,6 +9,9 @@ import Synchronization
 struct DeskhandStack: Sendable {
     struct Options: Sendable {
         var limits = Limits()
+        var waitLimit = InputExecutor.Configuration.defaultWaitLimit
+        var waitTimer: any WaitLimitTimer = TaskSleepTimer()
+        var frameCheck: (@Sendable () async -> FrameCheck)?
         var armed = true
         var states: Set<BlockingState> = []
         var tokenOverlap: Duration = .zero
@@ -24,7 +27,7 @@ struct DeskhandStack: Sendable {
     let platform: StackPlatform
     let state: StateDirectory
     let credentials: CredentialDirectory
-    let log: FaultInjectingActionLog<InMemoryActionLog>
+    let log: FaultInjectingActionLog<StackActionLog>
     let reloader: CredentialReloader
     let conditions: LiveConditions
     let owner: DeskOwner
@@ -47,7 +50,7 @@ struct DeskhandStack: Sendable {
         let platform = StackPlatform(clock: clock, states: options.states)
         let state = try options.state ?? StateDirectory()
         let credentials = try CredentialDirectory()
-        let log = FaultInjectingActionLog(wrapping: InMemoryActionLog())
+        let log = FaultInjectingActionLog(wrapping: StackActionLog())
 
         let reloader = try await CredentialReloader(
             configuration: credentials.configuration(tokenOverlap: options.tokenOverlap))
@@ -60,7 +63,8 @@ struct DeskhandStack: Sendable {
         var built: DeskOwner?
         let recovered = await Recovery(
             ledgerStore: FileHeldInputStore(path: state.ledgerPath),
-            configuration: InputExecutor.Configuration(limits: options.limits)
+            configuration: InputExecutor.Configuration(
+                actionsPerMinute: options.limits.actionsPerMinute, waitLimit: options.waitLimit)
         ).start(at: clock.reading) { world in
             let owner = DeskOwner(
                 policy: ToolFixture.policy, displays: platform.displays, frames: world.frames, report: world.report,
@@ -68,8 +72,10 @@ struct DeskhandStack: Sendable {
             owner.reduce(signals: platform.signals(ownInput: observer.ownInput))
             built = owner
             return InputExecutor.Seams(
-                state: owner, frames: owner, patches: platform.desk, identity: platform.desk, activity: activity,
-                poster: platform.desk, keyCodes: platform.desk, log: log, timer: platform.desk, observer: observer,
+                state: owner, frames: StackFrames(owner: owner, check: options.frameCheck), patches: platform.desk,
+                identity: platform.desk, activity: activity,
+                poster: platform.desk, keyCodes: platform.desk, log: log, timer: platform.desk,
+                waitTimer: options.waitTimer, observer: observer,
                 operationStore: FileOperationStoreLoader(
                     path: state.recordsPath, configuration: OperationStore.Configuration(limits: options.limits)))
         }
@@ -149,6 +155,40 @@ struct DeskhandStack: Sendable {
     var entries: [ActionLogEntry] { get async { await log.base.entries } }
 }
 
+final class StackStopHost: CleanStopHost {
+    enum Step: Hashable, Sendable {
+        case stopAccepting
+        case dropLease
+        case log
+        case close
+        case exit(Int32)
+    }
+
+    private let recorded = Mutex<(steps: [Step], report: CleanStopReport?)>(([], nil))
+
+    var steps: [Step] { recorded.withLock { $0.steps } }
+    var report: CleanStopReport? { recorded.withLock { $0.report } }
+
+    func stopAcceptingCalls() async { recorded.withLock { $0.steps.append(.stopAccepting) } }
+    func dropLeaseAndFrames() async { recorded.withLock { $0.steps.append(.dropLease) } }
+    func logStop(_ report: CleanStopReport) {
+        recorded.withLock {
+            $0.steps.append(.log)
+            $0.report = report
+        }
+    }
+    func closeConnections() async { recorded.withLock { $0.steps.append(.close) } }
+
+    func exit(_ status: Int32) { recorded.withLock { $0.steps.append(.exit(status)) } }
+}
+
+extension DeskhandStack {
+
+    func cleanStop(host: StackStopHost) -> CleanStop {
+        CleanStop(executor: executor, host: host, scheduler: FakeClockScheduler(clock: clock), exit: host.exit)
+    }
+}
+
 final class StackStateOwner: WatchdogStateOwner {
     let owner: DeskOwner
     let executor: InputExecutor
@@ -166,17 +206,16 @@ final class StackStateOwner: WatchdogStateOwner {
     func snapshot() -> DeskSnapshot { owner.snapshot() }
 
     func reduceNow(allowanceChanged: Bool) async {
-        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
+        await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
     }
 
     func change(command: ArmingCommand?) async {
-        await carryOut(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
+        await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
         await watchdog.withLock { $0 }?.refreshState()
     }
 
-    private func carryOut(_ reduction: DeskOwner.Reduction) async {
+    private func deliver(_ reduction: DeskOwner.Reduction) async {
         for interruption in reduction.interruptions { await executor.interrupt(interruption) }
-        if reduction.releasesHeldInput { _ = await executor.retryCleanup(now: reduction.reading) }
     }
 }
 

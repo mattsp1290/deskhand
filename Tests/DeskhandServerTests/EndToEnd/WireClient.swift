@@ -254,6 +254,58 @@ final class Latch: Sendable {
     }
 }
 
+func bounded<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) async throws -> T? {
+    let answer = Answer<T>()
+    Task {
+        do {
+            answer.set(.success(try await body()))
+        } catch {
+            answer.set(.failure(error))
+        }
+    }
+    return try await answer.wait()?.get()
+}
+
+private final class Answer<T: Sendable>: Sendable {
+    private struct State {
+        var result: Result<T, any Error>?
+        var waiter: CheckedContinuation<Void, Never>?
+        var cancelled = false
+    }
+
+    private let state = Mutex(State())
+
+    func set(_ result: Result<T, any Error>) {
+        let waiter = state.withLock { state in
+            state.result = result
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+
+    func wait() async -> Result<T, any Error>? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let now = state.withLock { state in
+                    if state.result != nil || state.cancelled { return true }
+                    state.waiter = continuation
+                    return false
+                }
+                if now { continuation.resume() }
+            }
+        } onCancel: {
+            let waiter = state.withLock { state in
+                state.cancelled = true
+                defer { state.waiter = nil }
+                return state.waiter
+            }
+            waiter?.resume()
+        }
+        return state.withLock { $0.result }
+    }
+}
+
 func waitForHangUp(limit: Duration = .seconds(20)) async {
     let deadline = ContinuousClock.now + limit
     while !Task.isCancelled, ContinuousClock.now < deadline {

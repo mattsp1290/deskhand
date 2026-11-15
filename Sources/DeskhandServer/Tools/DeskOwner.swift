@@ -9,7 +9,7 @@ import Synchronization
 /// ``snapshot()`` between the ledger write and the post of every event and must not wait. Every
 /// read and every change happens under that lock at one clock reading, so a reduction, the lease
 /// it drops and the frames it invalidates change together: no `lease` call, screenshot or effect
-/// can see one without the others.
+/// can see one without the others. The platform's signals are read outside that lock.
 public final class DeskOwner: StateSource, FrameSource {
     private struct World {
         var report: StateReport
@@ -24,6 +24,8 @@ public final class DeskOwner: StateSource, FrameSource {
     public let stateConfiguration: StateConfiguration
     private let clock: @Sendable () -> ClockReading
     private let world: Mutex<World>
+
+    private let reducing = Mutex(())
 
     /// - Parameters:
     ///   - report: ``StateReport/startup`` at start; every later report comes from ``reduce(signals:command:)``.
@@ -62,32 +64,49 @@ public final class DeskOwner: StateSource, FrameSource {
         public let leaseEnds: [LeaseEnd]
         public let reading: ClockReading
 
-        /// What stops the executing effect: pass each to ``InputExecutor/interrupt(_:)``.
+        /// What stops the executing effect, in order. The state owner passes each to
+        /// ``InputExecutor/interrupt(_:)`` as soon as ``DeskOwner/reduce(signals:command:)``
+        /// returns, before it awaits anything else. The watchdog also passes what the snapshot
+        /// shows when it next looks, which repeats a cause the executor already keeps. A state
+        /// that has ended by then leaves no trace in the snapshot, so only this delivery aborts
+        /// the effect it interrupted (contract 10.3).
         public var interruptions: [Interruption] {
             var found: [Interruption] = []
             for case .cancelInFlight(let state) in effects { found.append(.state(state)) }
             return found + leaseEnds.map(Interruption.leaseEnded)
         }
 
-        /// The releases owed may be posted now: call ``InputExecutor/retryCleanup(now:)``.
+        /// The releases owed may be posted now. The state owner need not post them: the
+        /// watchdog's executor loop calls ``InputExecutor/retryCleanup(now:)`` after every
+        /// reduction.
         public var releasesHeldInput: Bool { effects.contains(.releaseHeldInput) }
     }
 
     /// Reduces `signals` (and a person's arming `command`) from the current report at the current
     /// reading, settles a lease that has run out, drops the lease and invalidates every frame as
     /// the effects require, all under one lock. The app's state owner calls it from
-    /// ``WatchdogStateOwner/reduceNow(allowanceChanged:)``, then forwards ``Reduction/interruptions``
-    /// to the executor and calls ``Watchdog/refreshState()``.
+    /// ``WatchdogStateOwner/reduceNow(allowanceChanged:)``, and on a signal change followed by
+    /// ``Watchdog/refreshState()``. Either way it then passes ``Reduction/interruptions`` to
+    /// ``InputExecutor/interrupt(_:)``, in order, before it awaits anything else: one hop on the
+    /// executor, and only when the reduction stops something. Without it a blocking state that
+    /// ends again before the watchdog looks is lost. The delivery is lossless while each
+    /// reduction's interruptions reach the executor before the next reduction; an owner that
+    /// reduces on several tasks at once leaves a window of that one hop.
     ///
-    /// `signals` is read under the lock, so reductions apply in the order their readings were
-    /// taken: a reduction that read the signals before a newer one cannot apply after it and
-    /// reopen a state the newer one closed. It must not call back into this owner.
+    /// Reductions apply one at a time, in the order their signals were read: a reduction that read
+    /// the signals before a newer one cannot apply after it and reopen a state the newer one
+    /// closed. `signals` is read outside the lock that ``snapshot()`` takes, so a slow read holds
+    /// up the next reduction, never the executor. It must not reduce on this owner.
     @discardableResult
     public func reduce(signals: @autoclosure () -> StateSignals, command: ArmingCommand? = nil) -> Reduction {
+        reducing.withLock { _ in apply(signals(), command: command) }
+    }
+
+    private func apply(_ signals: StateSignals, command: ArmingCommand?) -> Reduction {
         world.withLock { world in
             let reading = clock()
             let (report, effects) = StateReducer.reduce(
-                previous: world.report, signals: signals(), command: command, configuration: stateConfiguration,
+                previous: world.report, signals: signals, command: command, configuration: stateConfiguration,
                 now: reading)
             world.report = report
             var ends: [LeaseEnd] = []

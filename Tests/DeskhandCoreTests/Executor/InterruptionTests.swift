@@ -52,6 +52,28 @@ struct InterruptionTests {
         #expect(mac.released == [.named(.k)])
     }
 
+    @Test(
+        "the same interruption passed twice, by the state owner and then by the watchdog, stops the call once",
+        arguments: [false, true])
+    func duplicateInterruptionIsHarmless(leaseEnd: Bool) async throws {
+        let own = try Self.leaseEnd(ofSerial: 1)
+        let interruption: Interruption = leaseEnd ? .leaseEnded(own) : .state(.secureInput)
+        let mac = FakeMac()
+        let harness = try Harness(mac: mac)
+        let executor = harness.executor
+        mac.change {
+            $0.onSleep = {
+                await executor.interrupt(interruption)
+                await executor.interrupt(interruption)
+            }
+        }
+        let answer = await executor.perform(try harness.keyboard(["type": "press", "key": "k", "hold_ms": 500]))
+        #expect(answer.code == (leaseEnd ? .leaseNotHeld : .secureInput))
+        #expect(answer.operation == OperationView(status: .aborted, eventsPosted: 1))
+        #expect(mac.released == [.named(.k)])
+        #expect(await harness.logEntries.map(\.kind) == [.intent, .outcome])
+    }
+
     @Test("an interruption sent while the section is empty does not stop the next operation")
     func interruptionWhileIdleIsIgnored() async throws {
         let harness = try Harness()

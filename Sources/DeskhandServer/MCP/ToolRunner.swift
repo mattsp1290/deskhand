@@ -7,14 +7,12 @@ enum ToolOutcome: Hashable, Sendable {
     case failure(ToolError)
     case replayed(JSONValue, isError: Bool)
 
-    init(_ answer: EffectAnswer) {
+    init?(_ answer: EffectAnswer) {
         switch answer {
         case .completed(let result): self = .success(result.jsonValue)
         case .error(let error): self = .failure(error)
         case .replayed(let replay, let content): self = .replayed(content, isError: replay.isError)
-        case .dropped:
-            self = .failure(
-                ToolError(.internalError, message: "The connection closed before the call was admitted.", state: .ok))
+        case .dropped: return nil
         }
     }
 
@@ -51,15 +49,15 @@ struct ToolRunner {
     let dispatcher: any ToolDispatcher
     let caller: ToolCaller
 
-    func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome {
+    func run(_ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
         if let fault = arguments.strictFault {
-            return .failure(await refusal(.invalidArguments(fault), tool, arguments))
+            return await refusal(.invalidArguments(fault), tool, arguments)
         }
         let call: ToolCall
         do {
             call = try ToolCall(tool: tool, arguments: arguments.object)
         } catch {
-            return .failure(await refusal(.invalidArguments(error), tool, arguments))
+            return await refusal(.invalidArguments(error), tool, arguments)
         }
         do {
             return try await perform(call, received: arguments.object)
@@ -68,11 +66,12 @@ struct ToolRunner {
         }
     }
 
-    func refusal(_ refusal: ToolRefusal, _ tool: ToolName, _ arguments: ToolArguments) async -> ToolError {
-        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller)
+    func refusal(_ refusal: ToolRefusal, _ tool: ToolName, _ arguments: ToolArguments) async -> ToolOutcome? {
+        await dispatcher.refusal(refusal, tool: tool, handles: arguments.handles, caller: caller).map(
+            ToolOutcome.failure)
     }
 
-    private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome {
+    private func perform(_ call: ToolCall, received: JSONObject) async throws(ToolError) -> ToolOutcome? {
         switch call {
         case .status(let arguments): .success(try await dispatcher.status(arguments, caller: caller).jsonValue)
         case .displays: .success(try await dispatcher.displays(caller: caller).jsonValue)

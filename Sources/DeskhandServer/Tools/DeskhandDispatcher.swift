@@ -144,8 +144,9 @@ public struct DeskhandDispatcher: ToolDispatcher {
     /// Contract 9.5: `status` and `lease` refuse only with `invalid_argument`; every other tool
     /// with the state's name first. For `pointer` and `keyboard` the executor words it, so that it
     /// carries `operation` for an existing record and writes the refusal entry (contract 12.10).
+    /// Returns nil for an effect suppressed by process stop; read refusals always return an error.
     public func refusal(_ refusal: ToolRefusal, tool: ToolName, handles: EffectHandles, caller: ToolCaller) async
-        -> ToolError
+        -> ToolError?
     {
         let state = owner.snapshot().state
         switch (refusal, tool) {
@@ -155,19 +156,15 @@ public struct DeskhandDispatcher: ToolDispatcher {
             if let blocking = state.blocking { return Self.blocked(blocking) }
             return ToolError(.invalidArgument(error.pointer), message: error.description, state: state)
         case (.invalidArguments(let error), .pointer), (.invalidArguments(let error), .keyboard):
-            if let nodeAddress = caller.nodeAddress {
-                return await executor.refusal(
-                    for: error, tool: tool, handles: handles, principal: caller.principal, nodeAddress: nodeAddress)
-            }
-            let reason: ToolErrorReason = state.blocking.map { .blocked($0) } ?? .invalidArgument(error.pointer)
-            return ToolError(
-                reason, message: reason.code == .invalidArgument ? error.description : Self.message(for: state),
-                state: state, operationID: handles.operationID, operation: await existingRecord(handles, caller: caller)
-            )
+            return await executor.refusal(
+                .invalidArguments(error),
+                context: EffectRefusalContext(
+                    tool: tool, handles: handles, principal: caller.principal, nodeAddress: caller.nodeAddress))
         case (.unencodableResult, .pointer), (.unencodableResult, .keyboard):
-            return ToolError(
-                .internalError, message: "The tool result could not be serialized.", state: state,
-                operationID: handles.operationID, operation: await existingRecord(handles, caller: caller))
+            return await executor.refusal(
+                .unencodableResult,
+                context: EffectRefusalContext(
+                    tool: tool, handles: handles, principal: caller.principal, nodeAddress: caller.nodeAddress))
         case (.unencodableResult, _):
             return ToolError(.internalError, message: "The tool result could not be serialized.", state: state)
         }

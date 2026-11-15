@@ -142,9 +142,10 @@ struct ScreenshotToolTests {
             try await harness.screenshot(ToolHarness.shot(["display_id": 9]))
         }
         #expect(blocked?.code == .permissionStale)
-        let schemaFault = await harness.dispatcher.refusal(
-            .invalidArguments(ArgumentError(at: JSONPointer(["max_long_edge"]), "must be an integer")),
-            tool: .screenshot, handles: EffectHandles(arguments: [:]), caller: ToolFixture.caller)
+        let schemaFault = try #require(
+            await harness.dispatcher.refusal(
+                .invalidArguments(ArgumentError(at: JSONPointer(["max_long_edge"]), "must be an integer")),
+                tool: .screenshot, handles: EffectHandles(arguments: [:]), caller: ToolFixture.caller))
         #expect(schemaFault.code == .permissionStale)
     }
 

@@ -83,6 +83,17 @@ public actor InputExecutor {
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
     var logAttempts = ActionLogAttempts()
+
+    var stopRequested = false
+
+    var callsAnswering = 0
+    var stopWaiters: [StopWaiter] = []
+
+    var stoppedOperation: StoppedOperation?
+
+    var stoppedOutcomeLogged = false
+
+    var refusalsHeld = 0
     var outstandingRead: OutstandingRead?
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
@@ -135,6 +146,13 @@ public actor InputExecutor {
         return .notFound
     }
 
+    /// The record for `key`, with the live count while it executes: what the `operation` member of
+    /// an error other than `operation_in_progress` and `operation_id_conflict` describes (contract
+    /// 9.2). `nil` while a call with that key is still being admitted, since it has no record yet.
+    public func recordedOperation(for key: OperationKey) -> OperationView? {
+        recordView(key, at: seams.state.snapshot())
+    }
+
     /// Loads the record file again after a failed write, and reads the ledger again, while no call
     /// is in the admission section (contract 12.3). Returns ``storesAvailable``.
     @discardableResult
@@ -174,11 +192,15 @@ public actor InputExecutor {
         interruptions = PendingInterruptions()
         if wasExecuting { seams.observer.executionDidChange(executing: false) }
         seams.observer.cleanupPendingDidChange(ledgerOwes)
+        resumeStopWaiters()
     }
 
     func logRefusal(_ entry: ActionLogRefusal?, after intent: PendingIntent? = nil) async {
         guard let entry else { return }
-        if let intent, intent.holdRefusal(entry) { return }
+        if let intent, intent.holdRefusal(entry) {
+            refusalsHeld += 1
+            return
+        }
         let log = seams.log
         await logAppend { () async -> Void? in
             do throws(ActionLogFailure) {
@@ -187,6 +209,12 @@ public actor InputExecutor {
                 return nil
             }
         }
+    }
+
+    func logHeldRefusal(_ entry: ActionLogRefusal) async {
+        await logRefusal(entry)
+        refusalsHeld -= 1
+        resumeStopWaiters()
     }
 
     @discardableResult

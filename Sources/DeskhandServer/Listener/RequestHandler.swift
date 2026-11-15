@@ -47,10 +47,17 @@ public struct AuthenticatedRequest: Sendable {
 public struct HandlerResponse: Sendable {
     public let status: HTTPResponseStatus
     public let body: [UInt8]?
+    /// Nothing is written: the connection closes, and the caller treats the outcome as unknown.
+    public let closesWithoutResponse: Bool
 
     public init(status: HTTPResponseStatus, body: [UInt8]?) {
+        self.init(status: status, body: body, closesWithoutResponse: false)
+    }
+
+    private init(status: HTTPResponseStatus, body: [UInt8]?, closesWithoutResponse: Bool) {
         self.status = status
         self.body = body
+        self.closesWithoutResponse = closesWithoutResponse
     }
 
     public static func json(_ body: [UInt8], status: HTTPResponseStatus = .ok) -> HandlerResponse {
@@ -59,6 +66,11 @@ public struct HandlerResponse: Sendable {
 
     /// A JSON-RPC notification's answer (contract 2.4).
     public static let accepted = HandlerResponse(status: .accepted, body: nil)
+
+    /// No answer at all: the effect call a process stop ended, and every effect call after it
+    /// (contract 15.2). Any answer would have to say whether input was posted, and only the record
+    /// a repeat reads after the restart says that truthfully.
+    public static let closeWithoutResponse = HandlerResponse(status: .ok, body: nil, closesWithoutResponse: true)
 }
 
 /// The JSON-RPC layer (deskhand-8wvk): contract 2.4 checks 11 onward and everything after them.

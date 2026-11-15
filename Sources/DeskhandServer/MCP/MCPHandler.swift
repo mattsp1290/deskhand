@@ -4,7 +4,8 @@ import NIOHTTP1
 /// The sessionless MCP `2026-07-28` endpoint behind the listener: contract 2.4 checks 11 to 20, then
 /// `server/discover`, `tools/list` and `tools/call` (contract 3).
 ///
-/// Every answer is one `application/json` body or, for a notification, `202` with none. Each
+/// Every answer is one `application/json` body or, for a notification, `202` with none. An effect
+/// call that gets no answer, as when deskhand is stopping, closes the connection instead. Each
 /// `tools/call` runs in the request's own task, which the listener cancels when the caller closes
 /// the connection; the dispatcher sees that cancellation.
 public struct MCPHandler: RequestHandler {
@@ -43,9 +44,11 @@ public struct MCPHandler: RequestHandler {
         -> HandlerResponse
     {
         let runner = ToolRunner(dispatcher: dispatcher, caller: caller)
-        let outcome = await runner.run(tool, arguments)
+        guard let outcome = await runner.run(tool, arguments) else { return .closeWithoutResponse }
         if let body = try? JSONRPCEnvelope.result(outcome.result(), id: id) { return .json(body) }
-        let fallback = ToolOutcome.failure(await runner.refusal(.unencodableResult, tool, arguments))
+        guard let fallback = await runner.refusal(.unencodableResult, tool, arguments) else {
+            return .closeWithoutResponse
+        }
         if let body = try? JSONRPCEnvelope.result(fallback.result(), id: id) { return .json(body) }
         return internalError("The tool result could not be serialized.", id: id)
     }
