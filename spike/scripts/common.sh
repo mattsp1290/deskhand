@@ -14,7 +14,7 @@ verify_app() {
   facts=$(/usr/bin/codesign -d --verbose=4 "$app" 2>&1)
   [[ "$facts" == *"TeamIdentifier=$team"* && "$facts" == *'Authority=Developer ID Application: Matthew Spurlin (QV7QZ68XH2)'* && "$facts" == *'runtime)'* ]] || fail 'Expected the fixed Developer ID team and hardened runtime'
   cert_dir=$(mktemp -d /tmp/deskhand-certificate.XXXXXX)
-  if ! /usr/bin/codesign --display --extract-certificates "$cert_dir/leaf" "$app"; then
+  if ! /usr/bin/codesign --display --extract-certificates="$cert_dir/leaf" "$app"; then
     rm -rf "$cert_dir"
     fail 'Cannot extract signing certificate'
   fi
