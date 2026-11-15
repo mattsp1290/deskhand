@@ -100,18 +100,18 @@ enum DragOwnerProbe {
     }
     report.set("baseline", DragOwner.sample(at: start))
     Post.move(to: start)
-    Post.mouse(.leftMouseDown, at: start)
+    _ = Post.mouse(.leftMouseDown, at: start)
     await Clock.sleep(ms: 100)
     var samples: [JSON] = []
     let steps = 40
     for step in 1...steps {
       let t = CGFloat(step) / CGFloat(steps)
       let point = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
-      Post.mouse(.leftMouseDragged, at: point)
+      _ = Post.mouse(.leftMouseDragged, at: point)
       await Clock.sleep(ms: 25)
       if step % 5 == 0 { samples.append(DragOwner.sample(at: point)) }
     }
-    Post.mouse(.leftMouseUp, at: end)
+    _ = Post.mouse(.leftMouseUp, at: end)
     await settle(ms: 500)
     source.close()
     target.close()

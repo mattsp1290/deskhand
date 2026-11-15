@@ -48,7 +48,7 @@ enum IdleProbe {
         rig.window.clearReceived()
         var clicked = false
         if InputGuard.ownsTopmost(at: center) {
-          clicked = await Post.click(at: center, tap: tap, state: state)
+          clicked = await Post.click(at: center, tap: tap, state: state).allPosted
         }
         Post.move(to: CGPoint(x: center.x + 1, y: center.y), tap: tap, state: state)
         Post.move(to: center, tap: tap, state: state)
@@ -99,25 +99,38 @@ enum IdleProbe {
       await Clock.sleep(ms: 1300)
       let before = Signals.idle()
       rig.window.clearReceived()
-      let posted = Clock.monoMs()
-      let sent =
+      let started = Clock.monoMs()
+      let click =
         InputGuard.ownsTopmost(at: center)
-        ? await Post.click(at: center, tap: .cghidEventTap, state: .hidSystemState) : false
+        ? await Post.click(at: center, tap: .cghidEventTap, state: .hidSystemState)
+        : ClickReceipt(down: nil, up: nil)
       await Clock.sleep(ms: 60)
       let read = Clock.monoMs()
       let after = Signals.idle()
-      let delivered = sent && !rig.window.received("left_down").isEmpty
+      let receivedUp = rig.window.received("left_up")
+      let delivered = click.allPosted && receivedUp.count == 1
       for key in ["hid_any_s", "combined_any_s", "iohid_idle_s"] {
-        let assessment = MeasurementAnalysis.idle(
+        var assessment = MeasurementAnalysis.idle(
           delivered: delivered, before: before[key]?.doubleValue,
-          after: after[key]?.doubleValue, elapsed: (read - posted) / 1000)
-        let offset = after[key]?.doubleValue.map { (read - $0 * 1000) - posted }
+          after: after[key]?.doubleValue, elapsed: (read - started) / 1000)
+        let offset = MeasurementAnalysis.echoOffset(
+          observedMs: read, idleSeconds: after[key]?.doubleValue,
+          postedMs: click.up?.monotonicMs)
+        if assessment == .reset, !(offset.map { $0 >= 0 } ?? false) {
+          assessment = .inconclusive("idle-implied event does not match the posted mouse-up")
+        }
         if assessment == .reset, let offset { offsets[key, default: []].append(offset) }
         echoRows.append(
           .obj([
             ("counter", .string(key)), ("source", .string("hid_system")),
             ("tap", .string("hid")), ("before", before[key].orNull), ("after", after[key].orNull),
-            ("posted_ms", .double(posted)), ("observed_ms", .double(read)),
+            ("action_started_ms", .double(started)),
+            ("down_posted_ms", .num(click.down?.monotonicMs)),
+            ("up_posted_ms", .num(click.up?.monotonicMs)),
+            ("all_posted", .bool(click.allPosted)),
+            ("received_mouse_up", .array(receivedUp.map(\.json))),
+            ("observed_ms", .double(read)),
+            ("implied_event_ms", .num(after[key]?.doubleValue.map { read - $0 * 1000 })),
             ("assessment", assessment.json), ("raw_offset_ms", .num(offset)),
           ]))
       }
@@ -134,10 +147,15 @@ enum IdleProbe {
       let stats = percentiles(values)
       report.finding(
         "\(key): last-event time implied by the idle counter minus post time: p50 "
-          + "\(stats["p50"]?.intValue ?? 0) ms, p95 \(stats["p95"]?.intValue ?? 0) ms, max "
-          + "\(stats["max"]?.intValue ?? 0) ms (a 50 ms tolerance must cover the max)")
+          + "\(milliseconds(stats["p50"])) ms, p95 \(milliseconds(stats["p95"])) ms, max "
+          + "\(milliseconds(stats["max"])) ms (a 50 ms tolerance must cover the max)")
     }
     await rig.tearDown()
     return report
+  }
+
+  static func milliseconds(_ value: JSON?) -> String {
+    guard let number = value?.doubleValue, number.isFinite else { return "unavailable" }
+    return String(format: "%.1f", number)
   }
 }

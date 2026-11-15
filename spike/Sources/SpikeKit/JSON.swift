@@ -65,7 +65,7 @@ public nonisolated enum JSON: Sendable, Equatable {
   public var intValue: Int? {
     switch self {
     case .int(let value): return value
-    case .double(let value) where value.isFinite: return Int(value)
+    case .double(let value): return Int(exactly: value)
     default: return nil
     }
   }
@@ -189,7 +189,8 @@ public nonisolated enum JSON: Sendable, Equatable {
     case let number as NSNumber:
       if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
       if CFNumberIsFloatType(number) { return .double(number.doubleValue) }
-      return .int(number.intValue)
+      if let integer = Int(number.stringValue) { return .int(integer) }
+      return .double(number.doubleValue)
     case let string as String: return .string(string)
     case let date as Date: return .string(Clock.iso(date))
     case let data as Data: return .obj([("data_bytes", .int(data.count))])

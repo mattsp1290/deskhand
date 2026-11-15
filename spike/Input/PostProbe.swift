@@ -29,7 +29,7 @@ enum PostProbe {
       Post.move(to: center, tap: tap)
       await settle(ms: 100)
       let moved = hypot(Post.location().x - center.x, Post.location().y - center.y) < 1
-      await Post.click(at: center, tap: tap)
+      _ = await Post.click(at: center, tap: tap)
       await settle(ms: 300)
       let downs = rig.window.received("left_down").count
       deliveredAny = deliveredAny || downs > 0

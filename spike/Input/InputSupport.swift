@@ -49,7 +49,7 @@ final class InputRig {
   func focus() async -> Bool {
     let point = window.globalCenter
     if InputGuard.ownsTopmost(at: point) {
-      await Post.click(at: point)
+      _ = await Post.click(at: point)
       await settle(ms: 300)
     }
     if !InputGuard.ownsKeyboard() {

@@ -183,6 +183,9 @@ enum Campaign {
       prior = nil
     }
     var attempts = prior?["invocations"]?.arrayValue ?? []
+    guard attempts.allSatisfy({ $0["exit_status"]?.intValue != nil }) else {
+      throw TrialAbort.failed("existing campaign has an invalid invocation outcome")
+    }
     var selected = prior?["selected"]?.members?.map { ($0.key, $0.value) } ?? []
     let invocation = try String(
       contentsOf: run.appendingPathComponent("invocation.json"), encoding: .utf8)

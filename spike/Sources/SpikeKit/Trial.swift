@@ -22,6 +22,25 @@ public nonisolated struct CommandFailure: Error {
 }
 
 public nonisolated enum CommandProtocol {
+  private enum ReplyFrame {
+    case result(JSON)
+    case completion(count: Int, success: Bool)
+
+    init?(_ frame: JSON) {
+      if let report = frame["result"] {
+        guard report.members != nil,
+          ["complete", "count", "success"].allSatisfy({ frame[$0] == nil })
+        else { return nil }
+        self = .result(report)
+      } else {
+        guard frame["complete"]?.boolValue == true, let count = frame["count"]?.intValue,
+          let success = frame["success"]?.boolValue
+        else { return nil }
+        self = .completion(count: count, success: success)
+      }
+    }
+  }
+
   public static func result(_ report: JSON, id: String) -> JSON {
     .obj([("id", .string(id)), ("result", report)])
   }
@@ -46,12 +65,12 @@ public nonisolated enum CommandProtocol {
       guard !completed, let frame = JSON.parse(line), frame.members != nil,
         frame["id"]?.stringValue == id
       else { throw failure("invalid reply frame or request ID") }
-      if let report = frame["result"], report.members != nil {
+      guard let reply = ReplyFrame(frame) else { throw failure("invalid or mixed reply frame") }
+      switch reply {
+      case .result(let report):
         reports.append(report)
-      } else {
-        guard frame["complete"]?.boolValue == true,
-          frame["count"]?.intValue == reports.count,
-          frame["success"]?.boolValue == true
+      case .completion(let count, let success):
+        guard count == reports.count, success
         else { throw failure("unsuccessful or mismatched completion") }
         completed = true
       }
@@ -63,7 +82,9 @@ public nonisolated enum CommandProtocol {
       throw failure("command result reports failure")
     }
     if let expectedProbes {
-      guard reports.compactMap({ $0["probe"]?.stringValue }) == expectedProbes else {
+      guard reports.count == expectedProbes.count,
+        reports.map({ $0["probe"]?.stringValue }) == expectedProbes.map(Optional.some)
+      else {
         throw failure("probe names do not match the requested catalog operation")
       }
     } else if reports.count != 1 {

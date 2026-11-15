@@ -41,7 +41,7 @@ enum ClickThroughProbe {
     if stack.first?.ownerPID == getpid() {
       below.clearReceived()
       overlay.clearReceived()
-      await Post.click(at: point)
+      _ = await Post.click(at: point)
       await settle(ms: 300)
       let belowGot = below.received("left_down").count
       let overlayGot = overlay.received("left_down").count

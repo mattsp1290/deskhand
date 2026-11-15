@@ -95,7 +95,7 @@ enum HeldInputProbe {
     switch kind {
     case "key": Post.key(kVK_ANSI_X, down: false)
     case "shift": Post.key(kVK_Shift, down: false)
-    default: Post.mouse(.leftMouseUp, at: point)
+    default: _ = Post.mouse(.leftMouseUp, at: point)
     }
   }
 
@@ -116,7 +116,7 @@ enum HeldInputProbe {
     switch arguments[1] {
     case "key": Post.key(kVK_ANSI_X, down: true)
     case "shift": Post.key(kVK_Shift, down: true, flags: .maskShift)
-    case "mouse": Post.mouse(.leftMouseDown, at: CGPoint(x: x, y: y))
+    case "mouse": _ = Post.mouse(.leftMouseDown, at: CGPoint(x: x, y: y))
     default: return 2
     }
     print("posted \(arguments[1]) down; exiting without release")

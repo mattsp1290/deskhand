@@ -2,6 +2,27 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
+public nonisolated struct EventPost: Sendable {
+  public let eventType: CGEventType
+  public let monotonicMs: Double
+
+  public init(eventType: CGEventType, monotonicMs: Double) {
+    self.eventType = eventType
+    self.monotonicMs = monotonicMs
+  }
+}
+
+public nonisolated struct ClickReceipt: Sendable {
+  public let down: EventPost?
+  public let up: EventPost?
+  public var allPosted: Bool { down != nil && up != nil }
+
+  public init(down: EventPost?, up: EventPost?) {
+    self.down = down
+    self.up = up
+  }
+}
+
 /// CGEvent posting. `CGEvent.post` never reports failure: without the grant macOS drops the
 /// event silently, so every probe checks delivery separately.
 public enum Post {
@@ -88,15 +109,16 @@ public enum Post {
     _ type: CGEventType, at point: CGPoint, button: CGMouseButton = .left,
     tap: CGEventTapLocation = .cghidEventTap, state: CGEventSourceStateID = .hidSystemState,
     clickState: Int64 = 1
-  ) -> Bool {
+  ) -> EventPost? {
     guard
       let event = CGEvent(
         mouseEventSource: source(state), mouseType: type, mouseCursorPosition: point,
         mouseButton: button)
-    else { return false }
+    else { return nil }
     event.setIntegerValueField(.mouseEventClickState, value: clickState)
+    let posted = Clock.monoMs()
     event.post(tap: tap)
-    return true
+    return EventPost(eventType: type, monotonicMs: posted)
   }
 
   @discardableResult
@@ -104,18 +126,18 @@ public enum Post {
     to point: CGPoint, tap: CGEventTapLocation = .cghidEventTap,
     state: CGEventSourceStateID = .hidSystemState
   ) -> Bool {
-    mouse(.mouseMoved, at: point, tap: tap, state: state)
+    mouse(.mouseMoved, at: point, tap: tap, state: state) != nil
   }
 
   @discardableResult
   public static func click(
     at point: CGPoint, tap: CGEventTapLocation = .cghidEventTap,
     state: CGEventSourceStateID = .hidSystemState
-  ) async -> Bool {
+  ) async -> ClickReceipt {
     let down = mouse(.leftMouseDown, at: point, tap: tap, state: state)
     await Clock.sleep(ms: 40)
     let up = mouse(.leftMouseUp, at: point, tap: tap, state: state)
-    return down && up
+    return ClickReceipt(down: down, up: up)
   }
 
   /// Moves in small steps so the path is a real pointer movement (hot corners need one).

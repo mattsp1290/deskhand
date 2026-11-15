@@ -25,6 +25,16 @@ public nonisolated struct LockReference {
 }
 
 public nonisolated enum MeasurementAnalysis {
+  public static func echoOffset(observedMs: Double, idleSeconds: Double?, postedMs: Double?)
+    -> Double?
+  {
+    guard let idleSeconds, let postedMs, observedMs.isFinite, idleSeconds.isFinite,
+      idleSeconds >= 0, postedMs.isFinite
+    else { return nil }
+    let offset = observedMs - idleSeconds * 1000 - postedMs
+    return offset.isFinite ? offset : nil
+  }
+
   public static func idle(delivered: Bool, before: Double?, after: Double?, elapsed: Double)
     -> IdleAssessment
   {
