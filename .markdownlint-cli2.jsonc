@@ -1,0 +1,19 @@
+{
+  "config": {
+    "default": true,
+    // Prose is wrapped at 120 columns; tables and code blocks are exempt.
+    "MD013": {
+      "line_length": 120,
+      "code_blocks": false,
+      "tables": false
+    }
+  },
+  "globs": ["**/*.{md,markdown}"],
+  "ignores": [
+    ".build/**",
+    ".swiftpm/**",
+    "node_modules/**",
+    // Generated planning prompts, not maintained as project docs.
+    "docs/prompts/**"
+  ]
+}
