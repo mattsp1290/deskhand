@@ -238,7 +238,36 @@ PROSE_SITES = [
      [("MAX_LONG_EDGE", "value"), ("MAX_PIXELS", "value")]),
     ("17.1 ", rf"down to ({NUM}) px", [("MIN_LONG_EDGE", "value")]),
     ("19. ", rf"an image has at most ({NUM}) pixels", [("MAX_PIXELS", "value")]),
+    ("6.3 ", rf"\| `max_long_edge` \| no \| ({NUM}) \| Integer, ({NUM}) to ({NUM})\.",
+     [("MAX_LONG_EDGE", "value"), ("MIN_LONG_EDGE", "value"), ("MAX_LONG_EDGE", "value")]),
 ]
+
+SCHEMA_PROSE_SITES = [
+    ("4.1 ", rf"({NUM}) to ({NUM}) characters from",
+     [(DEFS, "/$defs/holder_id", "minLength"), (DEFS, "/$defs/holder_id", "maxLength")]),
+    ("4.2 ", rf"Callers accept any ({NUM}) to ({NUM}) characters",
+     [(DEFS, "/$defs/frame_id", "minLength"), (DEFS, "/$defs/frame_id", "maxLength")]),
+    ("4.3 ", rf"({NUM}) to ({NUM}) characters from",
+     [(DEFS, "/$defs/operation_id", "minLength"), (DEFS, "/$defs/operation_id", "maxLength")]),
+    ("6.7 ", rf"Titles are cut to ({NUM}) Unicode", [(DEFS, "/$defs/measured/properties/window_title", "maxLength")]),
+    ("6.8 ", rf"a list of ({NUM}) to ({NUM}) distinct",
+     [(DEFS, "/$defs/permitted_apps", "minItems"), (DEFS, "/$defs/permitted_apps", "maxItems")]),
+    ("8.2 ", rf"Integers outside ({NUM}) to ({NUM})",
+     [(DEFS, "/$defs/frame_coordinate", "minimum"), (DEFS, "/$defs/frame_coordinate", "maximum")]),
+    ("14.2 ", rf"`mac` \| [^|]*?: ({NUM}) to ({NUM}) characters",
+     [("allowance.json", "/properties/mac", "minLength"), ("allowance.json", "/properties/mac", "maxLength")]),
+]
+
+SUBSCHEMA_KEYWORDS = {"not", "if", "then", "else", "items", "contains", "additionalProperties", "propertyNames",
+                      "unevaluatedItems", "unevaluatedProperties", "contentSchema"}
+SUBSCHEMA_LIST_KEYWORDS = {"allOf", "anyOf", "oneOf", "prefixItems"}
+SUBSCHEMA_MAP_KEYWORDS = {"properties", "patternProperties", "$defs", "dependentSchemas"}
+SCHEMA_KEYWORDS = SUBSCHEMA_KEYWORDS | SUBSCHEMA_LIST_KEYWORDS | SUBSCHEMA_MAP_KEYWORDS | {
+    "$schema", "$id", "$ref", "$anchor", "$dynamicRef", "$dynamicAnchor", "$vocabulary", "$comment",
+    "type", "enum", "const", "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum",
+    "maxLength", "minLength", "pattern", "maxItems", "minItems", "uniqueItems", "maxContains", "minContains",
+    "maxProperties", "minProperties", "required", "dependentRequired", "title", "description", "default",
+    "deprecated", "readOnly", "writeOnly", "examples", "format", "contentEncoding", "contentMediaType"}
 
 
 def number(text: str):
@@ -370,6 +399,31 @@ class Checker:
         for rel, s in self.schemas.items():
             self.check_refs(rel, s)
             self.check_formats(rel, s)
+            self.check_keywords(rel, s)
+        self.check_copies()
+
+    def check_copies(self) -> None:
+        copy_ts = self.schemas.get("allowance.json", {}).get("$defs", {}).get("timestamp")
+        if copy_ts != self.schemas[DEFS].get("$defs", {}).get("timestamp"):
+            self.fail(f"allowance.json: $defs/timestamp differs from {DEFS}#/$defs/timestamp; they must stay identical")
+
+    def check_keywords(self, rel: str, node, where: str = "") -> None:
+        if isinstance(node, bool):
+            return
+        if not isinstance(node, dict):
+            self.fail(f"{rel}: {where or '/'} is not a schema")
+            return
+        for k, v in node.items():
+            if k not in SCHEMA_KEYWORDS:
+                self.fail(f"{rel}: unknown keyword {k!r} at {where or '/'}")
+            elif k in SUBSCHEMA_KEYWORDS:
+                self.check_keywords(rel, v, f"{where}/{k}")
+            elif k in SUBSCHEMA_LIST_KEYWORDS:
+                for i, x in enumerate(v):
+                    self.check_keywords(rel, x, f"{where}/{k}/{i}")
+            elif k in SUBSCHEMA_MAP_KEYWORDS:
+                for n, x in v.items():
+                    self.check_keywords(rel, x, f"{where}/{k}/{n}")
 
     def check_refs(self, rel: str, schema: dict) -> None:
         # Validators resolve $ref lazily, so a ref on a path no example reaches would go unnoticed.
@@ -812,7 +866,8 @@ class Checker:
         used = set()
         for prefix in ("2.3 ", "2.4 "):
             pairs = {(int(code), int(http)) for http, code in
-                     re.findall(r"`(\d{3})`, (?:JSON-RPC )?`(-\d+)`", self.section(prefix))}
+                     re.findall(r"`(\d{3})`(?:,| and| with) (?:JSON-RPC )?`(-\d+)`",
+                                re.sub(r"\s+", " ", self.section(prefix)))}
             if not pairs:
                 self.fail(f"contract.md {prefix.strip()}: no `<HTTP status>`, `<code>` pairs found")
             for code, http in sorted(pairs - table):
@@ -1055,6 +1110,23 @@ class Checker:
                         self.fail(f"contract.md {prefix.strip()}: says {group} where section 16 gives "
                                   f"{part[0]} {part[1]} {want(*part)}")
         self.check_figures(want)
+        for prefix, pattern, sites in SCHEMA_PROSE_SITES:
+            text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
+            found = list(re.finditer(pattern, text))
+            if not found:
+                self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update SCHEMA_PROSE_SITES)")
+            for m in found:
+                for group, site in zip(m.groups(), sites):
+                    if site is None:
+                        continue
+                    rel, ptr, kw = site
+                    try:
+                        bound = pointer_get(self.schemas[rel], ptr)[kw]
+                    except (KeyError, IndexError, TypeError):
+                        self.fail(f"{rel}: no {kw} at {ptr} (update SCHEMA_PROSE_SITES if it moved)")
+                        continue
+                    if number(group) != bound:
+                        self.fail(f"contract.md {prefix.strip()}: says {group} where {rel}#{ptr}/{kw} is {bound}")
         for name, value in re.findall(rf"`([A-Z][A-Z_]+)` = ({NUM})", self.md):
             if name in consts and number(value) != want(name, "value"):
                 self.fail(f"contract.md: `{name}` = {value}, section 16 gives {want(name, 'value')}")

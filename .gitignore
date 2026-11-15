@@ -20,3 +20,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+.venv/
+__pycache__/

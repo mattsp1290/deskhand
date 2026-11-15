@@ -4,7 +4,7 @@ import Testing
 
 /// These run everywhere, CI included, so a gate that stops skipping fails here first.
 /// Pairing the tag with the trait is checked by `scripts/check-mac-session-gate.sh`.
-@Suite struct MacSessionGateTests {
+@Suite(.timeLimit(.minutes(1))) struct MacSessionGateTests {
     @Test(arguments: [
         ([String: String](), false),
         ([macSessionTestsEnvironmentKey: "1"], true),
