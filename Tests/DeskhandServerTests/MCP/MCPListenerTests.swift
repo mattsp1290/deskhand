@@ -5,7 +5,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// The JSON-RPC layer behind the real listener, over TLS on loopback.
 @Suite(.timeLimit(.minutes(1))) struct MCPListenerTests {
     static func mcpRequest(_ request: MCPTestRequest) -> TestRequest {
         var test = TestRequest.valid(body: request.body)
@@ -68,7 +67,6 @@ import Testing
         }
     }
 
-    /// Contract 2.1: closing the connection before the response arrives cancels the call.
     @Test func closingTheConnectionCancelsTheCall() async throws {
         let dispatcher = FakeDispatcher(.waitForCancellation)
         try await ListenerHarness.withListener(handler: MCPHandler(dispatcher: dispatcher)) { address, pki, _ in
@@ -83,8 +81,6 @@ import Testing
         }
     }
 
-    /// The same for a caller that is killed or crashes: its connection ends with a reset or a FIN
-    /// and no TLS close_notify, and the dispatcher must still see the cancellation.
     @Test(arguments: HangUp.allCases)
     func hangingUpWithoutCloseNotifyCancelsTheCall(_ hangUp: HangUp) async throws {
         let dispatcher = FakeDispatcher(.waitForCancellation)

@@ -45,8 +45,6 @@ import Testing
         #expect(await log.attempts.count == 1)
     }
 
-    /// The writer may have the line when the acknowledgement is lost; deskhand still refuses, so the
-    /// log shows an intent that nothing followed, never an effect without an intent.
     @Test func lostAcknowledgementStillRefuses() async throws {
         let base = InMemoryActionLog()
         let log = FaultInjectingActionLog(wrapping: base)

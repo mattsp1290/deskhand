@@ -5,7 +5,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// `tools/call` after check 20: dispatch, refusals as `isError` results, and cancellation.
 @Suite struct ToolCallTests {
     static let holder: JSONValue = "crew:inst-7f3a:desk-lunus"
     static let pointerArguments: JSONObject = [
@@ -117,8 +116,6 @@ import Testing
         #expect(dispatcher.calls.count == 1)
     }
 
-    /// Contract 2.4: inside `params.arguments` a strict-JSON fault is `invalid_argument`, found before
-    /// the schema, and the call is never dispatched.
     @Test(arguments: [
         (#"{"holder_id":"crew:a","holder_id":"crew:b"}"#, "/holder_id"),
         (#"{"action":{"type":"click","type":"move"}}"#, "/action/type"),
@@ -193,8 +190,6 @@ import Testing
                 == .refusal(.unencodableResult, .pointer, EffectHandles(arguments: Self.pointerArguments)))
     }
 
-    /// The listener cancels the request's task when the caller hangs up (contract 2.1); the call
-    /// runs inside that task, so the dispatcher sees the cancellation.
     @Test(.timeLimit(.minutes(1)))
     func cancellingTheRequestTaskCancelsTheDispatch() async {
         let dispatcher = FakeDispatcher(.waitForCancellation)

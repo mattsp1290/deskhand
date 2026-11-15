@@ -1,6 +1,5 @@
 import DeskhandCore
 
-/// SplitMix64: a deterministic generator so minted IDs are reproducible in tests.
 struct SeededGenerator: RandomNumberGenerator {
     var state: UInt64
 
@@ -13,7 +12,6 @@ struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
-/// Replays fixed words, then zeros.
 struct ScriptedGenerator: RandomNumberGenerator {
     var words: [UInt64]
 
@@ -73,7 +71,6 @@ extension FrameStore {
             using: &generator)
     }
 
-    /// The `stale_frame` reason `validate` gives, or `nil` when the frame is valid.
     func reason(
         _ id: FrameID, in scope: FrameScope, for use: FrameUse = .pointer,
         generation: DisplayConfigGeneration = FrameFixtures.generation, now: Timestamp = FrameFixtures.t0

@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Contract 6.5: a `press` posts the key it names under the layout it was checked against. A layout
-/// that changes after step 2 is a fault before any down event it would change.
 @Suite("Executor: the keyboard layout", .timeLimit(.minutes(1)))
 struct LayoutTests {
     @Test("a layout that lost the key before the last look fails the call with 0 events")

@@ -2,9 +2,6 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// The watchdog's loops while an owner's reduction or an executor's answer takes a while: nothing
-/// asked for meanwhile is lost, a busy executor holds up no read of the allowance file, and no loop
-/// spins (contract 13.1, 14.4).
 @Suite("Watchdog: reductions and answers that take a while", .timeLimit(.minutes(1)))
 struct WatchdogReentrancyTests {
     @Test("a file change that arrives during a reduction is read in one more pass")
@@ -16,7 +13,6 @@ struct WatchdogReentrancyTests {
         _ = await watchdog.evaluate()
         #expect(owner.calls == [true])
 
-        // The lease ran out: a reduction that does not read the file, held by the owner.
         clock.advance(byMilliseconds: 100)
         owner.holdNext()
         let evaluation = Task { await watchdog.evaluate() }
@@ -51,7 +47,6 @@ struct WatchdogReentrancyTests {
         let watchdog = Watchdog(owner: desk, executor: executor, activity: StaticActivity(), scheduler: clock)
         await executor.hold()
         let running = Task { await watchdog.run() }
-        // The executor's loop has its snapshot and waits on the executor.
         await executor.waitUntilHeld()
         await clock.waitUntil { $0 == [WatchdogFixture.at(500).monotonic] }
         desk.change { $0.allowanceFile = .valid(expiresAt: WatchdogFixture.at(300).wall) }
@@ -76,7 +71,6 @@ struct WatchdogReentrancyTests {
         await watch.waitUntilWatched()
         await desk.waitForReductions(1)
         await executor.hold()
-        // A routine republish wakes the executor's loop, which waits on the executor from here on.
         watch.fire()
         await executor.waitUntilHeld()
         await desk.waitForReductions(2)
@@ -145,7 +139,6 @@ struct WatchdogReentrancyTests {
         watch.fire()
         await owner.waitUntilHeld()
 
-        // The periodic read falls due while the file change's reduction is still held.
         clock.advance(to: WatchdogFixture.at(500).monotonic)
         await clock.waitUntil { $0.contains(WatchdogFixture.at(600).monotonic) }
         let snapshots = owner.snapshots
@@ -162,7 +155,6 @@ struct WatchdogReentrancyTests {
     }
 }
 
-/// An owner that, as the app's may, calls ``Watchdog/refreshState()`` from inside its reduction.
 final class RefreshingOwner: WatchdogStateOwner {
     let desk: FakeDesk
     let watchdog = Mutex<Watchdog?>(nil)
@@ -177,9 +169,6 @@ final class RefreshingOwner: WatchdogStateOwner {
     }
 }
 
-/// An owner whose next reduction waits until the test releases it, and that records every
-/// reduction's `allowanceChanged` and counts its snapshots. A held reduction also ends when its
-/// task is cancelled.
 final class HeldReductionOwner: WatchdogStateOwner {
     private struct State {
         var calls: [Bool] = []
@@ -200,10 +189,8 @@ final class HeldReductionOwner: WatchdogStateOwner {
 
     func holdNext() { state.withLock { $0.holdNext = true } }
 
-    /// Returns once a reduction is held, or the calling task is cancelled.
     func waitUntilHeld() async { await changes.wait { self.state.withLock(\.holding) } }
 
-    /// Returns once `count` reductions began, or the calling task is cancelled.
     func waitForCalls(_ count: Int) async { await changes.wait { self.calls.count >= count } }
 
     func release() {
@@ -229,9 +216,6 @@ final class HeldReductionOwner: WatchdogStateOwner {
     }
 }
 
-/// An executor that stops answering when the test holds it, as one inside a slow synchronous seam:
-/// every ``nextCleanupRetry(at:)`` from then on waits until the test releases it, or until its task
-/// is cancelled.
 actor HeldExecutor: WatchdogExecutor {
     private nonisolated let state = Mutex((holding: false, held: 0))
     private nonisolated let changes = Waiters()
@@ -240,7 +224,6 @@ actor HeldExecutor: WatchdogExecutor {
 
     func hold() { state.withLock { $0.holding = true } }
 
-    /// Returns once a query is held, or the calling task is cancelled.
     nonisolated func waitUntilHeld() async { await changes.wait { self.state.withLock { $0.held > 0 } } }
 
     func release() {

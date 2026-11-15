@@ -86,8 +86,6 @@ final class ConnectionHandler: ChannelInboundHandler {
         context.fireChannelInactive()
     }
 
-    /// The caller closed its sending side. Nothing more can arrive, so a request still being
-    /// received never completes, and for a running call it is the caller closing the stream.
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if case .inputClosed? = event as? ChannelEvent {
             close(context: context)
@@ -96,9 +94,6 @@ final class ConnectionHandler: ChannelInboundHandler {
         context.fireUserInboundEventTriggered(event)
     }
 
-    /// A malformed request gets `400`, an oversized head `431` (check 2), when no response is under
-    /// way. Anything else (a reset, a TLS hang-up without close_notify, a parse error behind a
-    /// running call) closes the connection, which also cancels a running call.
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         switch (error as? HTTPParserError, state) {
         case (.some(let parserError), .idle), (.some(let parserError), .receiving):
@@ -195,8 +190,6 @@ final class ConnectionHandler: ChannelInboundHandler {
         if mustClose { closeGracefully(after: written, context: context) }
     }
 
-    /// Checks 2 to 10 have no meaningful body, and the request's own body may still be arriving,
-    /// so the connection is not reused.
     private func answerAndClose(status: HTTPResponseStatus, headers: [(String, String)], context: ChannelHandlerContext)
     {
         enterClosing()
@@ -208,8 +201,6 @@ final class ConnectionHandler: ChannelInboundHandler {
         closeGracefully(after: context.writeAndFlush(wrapOutboundOut(.end(nil))), context: context)
     }
 
-    /// The only transition into `.closing`. A running call is cancelled before its task handle is
-    /// dropped, whatever ended the connection (contract 2.1).
     private func enterClosing() {
         if case .handling(let task) = state { task.cancel() }
         state = .closing
@@ -237,7 +228,6 @@ final class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    /// Read from the event loop's clock, the one the max-age timer runs on.
     private func isPastMaxAge(now: NIODeadline) -> Bool {
         guard let openedAt else { return false }
         return now - openedAt >= maxAge
@@ -256,17 +246,13 @@ final class ConnectionHandler: ChannelInboundHandler {
             self.closeAfterResponse = true
             switch self.state {
             case .handling, .closing:
-                // A request already received runs to completion; the connection closes after its
-                // response (contract 2.1).
                 return
             case .idle, .receiving:
-                // A request whose body is still arriving has not started a call.
                 self.close(context: context)
             }
         }
     }
 
-    /// A body that stops arriving would otherwise hold the connection until the max age.
     private func startBodyTimer(context: ChannelHandlerContext) {
         bodyTimer = context.eventLoop.assumeIsolated().scheduleTask(in: bodyTimeout) {
             guard case .receiving = self.state else { return }
@@ -281,7 +267,6 @@ final class ConnectionHandler: ChannelInboundHandler {
 }
 
 extension NodeAddress {
-    /// The IP address of a socket address; `nil` for a Unix domain socket.
     init?(socketAddress: SocketAddress) {
         switch socketAddress {
         case .v4(let address): self.init(bytes: withUnsafeBytes(of: address.address.sin_addr) { Array($0) })

@@ -5,14 +5,11 @@ import Testing
 
 @testable import DeskhandServer
 
-/// The per-Mac action ceiling (contract 9.5 "The action ceiling", step 7) through the MCP layer,
-/// the real dispatcher and the executor: what counts, what does not, and `retry_after_ms`.
 @Suite("rate_limited through the dispatcher")
 struct RateLimitTests {
     static let holder = ToolFixture.holder.rawValue
     static let terminal = ToolFixture.app("com.apple.Terminal", "Terminal")
 
-    /// A harness with a ceiling of `perMinute`, `holder` holding the lease, and a fresh frame.
     static func ready(perMinute: Int, holder: String = holder) async throws -> (ToolHarness, String) {
         let harness = try ToolHarness(limits: Limits(actionsPerMinute: perMinute))
         _ = await call(harness, "lease", ["op": "acquire", "holder_id": .string(holder), "ttl_ms": 120_000])
@@ -94,7 +91,6 @@ struct RateLimitTests {
         }
         #expect(entry.code == .rateLimited)
 
-        // Once the oldest counted call has left the window, the same operation_id is judged afresh.
         harness.clock.advance(byMilliseconds: ActionCeiling.windowMs - elapsed)
         let fresh = try await Self.frame(harness)
         #expect(await Self.type(harness, frame: fresh, "op-4").structuredContent?["status"] == "completed")
@@ -106,7 +102,6 @@ struct RateLimitTests {
         let (harness, frame) = try await Self.ready(perMinute: 3)
         #expect(await Self.type(harness, frame: frame, "op-1").structuredContent?["status"] == "completed")
 
-        // None of these counts.
         for _ in 0..<3 {
             #expect(await Self.type(harness, frame: frame, "op-1").structuredContent?["replayed"] == true)
             #expect(
@@ -124,7 +119,6 @@ struct RateLimitTests {
                     == "lease_held_by_other")
         }
 
-        // These two do: the policy cannot be probed without limit.
         let shortcut = await Self.spotlight(harness, frame: frame, "op-spotlight")
         #expect(shortcut.structuredContent?["code"] == "denied_shortcut")
         #expect(shortcut.structuredContent?["details"] == ["shortcut": "command+space"])
@@ -136,8 +130,6 @@ struct RateLimitTests {
 
         let limited = await Self.type(harness, frame: frame, "op-2")
         #expect(limited.structuredContent?["code"] == "rate_limited")
-        // Step 7 comes before the policy's steps, so a call the policy would deny is rate_limited at
-        // the ceiling, which counts nothing.
         let deniedAtCeiling = await Self.spotlight(harness, frame: frame, "op-spotlight")
         #expect(deniedAtCeiling.structuredContent?["code"] == "rate_limited")
         #expect(await Self.lookUp(harness, "op-2") == .null)
@@ -149,7 +141,6 @@ struct RateLimitTests {
         for operation in ["op-1", "op-2"] {
             #expect(await Self.type(harness, frame: frame, operation).structuredContent?["status"] == "completed")
         }
-        // Refusal order: the lease (step 6) comes before the ceiling, a stale frame (step 9) after it.
         #expect(
             await Self.type(harness, frame: frame, "op-3", holder: "crew:beta").structuredContent?["code"]
                 == "lease_held_by_other")

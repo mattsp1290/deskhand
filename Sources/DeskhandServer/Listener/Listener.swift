@@ -122,7 +122,6 @@ public final class DeskhandListener: Sendable {
         for connection in connections { try? await connection.close() }
     }
 
-    /// Open connections, for tests that inspect the accepted sockets.
     var openConnections: [any Channel] { state.withLock { Array($0.connections.values) } }
 
     private func makeBootstrap() -> ServerBootstrap {
@@ -185,15 +184,9 @@ public final class DeskhandListener: Sendable {
                 return channel.eventLoop.makeFailedFuture(error)
             }
         }
-        var limits = NIOHTTPDecoderLimitConfiguration()
-        limits.maxHeaderFieldSize = configuration.maxRequestHeaderBytes
-        limits.maxHeaderListSize = configuration.maxRequestHeaderBytes
         let pipeline = channel.pipeline.syncOperations
         try pipeline.addHandler(tlsHandler)
-        try pipeline.addHandler(
-            ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .dropBytes, limitConfiguration: limits))
-        )
-        try pipeline.addHandler(HTTPResponseEncoder())
+        try BoundedHTTPCodec.install(on: channel, limit: configuration.maxRequestHeaderBytes)
         try pipeline.addHandler(
             ConnectionHandler(
                 configuration: configuration,

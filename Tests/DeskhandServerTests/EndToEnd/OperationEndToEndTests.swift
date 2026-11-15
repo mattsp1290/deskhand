@@ -3,8 +3,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// The effect tools over the wire (contract 4.3, 6.7, 8.3, 9.5, 12.4, 12.5): results, repeats,
-/// refusals in order, the admission section, a hang-up, the ceiling, and holder scoping.
 @Suite("end to end: operations", .timeLimit(.minutes(2)))
 struct OperationEndToEndTests {
     static let terminal = ToolFixture.app("com.apple.Terminal", "Terminal")
@@ -241,7 +239,6 @@ struct OperationEndToEndTests {
             #expect(own.structuredContent?["replayed"] == false)
             #expect(stack.desk.posted.count == 2 * posted)
 
-            // The first holder's record is untouched, and its repeat is answered before any lease check.
             #expect(try await stack.lookUp("op-1") == ["status": "completed", "events_posted": JSONValue(posted)])
             #expect(try await stack.call("keyboard", arguments).structuredContent?["replayed"] == true)
         }

@@ -35,10 +35,12 @@ public struct EffectArguments<Action: Hashable & Sendable>: Hashable, Sendable {
 /// validation can echo `operation_id` and look up an existing record (contract 9.5, steps 1 to 3).
 public struct EffectHandles: Hashable, Sendable {
     public let holderID: HolderID?
+    public let frameID: FrameID?
     public let operationID: OperationID?
 
     public init(arguments: JSONObject) {
         holderID = arguments["holder_id"]?.stringValue.flatMap(HolderID.init)
+        frameID = arguments["frame_id"]?.stringValue.flatMap(FrameID.init)
         operationID = arguments["operation_id"]?.stringValue.flatMap(OperationID.init)
     }
 }
@@ -132,7 +134,6 @@ public struct Measured: Hashable, Sendable, JSONRepresentable {
             measuredAt: measuredAt)
     }
 
-    /// The frontmost app, the target app and the app at the end of a drag all carry a `bundle_id`.
     fileprivate var identifiesEveryApp: Bool {
         frontmostApp.bundleID != nil && targetApp?.bundleID != nil
             && (dragEnd.map { $0.targetApp.bundleID != nil } ?? true)

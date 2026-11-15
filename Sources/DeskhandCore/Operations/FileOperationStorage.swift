@@ -28,7 +28,6 @@ public final class FileOperationStorage: OperationStorage {
     }
 
     public func replace(with bytes: [UInt8]) throws(StorageError) {
-        // The rename puts a new file at the path; later appends must open that one.
         appender = nil
         try file.replace(with: bytes)
     }

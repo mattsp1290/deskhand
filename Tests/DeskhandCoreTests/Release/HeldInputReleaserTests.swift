@@ -1,11 +1,8 @@
 import DeskhandCore
 import Testing
 
-/// The release handler on its own (contract 12.4 step 2, 12.7, 12.8): what it posts, in which
-/// order, under which authorization, and what it leaves in the ledger.
 @Suite("Release: the release handler", .timeLimit(.minutes(1)))
 struct HeldInputReleaserTests {
-    /// A fake Mac whose ledger file holds `entries`, opened through the fault-injecting disk.
     private static func ledger(_ entries: [HeldInput], on mac: FakeMac, faults: ReleaseFaults) throws
         -> HeldInputLedger
     {
@@ -196,5 +193,71 @@ struct HeldInputReleaserTests {
         #expect(available == false)
         #expect(ledger.pending() == HeldChord.pressed)
         #expect(mac.ledgerOnDisk == HeldChord.pressed)
+    }
+
+    @Test("a later authorization denial takes precedence over a failed clear")
+    func clearFailureThenDenial() throws {
+        let mac = FakeMac()
+        let faults = ReleaseFaults()
+        var ledger = try Self.ledger(HeldChord.pressed, on: mac, faults: faults)
+        faults.arm { $0.failingWrites = [1] }
+        let outcome = HeldInputReleaser().release(
+            HeldChord.pressed, from: &ledger, poster: FaultyPoster(mac: mac, faults: faults),
+            authorization: { mac.released.isEmpty ? .authorized : Self.authorization([.locked]) })
+        guard case .deferred([.locked]) = outcome else {
+            Issue.record("the later denial was not reported: \(outcome)")
+            return
+        }
+        #expect(mac.released == [.named(.k)])
+        #expect(ledger.pending() == HeldChord.pressed)
+        #expect(mac.ledgerOnDisk == HeldChord.pressed)
+        let available = ledger.isAvailable
+        #expect(!available)
+    }
+
+    @Test("a later post failure takes precedence over a failed clear")
+    func clearFailureThenPostFailure() throws {
+        let mac = FakeMac()
+        let faults = ReleaseFaults()
+        var ledger = try Self.ledger(HeldChord.pressed, on: mac, faults: faults)
+        faults.arm {
+            $0.failingWrites = [1]
+            $0.failingReleases = [2]
+        }
+        let outcome = HeldInputReleaser().release(
+            HeldChord.pressed, from: &ledger, poster: FaultyPoster(mac: mac, faults: faults),
+            authorization: { .authorized })
+        guard case .postFailed(let input, let error) = outcome else {
+            Issue.record("the later post failure was not reported: \(outcome)")
+            return
+        }
+        #expect(input == .modifierKey(.shift))
+        #expect(error is ReleaseFault)
+        #expect(mac.released == [.named(.k)])
+        #expect(ledger.pending() == HeldChord.pressed)
+        #expect(mac.ledgerOnDisk == HeldChord.pressed)
+        let available = ledger.isAvailable
+        #expect(!available)
+    }
+
+    @Test("an empty selection still reports an unavailable ledger without authorizing or posting")
+    func emptySelectionUnavailable() {
+        let mac = FakeMac()
+        let faults = ReleaseFaults()
+        var ledger = HeldInputLedger(unreadable: mac.ledgerStore)
+        let outcome = HeldInputReleaser().release(
+            [], from: &ledger, poster: FaultyPoster(mac: mac, faults: faults),
+            authorization: {
+                Issue.record("authorization was requested without a selected recorded input")
+                return .authorized
+            })
+        guard case .clearFailed(.unavailable) = outcome else {
+            Issue.record("the unavailable ledger was not reported: \(outcome)")
+            return
+        }
+        #expect(mac.read(\.trace).isEmpty)
+        #expect(ledger.pending().isEmpty)
+        let available = ledger.isAvailable
+        #expect(!available)
     }
 }

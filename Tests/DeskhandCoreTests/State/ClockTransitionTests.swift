@@ -1,9 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Transitions the clock makes on its own, arming running out and the allowance expiring, are
-/// reduced even when the next reduction comes after the input that would hide them (contract 10.1,
-/// 10.4, 13.1, 14.5; review finding 1 of both re-reviews).
 @Suite(.timeLimit(.minutes(1))) struct ClockTransitionTests {
     private typealias F = StateFixture
 
@@ -11,21 +8,17 @@ import Testing
         [.cancelInFlight(state), .releaseHeldInput, .invalidateFrames, .dropLease(state.leaseDropping!)]
     }
 
-    /// Signals with every platform state absent and the allowance valid until `offsetMs`.
     private static func signals(allowanceUntil offsetMs: Int64) -> StateSignals {
         var signals = F.signals()
         signals.allowance = .valid(expiresAt: F.at(offsetMs).wall)
         return signals
     }
 
-    /// Armed for an hour under an allowance valid for 10 s.
     private static func armedUnderShortAllowance(_ configuration: StateConfiguration) -> StateReport {
         let signals = signals(allowanceUntil: 10_000)
         return F.reduce(.startup, signals, .arm(for: F.armingPeriod), configuration: configuration).report
     }
 
-    /// Re-review probe: the allowance expires, readers see `gated` and `disarmed`, and a renewal is
-    /// the next reading. The lapse still ends arming and runs its effects.
     @Test func aLapseRenewedBeforeTheNextReductionStillEndsArming() {
         let armed = Self.armedUnderShortAllowance(.standard)
         let seen = F.at(10_500)
@@ -39,8 +32,6 @@ import Testing
         #expect(renewed.report.armedUntil(at: seen) == nil)
     }
 
-    /// With `gated_ends_arming` false the lapse leaves arming alone, and still drops the lease and
-    /// invalidates the frames.
     @Test func aLapseRenewedBeforeTheNextReductionRunsItsEffectsWhenArmingIsIndependent() {
         let configuration = StateConfiguration(gatedEndsArming: false)
         let armed = Self.armedUnderShortAllowance(configuration)
@@ -53,8 +44,6 @@ import Testing
         #expect(renewed.report.arming == .armed(until: F.armedUntil))
     }
 
-    /// Re-review probe: arming runs out and the person arms again before the next reduction. The
-    /// lease is dropped and the frames invalidated all the same.
     @Test func armingThatRanOutAndIsArmedAgainStillRunsItsEffects() {
         let armed = F.reduce(.startup, F.signals(), .arm(for: .seconds(10))).report
         let seen = F.at(10_001)
@@ -65,7 +54,6 @@ import Testing
         #expect(rearmed.report.state(at: seen) == .ok)
     }
 
-    /// The existing row "arming again at expiry", with its effects.
     @Test func armingAgainExactlyAtExpiryRunsTheEffectsOfTheExpiry() {
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         let atExpiry = F.at(3_600_000)
@@ -74,8 +62,6 @@ import Testing
         #expect(rearmed.report.arming == .armed(until: F.at(7_200_000).monotonic))
     }
 
-    /// Two lapses between reductions are reduced in the order they happened, each with its own
-    /// effects.
     @Test func twoLapsesAreReducedInTheOrderTheyHappened() {
         let standard = StateConfiguration.standard
         let armingFirst = F.reduce(.startup, Self.signals(allowanceUntil: 8000), .arm(for: .seconds(5)))
@@ -101,7 +87,6 @@ import Testing
         #expect(third.report.activeStates(at: late).inPrecedenceOrder == [.disarmed])
     }
 
-    /// Arming and the allowance ending at one instant are one transition, named by the higher state.
     @Test func lapsesAtOneInstantAreOneTransition() {
         let report = F.reduce(.startup, Self.signals(allowanceUntil: 5000), .arm(for: .seconds(5))).report
         #expect(report.validUntil(at: F.t0) == F.at(5000).monotonic)
@@ -109,8 +94,6 @@ import Testing
         #expect(later.effects == Self.leavingOK(.gated))
     }
 
-    /// An allowance that expires within the same millisecond as arming, but after it, is still
-    /// valid when arming runs out.
     @Test func anAllowanceExpiringJustAfterArmingIsStillValidWhenArmingEnds() {
         let report = F.reduce(.startup, Self.signals(allowanceUntil: 5000), .arm(for: .microseconds(4_999_600)))
             .report
@@ -118,8 +101,6 @@ import Testing
         #expect(later.effects == Self.leavingOK(.disarmed) + [.dropLease(.gated)])
     }
 
-    /// Contract 13.1: the deadline of an executing effect is the earliest of the allowance, the
-    /// lease and the arming, and a renewal moves it.
     @Test func aRenewalMovesTheEffectDeadline() throws {
         let principal = Principal(certificateSubject: "CN=c")
         let holder = HolderID("h")!
@@ -146,7 +127,6 @@ import Testing
         #expect(report.effectDeadline(of: admitted, leases: leases, at: F.at(7000)) == F.at(7000).monotonic)
     }
 
-    /// The deadline is already past while arming or the allowance has ended.
     @Test func theEffectDeadlineIsPastWhileArmingOrTheAllowanceHasEnded() throws {
         let principal = Principal(certificateSubject: "CN=c")
         let holder = HolderID("h")!
@@ -161,21 +141,15 @@ import Testing
         #expect(gated.effectDeadline(of: admitted, leases: leases, at: F.at(100)) == F.at(100).monotonic)
     }
 
-    /// For random histories of signals, commands and times, one reduction per input emits exactly
-    /// the effects, and reaches exactly the report, of a reducer that also reduces at every instant
-    /// at which arming runs out or the allowance expires. Readers of a held report see the states
-    /// that reducer has reached.
     @Test func oneReductionPerInputEqualsAReducerSteppedAtEveryExpiry() {
         var checkedInputs = 0
         var clockSteps = 0
         var failures: [String] = []
         for seed in 0..<600 {
-            // Seeded, so a failing history can be replayed from its seed.
             var random = SeededGenerator(state: UInt64(seed))
             let configuration = StateConfiguration(gatedEndsArming: Bool.random(using: &random))
             var actual = StateReport.startup
             var reference = StateReport.startup
-            // What `startup` stands for: no allowance read.
             var lastSignals = F.signals(holding: [.gated])
             var lastMs: Int64 = 0
             var history: [String] = []
@@ -185,8 +159,6 @@ import Testing
                 let input = Self.randomInput(at: atMs, using: &random)
                 history.append("\(atMs) ms: \(input.command.map { "\($0)" } ?? "-") \(input.signals.allowance)")
 
-                // The reference reduces at every expiry; a reader of the held report checks halfway
-                // and at the input.
                 var expected: [TransitionEffect] = []
                 var steppedMs = lastMs
                 for checkpoint in [lastMs + (atMs - lastMs) / 2, atMs] {
@@ -268,8 +240,6 @@ import Testing
         return (signals, command)
     }
 
-    /// The offsets after `after` and through `through` at which `report`, reduced from `signals`,
-    /// changes by the clock alone, earliest first.
     private static func expiryOffsets(of report: StateReport, signals: StateSignals, after: Int64, through: Int64)
         -> [Int64]
     {

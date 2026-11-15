@@ -29,14 +29,11 @@ public enum HeldInput: Hashable, Sendable, CustomStringConvertible {
     }
 }
 
-/// The ledger file: `{"held":[{"modifier":56},{"key":0},{"button":"left"}],"version":1}` in RFC 8785
-/// form, entries in press order.
 enum HeldInputLedgerFormat {
     static let version = 1
 
     static func encode(_ entries: [HeldInput]) -> [UInt8] {
         let document: JSONValue = ["held": .array(entries.map(\.ledgerValue)), "version": JSONValue(version)]
-        // Only strings and small integers, so canonicalization has nothing non-finite to refuse.
         return try! document.canonicalBytes()
     }
 

@@ -77,11 +77,8 @@ public actor InputExecutor {
     let seams: Seams
     let waitLimit: WaitLimit
     var ceiling: ActionCeiling
-    /// `nil` when it could not be loaded, or after it refused a final write without marking itself
-    /// unavailable; every effect is then `internal_error` until it is loaded again (contract 12.3).
     var store: OperationStore?
     var ledger: HeldInputLedger
-    /// When to try the owed releases again, and which already went out (contract 11.2).
     var pendingCleanup = PendingCleanup()
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
@@ -100,6 +97,7 @@ public actor InputExecutor {
     /// Refusal entries held back until their call's intent append returns (``PendingIntent``),
     /// which ``awaitStopEntries()`` waits for as it waits for an outcome entry.
     var refusalsHeld = 0
+    var outstandingRead: OutstandingRead?
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release, and a ledger that could not
@@ -128,7 +126,6 @@ public actor InputExecutor {
     /// cannot be read, in which case it may hold some.
     public var owesReleases: Bool { section.isIdle && ledgerOwes }
 
-    /// The ledger holds entries, or cannot be read and so may hold some.
     var ledgerOwes: Bool { !ledger.pending().isEmpty || !ledger.isAvailable }
 
     /// Stops the call in the admission section with `interruption` at its next check: before its
@@ -170,15 +167,11 @@ public actor InputExecutor {
         return storesAvailable
     }
 
-    /// Loads the record file again when it could not be loaded or a failed write left it
-    /// unavailable. Only while no call is in the admission section.
     func reloadUnavailableRecords(now: Timestamp) {
         guard !(store?.isAvailable ?? false) else { return }
         store = try? seams.operationStore.load(now: now)
     }
 
-    /// The record's view for the `operation` member of a refusal at steps 1 to 4 (contract 9.5), with
-    /// the live count while that operation executes.
     func recordView(_ key: OperationKey, at snapshot: DeskSnapshot) -> OperationView? {
         if case .executing(let claim, _, let posted) = section, claim.key == key {
             return OperationView(status: .executing, eventsPosted: posted)
@@ -186,8 +179,6 @@ public actor InputExecutor {
         return (try? store?.record(for: key, now: snapshot.reading.wall))?.view
     }
 
-    /// The call inside the section, as a lookup of its key sees it: `accepted` with 0 events while it
-    /// is being admitted, its live count once it executes.
     func sectionView(of key: OperationKey) -> OperationView? {
         switch section {
         case .admitting(let claim) where claim.key == key: OperationView(status: .accepted, eventsPosted: 0)
@@ -197,7 +188,6 @@ public actor InputExecutor {
         }
     }
 
-    /// Leaves the admission section: after a refusal, a replay or the final record write.
     func leaveSection() {
         let wasExecuting: Bool
         if case .executing = section { wasExecuting = true } else { wasExecuting = false }
@@ -208,9 +198,6 @@ public actor InputExecutor {
         resumeStopWaiters()
     }
 
-    /// Commits a refusal entry, best effort (contract 12.10), waiting at most ``waitLimit``. The
-    /// entry of a call whose intent append has not returned waits for that append instead, and is
-    /// then written by ``logHeldRefusal(_:)``.
     func logRefusal(_ entry: ActionLogRefusal?, after intent: PendingIntent? = nil) async {
         guard let entry else { return }
         if let intent, intent.holdRefusal(entry) {
@@ -235,9 +222,6 @@ public actor InputExecutor {
         resumeStopWaiters()
     }
 
-    /// Runs one append to the action log within ``waitLimit`` and reports how it went, for the
-    /// `log_unavailable` condition (contract 11.3). `nil` when it failed or did not answer in time.
-    /// An append that answers late reports then, unless a newer one already did.
     @discardableResult
     func logAppend<T: Sendable>(_ append: @escaping @Sendable () async -> T?) async -> T? {
         let attempt = logAttempts.start()
@@ -257,8 +241,6 @@ public actor InputExecutor {
         seams.observer.actionLogDidAppend(succeeded: succeeded)
     }
 
-    /// `user_active` before admission, at the last look, before every event and at every poll
-    /// (contract 13.2): input within `USER_ACTIVITY_LOOKBACK_MS`, or an idle signal that cannot be read.
     func activityCause() -> ToolErrorReason? {
         guard let idle = seams.activity.idleMilliseconds() else { return .userActive(idleMs: 0) }
         return idle < ContractConstants.userActivityLookbackMs ? .userActive(idleMs: max(0, idle)) : nil

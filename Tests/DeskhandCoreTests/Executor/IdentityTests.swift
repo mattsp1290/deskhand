@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// The app policy before admission, at the last look and before every event (contract 6.7, 6.9,
-/// 12.3, 12.4), and the identities bound at the last look (bean bhwb).
 @Suite("Executor: app identity", .timeLimit(.minutes(1)))
 struct IdentityTests {
     static let textEditWindow = ObservedWindow(owner: ExecutorFixture.textEdit, title: "notes.txt")
@@ -115,7 +113,6 @@ struct IdentityTests {
     @Test("a drag from a background window keeps going when its app comes to the front over another window")
     func dragActivatesBackgroundWindowLate() async throws {
         let notesWindow = ObservedWindow(owner: ExecutorFixture.notes, title: "list")
-        // Activation lands only once the pointer is already over the Notes window.
         let activate: FakeMac.Change = { world, _ in
             guard case .posted(.pointerMove(let point, _))? = world.trace.last, point.x >= 100 else { return }
             world.frontmost = ExecutorFixture.textEdit
@@ -322,8 +319,6 @@ struct IdentityTests {
     func abortHidesDeniedWindowTitle() async throws {
         let mac = FakeMac()
         let harness = try Harness(mac: mac)
-        // Between step 14 and the last look a denied app's window comes under the target and the
-        // person touches the mouse; user_active outranks denied_app.
         await harness.onLog(.intent) {
             mac.change {
                 $0.windows = { _ in ObservedWindow(owner: ExecutorFixture.unlisted, title: "Inbox - someone") }

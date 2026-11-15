@@ -4,7 +4,6 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct TargetPatchTests {
     typealias F = FrameFixtures
 
-    /// Two frame pixels per point, origin left of and above the main display.
     static let geometry = F.geometry(
         GlobalRect(x: -1000, y: -500, width: 1000, height: 500), PixelSize(width: 2000, height: 1000))
 
@@ -48,7 +47,6 @@ import Testing
         #expect(patch.compare(original: original, current: beyond) == .changed)
     }
 
-    /// 2% of a full 4096-pixel patch is 81.92: 81 changed pixels pass, 82 do not.
     @Test(arguments: [(81, PatchVerdict.unchanged), (82, .changed)])
     func countsChangedPixelsAgainstTwoPercent(changedPixels: Int, verdict: PatchVerdict) throws {
         let size = PixelSize(width: 64, height: 64)

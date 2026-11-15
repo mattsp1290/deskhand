@@ -1,19 +1,11 @@
 import DeskhandCore
 import Testing
 
-/// Fault injection at the four boundaries of contract 12.7: before the ledger write, between the
-/// write and the post, after the post, and during cleanup. After each crash a new ledger recovers
-/// from the bytes on the fake disk. An extra key-up is allowed; a missed key-up never is.
 @Suite(.timeLimit(.minutes(1))) struct HeldInputLedgerCrashTests {
-    /// A crash in a `control+shift+command+t` press, placed relative to `shift`.
     enum NamedBoundary: CaseIterable, Sendable {
-        /// The write that records `shift` never reached the disk, so its down was never posted.
         case beforeWrite
-        /// `shift` is on the disk, but its down was not posted.
         case betweenWriteAndPost
-        /// `shift`'s down was posted.
         case afterPost
-        /// `shift`'s up was posted, but the write that clears it never reached the disk.
         case afterUpBeforeClear
 
         func index(in trace: [LedgerBoundary]) throws -> Int {
@@ -35,7 +27,6 @@ import Testing
             return index
         }
 
-        /// What the disk holds and what the Mac holds down at the crash.
         var expected: (entries: [HeldInput], held: Set<HeldInput>) {
             switch self {
             case .beforeWrite: ([.control], [.control])
@@ -47,9 +38,6 @@ import Testing
         }
     }
 
-    /// Restarts `machine` and runs restart cleanup from the ledger on its disk, checking the
-    /// conservative direction: everything down is an entry, cleanup posts exactly one up per entry,
-    /// newest first, and nothing is left down or recorded. Returns the recovered entries.
     @discardableResult
     private func recover(_ machine: LedgerMachine, sourceLocation: SourceLocation = #_sourceLocation) throws
         -> [HeldInput]
@@ -61,7 +49,8 @@ import Testing
         #expect(machine.held.isSubset(of: entries), "missed key-up, crash \(crash)", sourceLocation: sourceLocation)
 
         let postedBefore = machine.posted.count
-        let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+        let selected = ledger.pending()
+        let outcome = ledger.releasePending(selected, authorization: { .authorized }, postRelease: machine.postRelease)
         guard case .complete = outcome else {
             Issue.record("cleanup did not complete: \(outcome), crash \(crash)", sourceLocation: sourceLocation)
             return entries
@@ -94,8 +83,6 @@ import Testing
         #expect(entries == boundary.expected.entries)
     }
 
-    /// Every boundary of every scenario. Recovery may release at most the one input whose write and
-    /// event straddle the crash without being down.
     @Test(arguments: LedgerScenario.allCases)
     func crashAtEveryBoundary(_ scenario: LedgerScenario) throws {
         let trace = try scenario.trace()
@@ -110,10 +97,6 @@ import Testing
         }
     }
 
-    /// A write fails at every write of every scenario, before or after its bytes land (A2). The
-    /// executor is the most forgiving one (``LedgerScenario/runCarryingOn(_:on:comment:sourceLocation:)``):
-    /// even so no down is posted while the disk lacks its entry, the abort leaves nothing down,
-    /// and a restart releases and clears whatever the disk still holds.
     @Test(arguments: LedgerScenario.allCases, WriteFault.allCases)
     func aFailedWriteAtEveryWrite(_ scenario: LedgerScenario, _ fault: WriteFault) throws {
         let writes = scenario.operations.flatMap { $0 }.count * 2
@@ -131,8 +114,6 @@ import Testing
         }
     }
 
-    /// The process dies at each boundary of restart cleanup. The next start still holds every entry
-    /// whose release was not both posted and cleared, the oldest ones, and releases them.
     @Test(arguments: LedgerScenario.allCases)
     func crashDuringCleanup(_ scenario: LedgerScenario) throws {
         let lastDown = try #require(scenario.operations.first?.last)
@@ -143,7 +124,8 @@ import Testing
         probe.restart()
         var probeLedger = try HeldInputLedger(store: probe.store)
         let cleanupStart = probe.trace.count
-        _ = probeLedger.releasePending(authorization: { .authorized }, postRelease: probe.postRelease)
+        let selected = probeLedger.pending()
+        _ = probeLedger.releasePending(selected, authorization: { .authorized }, postRelease: probe.postRelease)
         let cleanupBoundaries = probe.trace.count - cleanupStart
         #expect(cleanupBoundaries == 4 * entries.count)
 
@@ -153,7 +135,9 @@ import Testing
             var ledger = try HeldInputLedger(store: machine.store)
             #expect(ledger.pending() == entries)
             machine.crashAt = machine.trace.count + offset
-            let outcome = ledger.releasePending(authorization: { .authorized }, postRelease: machine.postRelease)
+            let selected = ledger.pending()
+            let outcome = ledger.releasePending(
+                selected, authorization: { .authorized }, postRelease: machine.postRelease)
             if case .complete = outcome { Issue.record("cleanup completed despite a crash at \(offset)") }
             #expect(machine.crashedAt != nil)
 

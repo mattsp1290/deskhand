@@ -2,8 +2,6 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// What the executor hands the release handler (contract 12.7, 12.8): authorization read again
-/// before every release, and no release judged by what an earlier operation left behind.
 @Suite("Release: authorization per release and per operation", .timeLimit(.minutes(1)))
 struct ReleaseAuthorizationTests {
     @Test("an abort asks for authorization before every release: a lock after the first stops the rest")
@@ -66,8 +64,6 @@ struct ReleaseAuthorizationTests {
     }
 }
 
-/// A ledger disk whose write reaches storage and then reports failure while armed, as
-/// `HeldInputStore.replace` allows ("when it throws, either may be stored").
 private final class LandingFaultStore: HeldInputStore, Sendable {
     let mac: FakeMac
     let armed = Mutex(false)
@@ -82,7 +78,6 @@ private final class LandingFaultStore: HeldInputStore, Sendable {
     }
 }
 
-/// Posts through the fake Mac, and locks it right after the first release goes out.
 private struct LockAfterFirstRelease: EventPoster {
     let mac: FakeMac
 

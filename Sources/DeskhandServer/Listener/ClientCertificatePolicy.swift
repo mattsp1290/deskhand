@@ -52,15 +52,12 @@ public struct ClientCertificatePolicy: Hashable, Sendable {
         return try authenticate(leafDER: der)
     }
 
-    /// `notBefore` and `notAfter` are seconds since the epoch, both inside the period, compared the
-    /// way BoringSSL compares them.
     static func checkDates(notBefore: Int64, notAfter: Int64, now: Timestamp) throws(ClientCertificateRefusal) {
         let nowSeconds = now.millisecondsSinceEpoch / 1000
         if nowSeconds < notBefore { throw .notYetValid }
         if nowSeconds > notAfter { throw .expired }
     }
 
-    /// The extended key usage and subject checks, on a leaf whose dates were checked.
     func authenticate(leafDER: [UInt8]) throws(ClientCertificateRefusal) -> Principal {
         let usages: [String]?
         let subject: String

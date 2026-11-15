@@ -23,9 +23,7 @@ public struct StateReport: Hashable, Sendable {
     public let arming: Arming
     /// Never contains `user_active`.
     public let conditions: Set<Condition>
-    /// The states as of the reduction that made this report.
     let reducedStates: ActiveStates
-    /// What that reduction read. The clock's transitions are reduced from it.
     let signals: StateSignals
     let configuration: StateConfiguration
 
@@ -92,9 +90,6 @@ public struct StateReport: Hashable, Sendable {
         arming: .disarmed, signals: .unread, configuration: .standard,
         now: ClockReading(wall: Timestamp(millisecondsSinceEpoch: 0), monotonic: ContinuousClock.now))
 
-    /// This report carried forward to `now` by the clock alone: each transition the clock made
-    /// since the reduction, reduced at the instant it happened with the signals that reduction
-    /// read, and the effects of each in order.
     func elapsed(until now: ClockReading) -> (report: StateReport, effects: [TransitionEffect]) {
         var report = self
         var effects: [TransitionEffect] = []
@@ -107,15 +102,9 @@ public struct StateReport: Hashable, Sendable {
         return (report, effects)
     }
 
-    /// The instants at which the clock alone changes this report, earliest first, each as a reading
-    /// of both clocks placed by `now`. Arming runs out on the monotonic clock and the allowance
-    /// expires on the wall clock: each is placed on the other through `now`, so the order agrees
-    /// with ``validUntil(at:)``. Two expiries at one instant are one.
     private func expiries(seenFrom now: ClockReading) -> [ClockReading] {
         var instants: [ClockReading] = []
         if case .armed(let until) = arming {
-            // The wall time is rounded down, so an allowance that expires after `until`, however
-            // shortly, is still valid at it.
             let millisecondsAgo = (until.duration(to: now.monotonic) / .milliseconds(1)).rounded(.up)
             instants.append(
                 ClockReading(wall: now.wall.adding(milliseconds: -Int64(millisecondsAgo)), monotonic: until))
@@ -171,7 +160,6 @@ public enum StateReducer {
         return (next.report, elapsed.effects + next.effects)
     }
 
-    /// One reduction at `now` from a report that the clock has already carried to `now`.
     static func step(
         from previous: StateReport, signals: StateSignals, command: ArmingCommand?, configuration: StateConfiguration,
         now: ClockReading

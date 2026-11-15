@@ -4,8 +4,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// `tools/list` serves `docs/schemas/` after the bundling rule of contract 3.2, and the embedded copy
-/// never drifts from the files.
 @Suite struct ToolCatalogTests {
     static func servedTools() throws -> [JSONValue] {
         guard case .array(let tools)? = try ToolCatalog.listResult.get()["tools"] else {
@@ -25,8 +23,6 @@ import Testing
         }
     }
 
-    /// The rule applied the way `scripts/check-contract.py` applies it: textually, to the serialized
-    /// schema with `defs.json`'s definitions merged in.
     @Test(arguments: ToolName.allCases)
     func servedSchemasFollowTheBundlingRule(_ tool: ToolName) throws {
         let served = try #require(try Self.servedTools().first { $0["name"] == .string(tool.rawValue) })
@@ -67,7 +63,6 @@ import Testing
         }
     }
 
-    /// The table of contract 3.2.
     static let table: [(ToolName, String, [Bool])] = [
         (.status, "Status", [true, false, true, false]),
         (.displays, "List displays", [true, false, true, false]),

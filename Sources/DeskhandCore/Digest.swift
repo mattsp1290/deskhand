@@ -10,7 +10,6 @@ public struct SHA256Hex: Hashable, Sendable, CustomStringConvertible {
         bytes = Array(hasher.finalize())
     }
 
-    /// The 32 bytes of an HMAC-SHA-256 value.
     init(bytes: [UInt8]) { self.bytes = bytes }
 
     /// Accepts exactly what the wire pattern allows: 64 characters from `0-9 a-f`.

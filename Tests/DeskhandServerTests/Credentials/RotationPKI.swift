@@ -10,19 +10,12 @@ import Synchronization
 /// ``TestPKI`` client identities work against every valid pair. Nothing here is a real credential.
 struct RotationPKI: Sendable {
     enum Pair: String, CaseIterable, Sendable {
-        /// Valid; the pair a test starts from.
         case first
-        /// Valid; a different key and serial.
         case second
-        /// `second`'s certificate with `first`'s key.
         case mismatchedKey
-        /// Signed by an unrelated CA.
         case wrongCA
-        /// Names the private CA as issuer but is signed by another key with the same subject.
         case forgedIssuer
-        /// In date for one day only.
         case shortLived
-        /// Lacks the second configured Service DNS name.
         case missingName
     }
 
@@ -153,8 +146,6 @@ struct RotationPKI: Sendable {
         """
 }
 
-/// One test's credential directory: the four files a ``CredentialReloader`` watches, all 0600,
-/// rewritten the way a rotation does it (a new file renamed into place).
 struct CredentialDirectory {
     static let firstToken = "first-test-token-not-a-secret-01"
     static let secondToken = "second-test-token-not-a-secret-2"
@@ -206,7 +197,6 @@ struct CredentialDirectory {
         try FileManager.default.removeItem(atPath: tokenPath)
     }
 
-    /// Puts a FIFO that nothing ever writes in place of the file at `path`.
     func replaceWithFIFO(_ path: String) throws {
         try FileManager.default.removeItem(atPath: path)
         guard mkfifo(path, 0o600) == 0 else { throw CocoaError(.fileWriteUnknown) }
@@ -229,7 +219,6 @@ final class CredentialEventLog: Sendable {
     var all: [CredentialEvent] { events.withLock { $0 } }
 }
 
-/// A clock a test moves by hand.
 final class ManualClock<Value: Sendable>: Sendable {
     private let value: Mutex<Value>
 
@@ -240,8 +229,6 @@ final class ManualClock<Value: Sendable>: Sendable {
     func set(_ newValue: Value) { value.withLock { $0 = newValue } }
 }
 
-/// Connects as the valid ``TestPKI`` client and returns the serial number of the certificate the
-/// server presents, without speaking HTTP.
 enum PresentedCertificate {
     static func serialNumber(at address: SocketAddress, pki: TestPKI) async throws -> [UInt8] {
         let identity = pki.identity(.valid)
@@ -273,7 +260,6 @@ enum PresentedCertificate {
     }
 }
 
-/// Waits until `condition` holds, polling every 20 ms, for at most `timeout`.
 func eventually(timeout: Duration = .seconds(10), _ condition: () async throws -> Bool) async rethrows -> Bool {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {

@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Cleanup from the ledger across restarts, crashes and a disk that refuses writes (contract 12.3,
-/// 12.7 items 5 and 6, 12.9 step 5).
 @Suite("Release: restart cleanup and ledger faults", .timeLimit(.minutes(1)))
 struct RestartCleanupTests {
     static let leftOver: [HeldInput] = [.modifierKey(.command), .modifierKey(.shift), .button(.left), .named(.a)]
@@ -67,7 +65,6 @@ struct RestartCleanupTests {
         #expect(await first.executor.perform(try first.keyboard(HeldChord.action)).code == .locked)
         #expect(mac.ledgerOnDisk == HeldChord.pressed)
 
-        // The clear of k lands; the process dies writing the clear of shift, after posting its release.
         faults.arm { $0.crashAtWrite = 2 }
         mac.setState([])
         _ = await first.executor.retryCleanup(now: mac.reading)
@@ -82,7 +79,6 @@ struct RestartCleanupTests {
             Issue.record("the next run did not finish cleanup")
             return
         }
-        // shift's release went out before the crash and again from the ledger: an extra key-up.
         #expect(mac.released == [.named(.k), .modifierKey(.shift)] + HeldChord.released.dropFirst())
         #expect(mac.heldDown.isEmpty)
         #expect(mac.ledgerOnDisk.isEmpty)
@@ -99,7 +95,6 @@ struct RestartCleanupTests {
         let executor = harness.executor
         #expect(await executor.perform(try harness.keyboard(HeldChord.action)).code == .locked)
 
-        // Each failing retry makes one write attempt: the clear of the newest entry.
         faults.arm { $0.failingWrites = Set(1...failingRetries) }
         mac.setState([])
         guard case .attempted(.clearFailed)? = await executor.retryCleanup(now: mac.reading) else {
@@ -140,7 +135,6 @@ struct RestartCleanupTests {
         let mac = FakeMac()
         let harness = try ReleaseHarness(mac: mac, faults: faults)
         let executor = harness.executor
-        // The chord's fourth write, the entry for k, fails: control, option and shift are down.
         faults.arm { $0.failingWrites = [4] }
         let answer = await executor.perform(try harness.keyboard(HeldChord.action))
         #expect(answer.code == .internalError)

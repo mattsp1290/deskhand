@@ -1,9 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// An abort's releases through the executor (contract 10.3 step 2, 11.2, 12.4, 12.8): released at
-/// once when cleanup is authorized, otherwise deferred with `cleanup_pending` until a retry posts
-/// them.
 @Suite("Release: aborts and deferred releases", .timeLimit(.minutes(1)))
 struct AbortReleaseTests {
     @Test(
@@ -39,7 +36,6 @@ struct AbortReleaseTests {
         #expect(await executor.owesReleases)
         #expect(try await harness.move("op-2").code == .locked)
 
-        // The abort was the first attempt: the next one is due a second later, while still locked.
         let abortedAt = mac.reading
         #expect(await executor.nextCleanupRetry(at: abortedAt) == abortedAt.instant(afterMilliseconds: 1000))
         #expect(await executor.retryCleanup(now: abortedAt) == nil)
@@ -174,7 +170,6 @@ struct AbortReleaseTests {
         }
     }
 
-    /// Tries to move the pointer before releasing, as no handler may.
     struct PointerMovingHandler: ReleaseHandler {
         func release(
             _ inputs: [HeldInput], from ledger: inout HeldInputLedger, poster: any EventPoster,

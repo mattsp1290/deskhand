@@ -6,24 +6,12 @@ import Synchronization
 
 @testable import DeskhandServer
 
-/// deskhand composed in this process the way the app composes it (deskhand-6d91 starts from this),
-/// served over loopback mutual TLS. Only the platform is fake: the displays, the capturer, the
-/// frontmost-app and window readings, the idle signal, the event poster, the state signals and the
-/// allowance verdict. The credential reload, the listener, the MCP layer, the dispatcher, the desk
-/// owner, recovery, the executor with its real record file and ledger file, and the watchdog are
-/// the production types.
-///
-/// Build order: credentials, then the per-Mac owner and the executor through ``Recovery``, then the
-/// state owner and the watchdog on them, then the dispatcher, the MCP handler and the listener.
 struct DeskhandStack: Sendable {
     struct Options: Sendable {
         var limits = Limits()
-        /// A person arms deskhand from the menu bar once it is up.
         var armed = true
-        /// What the platform reports at start.
         var states: Set<BlockingState> = []
         var tokenOverlap: Duration = .zero
-        /// A restart passes the previous run's files and clock.
         var state: StateDirectory?
         var clock: ToolClock?
     }
@@ -50,7 +38,6 @@ struct DeskhandStack: Sendable {
     let events: EventLog
     let address: SocketAddress
     let pki: TestPKI
-    /// The watchdog and the execution changes it is told about, until ``stop()``.
     private let watchdogRun: Task<Void, Never>
 
     var desk: FakeDesk { platform.desk }
@@ -70,8 +57,6 @@ struct DeskhandStack: Sendable {
         let activity = PersonActivitySource(
             signal: platform.idle, posts: posts, clock: { clock.reading.monotonic })
 
-        // The owner is built inside the seams closure from the recovered world, and reduces its first
-        // platform reading there, so recovery's first release attempt is judged on the real state.
         var built: DeskOwner?
         let recovered = await Recovery(
             ledgerStore: FileHeldInputStore(path: state.ledgerPath),
@@ -133,7 +118,6 @@ struct DeskhandStack: Sendable {
         return stack
     }
 
-    /// Runs `body` on a started stack and stops it afterwards, whether or not `body` throws.
     static func with<T>(_ options: Options = Options(), _ body: (DeskhandStack) async throws -> T) async throws -> T {
         let stack = try await start(options)
         do {
@@ -153,9 +137,6 @@ struct DeskhandStack: Sendable {
         await watchdogRun.value
     }
 
-    // MARK: The person and the platform
-
-    /// The platform now reports exactly `states` (and `conditions`), as when a signal changes.
     func hold(_ states: Set<BlockingState>, conditions: Set<Condition> = []) async {
         platform.report(states, conditions: conditions)
         let command: ArmingCommand? =
@@ -163,10 +144,8 @@ struct DeskhandStack: Sendable {
         await stateOwner.change(command: command)
     }
 
-    /// A person arms deskhand from the menu bar.
     func arm() async { await stateOwner.change(command: .arm(for: Self.armingPeriod)) }
 
-    /// The action log as the writer committed it.
     var entries: [ActionLogEntry] { get async { await log.base.entries } }
 }
 
@@ -208,17 +187,11 @@ extension DeskhandStack {
     }
 }
 
-/// The state owner the app runs (deskhand-qbi7's role): it reads the platform's signals, reduces
-/// them through the ``DeskOwner``, and passes each reduction's interruptions to the executor at
-/// once, so a state that ends again before the watchdog looks still aborts the effect (contract
-/// 10.3). It waits for nothing else of the executor: the watchdog's executor loop posts the
-/// releases a reduction allows.
 final class StackStateOwner: WatchdogStateOwner {
     let owner: DeskOwner
     let executor: InputExecutor
     let platform: StackPlatform
     let observer: StackObserver
-    /// Set once the watchdog exists; it needs this owner first.
     let watchdog = Mutex<Watchdog?>(nil)
 
     init(owner: DeskOwner, executor: InputExecutor, platform: StackPlatform, observer: StackObserver) {
@@ -234,7 +207,6 @@ final class StackStateOwner: WatchdogStateOwner {
         await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput)))
     }
 
-    /// A signal changed, or a person used the menu bar.
     func change(command: ArmingCommand?) async {
         await deliver(owner.reduce(signals: platform.signals(ownInput: observer.ownInput), command: command))
         await watchdog.withLock { $0 }?.refreshState()
@@ -245,14 +217,9 @@ final class StackStateOwner: WatchdogStateOwner {
     }
 }
 
-/// What the executor reports, fanned out to the owners of the conditions, the person's activity
-/// and the watchdog. Called on the executor without waiting, so execution changes reach the
-/// watchdog through one stream, in order: a task per change could deliver an end before its start
-/// and leave the watchdog polling the person while nothing executes.
 final class StackObserver: ExecutorObserver {
     let conditions: LiveConditions
     let posts: PostTimestampRecorder
-    /// Drained by one task into ``Watchdog/executionDidChange(executing:)``.
     let executionChanges: AsyncStream<Bool>
     private let execution: AsyncStream<Bool>.Continuation
     private let executing = Mutex(false)
@@ -268,8 +235,6 @@ final class StackObserver: ExecutorObserver {
         execution.yield(executing)
     }
 
-    /// What deskhand is doing with input, for the rule that only a person arms (contract 10.4). In
-    /// this stack every arming command comes from the test, never from a posted event.
     var ownInput: OwnInputActivity {
         OwnInputActivity(
             commandFromPostedEvent: false, operationExecuting: executing.withLock { $0 },
@@ -278,11 +243,9 @@ final class StackObserver: ExecutorObserver {
 
     func didPostEvent(at instant: ContinuousClock.Instant) { posts.didPostEvent(at: instant) }
     func actionLogDidAppend(succeeded: Bool) { conditions.actionLogDidAppend(succeeded: succeeded) }
-    /// `status` reads the executor's ledger directly.
     func cleanupPendingDidChange(_ pending: Bool) {}
 }
 
-/// The fake Mac: what the platform module provides in the app.
 final class StackPlatform: Sendable {
     let displays = FakeDisplays()
     let capturer = FakeCapturer()
@@ -296,8 +259,6 @@ final class StackPlatform: Sendable {
         reported = Mutex((states, []))
     }
 
-    /// The signals and the allowance verdict as the platform reads them now, with what deskhand
-    /// itself is doing with input.
     func signals(ownInput: OwnInputActivity) -> StateSignals {
         let (states, conditions) = reported.withLock { ($0.states, $0.conditions) }
         var signals = ToolFixture.signals(holding: states, conditions: conditions)
@@ -310,7 +271,6 @@ final class StackPlatform: Sendable {
     }
 }
 
-/// The idle signal the platform reads, from the fake desk's idle time.
 struct DeskIdleSignal: IdleSignalSource {
     let desk: FakeDesk
 
@@ -319,8 +279,6 @@ struct DeskIdleSignal: IdleSignalSource {
     }
 }
 
-/// The watchdog's timer on the fake clock: a wakeup is due once a test or an executing operation
-/// has moved the clock past it.
 struct FakeClockScheduler: WatchdogScheduler {
     let clock: ToolClock
 
@@ -333,8 +291,6 @@ struct FakeClockScheduler: WatchdogScheduler {
     }
 }
 
-/// The directory of the operation records and the held-input ledger: owner-only, as
-/// ``DurableFile`` requires.
 struct StateDirectory: Sendable {
     let directory: URL
 
@@ -348,8 +304,6 @@ struct StateDirectory: Sendable {
             at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
 
-    /// The files as they are on disk now, in a directory of their own: what a crash at this
-    /// instant leaves for the next start, while this run goes on with its own.
     func copy() throws -> StateDirectory {
         let copy = try StateDirectory()
         for (from, to) in [(recordsPath, copy.recordsPath), (ledgerPath, copy.ledgerPath)] {

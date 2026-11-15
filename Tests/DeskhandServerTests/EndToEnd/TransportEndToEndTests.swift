@@ -4,11 +4,8 @@ import Testing
 
 @testable import DeskhandServer
 
-/// Contract 2.2 to 2.4 against the whole stack: a request that fails the TLS handshake or one of
-/// checks 5 to 7 never reaches a tool, and a credential rotation keeps the records and the lease.
 @Suite("end to end: transport and credentials", .timeLimit(.minutes(2)))
 struct TransportEndToEndTests {
-    /// Nothing ran: no event, no record, no action log entry.
     static func expectNothingRan(_ stack: DeskhandStack, sourceLocation: SourceLocation = #_sourceLocation)
         async throws
     {
@@ -89,7 +86,6 @@ struct TransportEndToEndTests {
                 try stack.credentials.writeToken(second)
                 #expect(!(await stack.reloader.reload()).credentialsWarning)
 
-                // The open connection keeps its TLS session; each request is judged on the token now.
                 let replay = await session.send(WireRequest.tool("keyboard", arguments, token: second))
                 #expect(replay.structuredContent?["replayed"] == true)
                 #expect(await session.call("status").status == .unauthorized)
@@ -104,7 +100,6 @@ struct TransportEndToEndTests {
             #expect(replay.structuredContent?["replayed"] == true)
             #expect(stack.desk.posted.count == posted)
 
-            // A refused pair keeps the one in use and raises credentials_warning until fixed.
             try stack.credentials.install(.wrongCA)
             #expect(await stack.reloader.reload().certificateRejection == .notIssuedByCA)
             #expect(try await stack.reportedConditions(token: second).contains("credentials_warning"))

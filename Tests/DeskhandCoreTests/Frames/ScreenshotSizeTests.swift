@@ -9,8 +9,6 @@ import Testing
         var testDescription: String { "\(source.0)x\(source.1) L=\(maxLongEdge)" }
     }
 
-    /// The contract 7 table (0.10-draft), then edges: exact limits, one-pixel sides, huge and portrait
-    /// displays, and the size with the most visual tokens by patches that the rule can produce.
     static let rows: [Row] = [
         Row(source: (3456, 2234), maxLongEdge: 2576, output: (2355, 1522)),
         Row(source: (3024, 1964), maxLongEdge: 2576, output: (2350, 1526)),
@@ -34,8 +32,6 @@ import Testing
         Row(source: (256, 256), maxLongEdge: 256, output: (256, 256)),
     ]
 
-    /// Contract 7: every output stays under `MAX_VISUAL_TOKENS` counted both ways, and the largest
-    /// count by patches the rule can produce is 4704.
     @Test func everyOutputStaysUnderTheTokenCap() throws {
         var mostPatches = 0
         for width in stride(from: 1, through: 6000, by: 7) {
@@ -88,8 +84,6 @@ import Testing
         #expect(ScreenshotSizingError.emptySource(source).argumentError == nil)
     }
 
-    /// Never upscales, never breaks either limit after flooring, never shrinks below one pixel, and
-    /// keeps every side within one pixel of the exact scaled size.
     @Test func holdsItsLimitsAcrossASweep() throws {
         var generator = SeededGenerator(state: 42)
         let edges = [256, 512, 1024, 1568, 2000, 2576]

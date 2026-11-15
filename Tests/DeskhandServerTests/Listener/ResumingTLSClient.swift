@@ -15,7 +15,6 @@ import Synchronization
 /// BoringSSL's `SSL_CTX` and `SSL_SESSION` are safe to share between threads, and each exchange
 /// runs on a thread of its own with its own `SSL`.
 final class ResumingTLSClient: @unchecked Sendable {
-    /// A session the server issued, ready to be offered on a later connection.
     final class Session: @unchecked Sendable {
         fileprivate let pointer: OpaquePointer
 
@@ -25,11 +24,8 @@ final class ResumingTLSClient: @unchecked Sendable {
     }
 
     struct Exchange: Sendable {
-        /// The server took the offered session: an abbreviated handshake, no certificate verified.
         let resumed: Bool
-        /// The status code of the HTTP response; nil when none arrived.
         let status: Int?
-        /// The first session the server issued on this connection.
         let issued: Session?
     }
 
@@ -43,7 +39,6 @@ final class ResumingTLSClient: @unchecked Sendable {
 
     private let context: OpaquePointer
 
-    /// No certificate path presents no client certificate.
     init(caPath: String, certificatePath: String?, keyPath: String?) throws {
         guard let context = SSL_CTX_new(TLS_method()) else { throw Failure(description: "SSL_CTX_new failed") }
         self.context = context
@@ -80,7 +75,8 @@ final class ResumingTLSClient: @unchecked Sendable {
     /// server closes; every read gives up after 10 seconds. The blocking socket calls run on a
     /// thread of their own: on the cooperative pool they could starve the listener's request
     /// handler, which runs there.
-    func exchange(port: Int, serverName: String, request: [UInt8], offering session: Session?) async throws
+    func exchange(port: Int, serverName: String, request: [UInt8], offering session: Session?, fragmentSize: Int? = nil)
+        async throws
         -> Exchange
     {
         try await withCheckedThrowingContinuation { continuation in
@@ -88,13 +84,16 @@ final class ResumingTLSClient: @unchecked Sendable {
                 continuation.resume(
                     with: Result {
                         try self.blockingExchange(
-                            port: port, serverName: serverName, request: request, offering: session)
+                            port: port, serverName: serverName, request: request, offering: session,
+                            fragmentSize: fragmentSize)
                     })
             }.start()
         }
     }
 
-    private func blockingExchange(port: Int, serverName: String, request: [UInt8], offering session: Session?) throws
+    private func blockingExchange(
+        port: Int, serverName: String, request: [UInt8], offering session: Session?, fragmentSize: Int? = nil
+    ) throws
         -> Exchange
     {
         let socket = try Self.connect(port: port)
@@ -113,7 +112,12 @@ final class ResumingTLSClient: @unchecked Sendable {
         guard SSL_connect(ssl) == 1 else { return Exchange(resumed: false, status: nil, issued: nil) }
         let resumed = SSL_session_reused(ssl) == 1
 
-        _ = request.withUnsafeBytes { SSL_write(ssl, $0.baseAddress, Int32($0.count)) }
+        let width = fragmentSize ?? max(1, request.count)
+        for offset in stride(from: 0, to: request.count, by: width) {
+            let bytes = Array(request[offset..<min(offset + width, request.count)])
+            let written = bytes.withUnsafeBytes { SSL_write(ssl, $0.baseAddress, Int32($0.count)) }
+            if written <= 0 { break }
+        }
         var response: [UInt8] = []
         var buffer = [UInt8](repeating: 0, count: 16_384)
         while true {
@@ -133,7 +137,6 @@ final class ResumingTLSClient: @unchecked Sendable {
         )
     }
 
-    /// `HTTP/1.1 200 OK` gives 200.
     private static func status(of response: [UInt8]) -> Int? {
         let prefix = Array("HTTP/1.1 ".utf8)
         guard response.count >= prefix.count + 3, Array(response[..<prefix.count]) == prefix else { return nil }

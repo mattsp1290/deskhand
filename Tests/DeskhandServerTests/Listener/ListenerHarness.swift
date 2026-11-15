@@ -13,8 +13,6 @@ struct FixedTokenProvider: TokenProvider {
     func acceptedTokens() -> AcceptedTokens { tokens }
 }
 
-/// The trivial ``RequestHandler``: records each request and echoes its body with `200`, after an
-/// optional delay that a disconnect cancels.
 final class RecordingHandler: RequestHandler {
     private let delay: Duration?
     private let response: HandlerResponse?
@@ -133,7 +131,6 @@ struct TestRequest {
 
     static let toolsList = Array(#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.utf8)
 
-    /// Passes every check the listener owns.
     static func valid(body: [UInt8] = toolsList) -> TestRequest {
         TestRequest(
             headers: [
@@ -165,7 +162,6 @@ struct TestResponse {
 
 enum Outcome {
     case response(TestResponse)
-    /// The connection ended without a complete response: a TLS alert, a reset or a clean close.
     case closed
 
     var response: TestResponse? {
@@ -262,7 +258,6 @@ enum TestClient {
         }
     }
 
-    /// One request on a fresh connection.
     static func roundTrip(
         _ request: TestRequest,
         to address: SocketAddress,

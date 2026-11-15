@@ -23,7 +23,6 @@ import Testing
         [.cancelInFlight(state), .releaseHeldInput, .invalidateFrames]
     }
 
-    /// Contract 10.3 to 10.5, 13.1 and 15.1.
     static let rows: [Row] = [
         Row("ok stays ok", [], [], []),
         Row("screen locks", [], [.locked], leavingOK(.locked)),
@@ -64,9 +63,6 @@ import Testing
         #expect(effects == row.effects)
     }
 
-    /// Every pair of reachable sets of states, in one reduction each. Leaving `ok` cancels, releases
-    /// and invalidates in that order, naming the new state; any of `gated`, `paused` and `disarmed`
-    /// beginning drops the lease; nothing else has an effect.
     @Test func everyReachableTransition() {
         let reachable = everyBlockingSubset.compactMap { states in
             F.arming(for: states).map { (states: states, arming: $0, signals: F.signals(holding: states)) }
@@ -104,8 +100,6 @@ import Testing
         #expect(mismatches == 0, "first mismatches: \(samples)")
     }
 
-    /// Contract 11: a condition never changes the state, never drops the lease and never
-    /// invalidates a frame.
     @Test(arguments: [[], [Condition.credentialsWarning, .cleanupPending, .logUnavailable]] as [Set<Condition>])
     func conditionsHaveNoEffects(_ before: Set<Condition>) throws {
         let all: Set<Condition> = [.credentialsWarning, .cleanupPending, .logUnavailable]

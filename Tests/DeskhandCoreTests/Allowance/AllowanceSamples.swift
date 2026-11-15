@@ -4,9 +4,7 @@ import Synchronization
 enum AllowanceSample {
     static let mac = "lunus-macbook-pro"
     static let path = "/var/run/birbhomes/deskhand-allowance.json"
-    /// 2026-11-14T15:00:00Z
     static let notBefore = Timestamp(millisecondsSinceEpoch: 1_794_668_400_000)
-    /// 2026-11-14T15:02:00Z
     static let expiresAt = Timestamp(millisecondsSinceEpoch: 1_794_668_520_000)
     static let during = notBefore.adding(milliseconds: 60_000)
 
@@ -37,7 +35,6 @@ enum AllowanceSample {
     }
 }
 
-/// Answers every probe with a settable result and records the calls.
 final class FakeAllowanceProbe: AllowanceFileProbe {
     struct Call: Hashable {
         let directory: String

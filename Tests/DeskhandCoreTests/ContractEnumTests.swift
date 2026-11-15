@@ -1,7 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// The Swift enums must list exactly the values of the schema enums, in the schema's order.
 @Suite(.timeLimit(.minutes(1))) struct ContractEnumTests {
     private func schemaEnum(_ definition: String, in file: String = "defs.json") throws -> [String] {
         var node = try Fixtures.json(file)
@@ -62,8 +61,6 @@ import Testing
         }
     }
 
-    /// Contract 9.4. The HTTP status depends on the check that failed, not only on the code, so the
-    /// listener's check table owns it.
     @Test func jsonRPCErrorsCarryTheContractCodes() {
         let codes: [JSONRPCErrorCode: Int] = [
             .parseError: -32_700, .invalidRequest: -32_600, .methodNotFound: -32_601, .invalidParams: -32_602,

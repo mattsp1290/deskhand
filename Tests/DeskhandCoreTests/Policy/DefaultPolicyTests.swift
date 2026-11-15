@@ -5,7 +5,6 @@ private func bundle(_ raw: String) -> BundleID { BundleID(raw)! }
 private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhand")!)
 
 @Suite(.timeLimit(.minutes(1))) struct DefaultDenyListTests {
-    /// The apps the bean and the plan name, each with the category it must be denied under.
     static let required: [(String, SensitiveAppCategory)] = [
         ("com.apple.Terminal", .terminal), ("com.googlecode.iterm2", .terminal),
         ("com.apple.systempreferences", .systemSettings), ("com.apple.keychainaccess", .keychain),
@@ -44,8 +43,6 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
         }
     }
 
-    /// Which apps are hidden from screenshots by default is a privacy decision, so it is written out
-    /// here rather than derived from the predicate that builds the list.
     @Test(arguments: [
         ("com.apple.Terminal", true), ("com.googlecode.iterm2", true), ("com.apple.keychainaccess", true),
         ("com.1password.1password", true), ("com.apple.mail", true), ("com.apple.MobileSMS", true),
@@ -69,7 +66,6 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
 }
 
 @Suite(.timeLimit(.minutes(1))) struct DeniedChordTests {
-    /// Contract 6.9's default list, written out: every row is denied as it is spelled there.
     static let contractList: [String] = [
         "command+space", "control+space", "command+tab", "option+command+escape", "control+up", "control+down",
         "control+left", "control+right", "control+1", "control+2", "control+3", "control+4", "control+5",
@@ -98,7 +94,6 @@ private let standard = AppPolicy(deskhandBundleID: BundleID("com.example.deskhan
         (Chord([.control], .f8), "control+f8"),
         (Chord([], .f11), "f11"),
         (Chord([.command], .f5), "command+f5"),
-        // Supersets of a listed chord are denied too.
         (Chord([.command, .shift], .tab), "shift+command+tab"),
         (Chord([.command, .shift, .control], .digit4), "control+shift+command+4"),
         (Chord([.command, .shift], .space), "shift+command+space"),

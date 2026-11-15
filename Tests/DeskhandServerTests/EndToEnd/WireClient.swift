@@ -6,12 +6,9 @@ import Testing
 
 @testable import DeskhandServer
 
-/// One answer over the wire: an HTTP response, or a connection that ended without one.
 struct WireResponse {
     let outcome: Outcome
     let mcp: MCPTestResponse?
-    /// The `tools/call` that got this answer, when it was sent through ``WireSession/call(_:_:)`` or
-    /// ``DeskhandStack/call(_:_:as:token:)``.
     var sent: (tool: String, arguments: JSONObject?)?
 
     init(_ outcome: Outcome, sent: (tool: String, arguments: JSONObject?)? = nil) {
@@ -28,7 +25,6 @@ struct WireResponse {
     var operation: JSONValue? { structuredContent?["operation"] }
 }
 
-/// Requests on one kept-alive connection, as a caller holding its connection open sends them.
 struct WireSession {
     var connection: TestConnection
     let token: String
@@ -45,14 +41,12 @@ struct WireSession {
 }
 
 enum WireRequest {
-    /// A `tools/call` with every header a conforming caller sends.
     static func tool(_ tool: String, _ arguments: JSONObject?, token: String) -> TestRequest {
         MCPListenerTests.mcpRequest(.tool(tool, arguments)).setting("Authorization", to: "Bearer \(token)")
     }
 }
 
 extension DeskhandStack {
-    /// Calls `tool` on a connection of its own.
     func call(
         _ tool: String, _ arguments: JSONObject? = nil, as client: TestPKI.Client = .valid,
         token: String = CredentialDirectory.firstToken
@@ -66,7 +60,6 @@ extension DeskhandStack {
         WireResponse(try await TestClient.roundTrip(request, to: address, pki: pki, as: client))
     }
 
-    /// Runs `body` with one connection that stays open across its calls.
     func session<T>(
         as client: TestPKI.Client = .valid, token: String = CredentialDirectory.firstToken,
         _ body: (inout WireSession) async throws -> T
@@ -78,8 +71,6 @@ extension DeskhandStack {
         }
     }
 
-    // MARK: Common calls
-
     @discardableResult
     func acquire(_ holder: String = Wire.holder, ttlMs: Int = 120_000) async throws -> WireResponse {
         try await call("lease", ["op": "acquire", "holder_id": .string(holder), "ttl_ms": JSONValue(ttlMs)])
@@ -90,33 +81,28 @@ extension DeskhandStack {
         return try #require(shot.structuredContent?["frame_id"]?.stringValue, "screenshot failed: \(shot.outcome)")
     }
 
-    /// The lease for `holder` and a fresh frame of the main display.
     func ready(_ holder: String = Wire.holder) async throws -> String {
         try await acquire(holder)
         return try await screenshot(holder)
     }
 
-    /// `status.operation` for (`holder`, `operation`): `null` when there is no record.
     func lookUp(_ operation: String, holder: String = Wire.holder) async throws -> JSONValue? {
         let status = try await call(
             "status", ["operation": ["holder_id": .string(holder), "operation_id": .string(operation)]])
         return status.structuredContent?["operation"]
     }
 
-    /// `status.conditions` over the wire.
     func reportedConditions(token: String = CredentialDirectory.firstToken) async throws -> [String] {
         let status = try await call("status", token: token)
         guard case .array(let values)? = status.structuredContent?["conditions"] else { return [] }
         return values.compactMap(\.stringValue)
     }
 
-    /// `status.active_states` over the wire.
     func activeStates() async throws -> [String] {
         guard case .array(let values)? = try await call("status").structuredContent?["active_states"] else { return [] }
         return values.compactMap(\.stringValue)
     }
 
-    /// The codes of the refusal entries, in order.
     var refusalCodes: [ToolErrorCode] {
         get async {
             await entries.compactMap { entry in
@@ -137,7 +123,6 @@ extension ActionLogEntry {
     }
 }
 
-/// Effect arguments as Crew sends them.
 enum Wire {
     static let holder = "crew:alpha"
     static let otherHolder = "crew:beta"
@@ -174,8 +159,6 @@ enum Wire {
     static let unknownFrame = "frm_AAAAAAAAAAAAAAAAAAAAAA"
 }
 
-/// The rules of contract 9.1 to 9.3 that every tool error must keep, whatever its code; the schema
-/// enforces the same ones.
 enum ContractShape {
     static let states = Set(BlockingState.allCases.map(\.rawValue))
     static let detailMembers: [String: Set<String>] = [
@@ -185,7 +168,6 @@ enum ContractShape {
         "denied_shortcut": ["shortcut"], "lease_held_by_other": ["expires_in_ms"],
     ]
 
-    /// What `response` breaks of contract 3.3 and 9.2, as a tool error with `code`; empty when nothing.
     static func toolErrorViolations(_ response: WireResponse, code: String) -> [String] {
         var broken: [String] = []
         if response.status != .ok { broken.append("HTTP \(String(describing: response.status)), not 200") }
@@ -220,7 +202,6 @@ enum ContractShape {
             broken.append("a window title on denied_app")
         }
         if code == "denied_app", content["measured"]?["drag_end"] != nil { broken.append("drag_end on denied_app") }
-        // `replayed` is there exactly on the result of an admitted call, which always has a record.
         let admitted = content["replayed"] != nil
         if admitted, content["operation"] == nil { broken.append("replayed without operation") }
         let measuredRequired = ["denied_app", "log_unavailable"].contains(code) || (admitted && code != "interrupted")
@@ -240,7 +221,6 @@ enum ContractShape {
         return broken
     }
 
-    /// Records an issue for each rule `response` breaks.
     static func expectToolError(
         _ response: WireResponse, _ code: String, sourceLocation: SourceLocation = #_sourceLocation
     ) {
@@ -251,7 +231,6 @@ enum ContractShape {
     }
 }
 
-/// Opened once; every wait before and after returns.
 final class Latch: Sendable {
     private let state = Mutex<(open: Bool, waiters: [CheckedContinuation<Void, Never>])>((false, []))
 
@@ -332,8 +311,6 @@ private final class Answer<T: Sendable>: Sendable {
     }
 }
 
-/// Waits inside an executing operation until the request's task is cancelled, which is the
-/// listener seeing the caller hang up; gives up after `limit`.
 func waitForHangUp(limit: Duration = .seconds(20)) async {
     let deadline = ContinuousClock.now + limit
     while !Task.isCancelled, ContinuousClock.now < deadline {

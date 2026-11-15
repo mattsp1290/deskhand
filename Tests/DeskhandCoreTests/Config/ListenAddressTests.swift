@@ -2,7 +2,6 @@ import DeskhandCore
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct ListenAddressTests {
-    /// Accepted literals and how they are written back.
     static let accepted: [(String, String, ListenAddress.Family)] = [
         ("10.0.0.149", "10.0.0.149", .ipv4),
         ("10.0.0.96", "10.0.0.96", .ipv4),

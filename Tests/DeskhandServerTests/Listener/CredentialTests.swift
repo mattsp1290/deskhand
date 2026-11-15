@@ -74,7 +74,6 @@ import Testing
         #expect(throws: CredentialFileError.notRegularFile) { try CredentialFile.read(path: directory) }
     }
 
-    /// Reviewer repro: opening a FIFO with no writer blocked forever, before the regular-file check.
     @Test(.timeLimit(.minutes(1))) func fifoIsRefusedWithoutWaitingForAWriter() async throws {
         let path = try Self.scratchFile(mode: 0o600) + "-fifo"
         #expect(mkfifo(path, 0o600) == 0)
@@ -87,7 +86,6 @@ import Testing
         #expect(throws: CredentialFileError.notRegularFile) { try CredentialFile.read(path: "/dev/null") }
     }
 
-    /// The startup path: a server key readable by group and other stops the TLS context from loading.
     @Test func worldReadableKeyIsRefusedAtStartup() throws {
         let pki = try TestPKI.get()
         let key = try Self.scratchFile(

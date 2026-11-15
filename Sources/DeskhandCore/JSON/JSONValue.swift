@@ -32,12 +32,8 @@ extension JSONValue {
 
     public subscript(key: String) -> JSONValue? { objectValue?[key] }
 
-    /// The largest integer a double holds exactly, the upper bound of a count deskhand reads back.
     static let maxExactInteger = 9_007_199_254_740_991
 
-    /// A number with no fraction (`10.0` counts) inside `range`, or `nil`. The one integer rule of
-    /// every reader: tool arguments, the configuration, the allowance, the action log and the
-    /// operation journal.
     func integer(in range: ClosedRange<Int>) -> Int? {
         guard case .number(let number) = self, number.rounded(.towardZero) == number,
             Double(range.lowerBound) <= number, number <= Double(range.upperBound)

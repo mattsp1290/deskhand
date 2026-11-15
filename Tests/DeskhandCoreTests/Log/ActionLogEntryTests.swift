@@ -16,9 +16,6 @@ import Testing
         #expect(LogSamples.text(ActionLogLine(.intent(intent))) == expected)
     }
 
-    /// Contract 12.10: an outcome also names the apps of the result's `measured`, never its title.
-    /// It repeats the intent's frame and action (re-review A, finding 4), so a line read alone still
-    /// says what was done.
     @Test func outcomeRepeatsTheIntentsCallerAndHandles() async throws {
         let intent = try LogSamples.intent(keyboard: LogSamples.typing("abc"))
         let line = try await LogSamples.outcomeLine(.aborted(.userActive, eventsPosted: 3), intent: intent)
@@ -130,7 +127,6 @@ import Testing
         }
     }
 
-    /// Bytes the writer must refuse, each a small edit of a valid intent line.
     static let tamperedIntents: [(String, @Sendable (String) -> String)] = [
         ("no line feed", { String($0.dropLast()) }),
         ("two line feeds", { $0 + "\n" }),
@@ -161,7 +157,6 @@ import Testing
         #expect(throws: ActionLogLineError.self, "\(name)") { try ActionLogLine(verifying: Array(tampered.utf8)) }
     }
 
-    /// Re-encoding would reproduce a named typing key byte for byte, so the decoder itself must refuse it.
     @Test func namedTypingKeyIsRefusedAsInvalidNotJustNonCanonical() throws {
         let intent = try LogSamples.intent(keyboard: ["type": "press", "key": "p", "modifiers": ["shift"]])
         let named = LogSamples.text(ActionLogLine(.intent(intent))).replacingFirst(#""key":null"#, with: #""key":"p""#)
@@ -197,8 +192,6 @@ import Testing
         }
     }
 
-    /// Contract 12.10: a call refused before admission leaves one best-effort refusal entry, with
-    /// every member it could not supply well formed as `null`, and no text.
     @Test func refusalEntriesRoundTripWithAndWithoutHandles() async throws {
         let arguments = try LogSamples.keyboardArguments(LogSamples.typing("secret"))
         let full = try #require(
@@ -230,7 +223,6 @@ import Testing
                 code: .invalidArgument) == nil)
     }
 
-    /// The log's outcome is derived from what the record stores, so the two cannot disagree.
     @Test func outcomesComeFromTheRecordsOutcome() {
         let measured = Measured(
             frontmostApp: LogSamples.textEdit, targetApp: LogSamples.textEdit, windowTitle: nil, globalPoint: nil,

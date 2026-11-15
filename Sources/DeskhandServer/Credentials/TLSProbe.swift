@@ -9,14 +9,6 @@ import Synchronization
     import Glibc
 #endif
 
-/// A TLS 1.3 handshake inside this process, over a Unix socket pair, between a server presenting a
-/// candidate certificate and key and a client that trusts the private CA alone. It is how a
-/// candidate pair is checked against BoringSSL's own chain verification and how the key is shown
-/// to sign for the certificate, without opening a network port.
-///
-/// The probe server asks for no client certificate and the probe client skips the hostname check:
-/// the client policy is not what is being tested, and the configured names are compared exactly
-/// before the probe runs.
 enum TLSProbe {
     struct Failure: Error, CustomStringConvertible {
         let description: String
@@ -33,7 +25,6 @@ enum TLSProbe {
         return try NIOSSLContext(configuration: configuration)
     }
 
-    /// Nil when the handshake completes; otherwise why it did not.
     static func handshake(
         server serverContext: NIOSSLContext,
         trustRoots: [NIOSSLCertificate],
@@ -60,7 +51,6 @@ enum TLSProbe {
         #else
             let socketType = Int32(SOCK_STREAM.rawValue)
         #endif
-        // Once a bootstrap is handed a descriptor, NIO owns it, also when the bootstrap fails.
         guard socketpair(AF_UNIX, socketType, 0, &descriptors) == 0 else {
             return Failure(description: "socketpair failed (errno \(errno))")
         }

@@ -23,8 +23,8 @@ update.
 
 | Path | Rule |
 | --- | --- |
-| `**/*.json` outside `examples/` | A schema. It declares Draft 2020-12, has an `$id` ending in its path under `docs/schemas/`, and every `$ref` resolves locally. Its stem is the file name without `.json` and must be unique. Every `format` it uses must be asserted; `date-time` needs `rfc3339-validator`, which the requirements file pins. |
-| `defs.json` | Shared definitions. The only schema that needs no example and no invalid example. |
+| `**/*.json` outside `examples/` | A schema. It declares Draft 2020-12, has an `$id` ending in its path under `docs/schemas/`, and every `$ref` resolves locally. Its stem is the file name without `.json` and must be unique. Every `format` it uses must be asserted; `date-time` needs `rfc3339-validator`, which the requirements file pins. Every keyword must be a Draft 2020-12 keyword, so a misspelled one fails instead of being ignored. |
+| `defs.json` | Shared definitions. The only schema that needs no example and no invalid example. `allowance.json` is self-contained, so its `$defs/timestamp` must stay identical to the one here. |
 | `tools/<tool>.input.json`, `tools/<tool>.output.json` | Tool schemas, always in pairs. They must survive the `tools/list` bundling rule (contract 3.2); input schemas are closed objects with no top-level combinators. |
 | `wire/*.json` | JSON-RPC messages (`jsonrpc-request`, `jsonrpc-notification`, `jsonrpc-response`, `jsonrpc-error`) and method results (`server-discover-result`, `tools-list-result`, `tools-call-result`). |
 | `examples/<stem>.<name>.json` | Must validate against the schema with the longest matching stem. Every schema outside `wire/` except `defs.json` needs at least one. |
@@ -80,6 +80,8 @@ The checker also compares `docs/contract.md` with the schemas:
   against the prose that restates it (`PROSE_SITES`, every match in the
   section). A new constant must be added to `CONSTANT_SITES` or
   `UNSCHEMATIZED_CONSTANTS`.
+- Prose that restates a schema bound which is not a section 16 constant, such
+  as the length of `holder_id`, against that bound (`SCHEMA_PROSE_SITES`).
 - Every figure of a million or more that is given in bytes, pixels or
   characters, anywhere in the document, against `MAX_IMAGE_BYTES`,
   `MAX_RESPONSE_BODY_BYTES` and `MAX_PIXELS`. `OTHER_FIGURES` lists the few
@@ -97,4 +99,5 @@ The checker also compares `docs/contract.md` with the schemas:
 `scripts/check-mac-session-gate.sh`, run in the `swift-format lint` job of
 `.github/workflows/swift.yml`, is the Swift-side counterpart: it fails when a
 test names `.requiresMacSession` without `.macSessionTestsEnabled` or the
-reverse.
+reverse, and when an attribute never closes. The trait counts only in code, not
+in a comment or a string.

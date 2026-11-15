@@ -1,7 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Holds and the times an operation reports (contract 6.4, 6.5, 6.7, 10.4, 13).
 @Suite("Executor: holds and posting times", .timeLimit(.minutes(1)))
 struct HoldTests {
     static func isKeyDown(_ event: InputEvent) -> Bool { if case .keyDown = event { true } else { false } }
@@ -9,7 +8,6 @@ struct HoldTests {
     static func isButtonDown(_ event: InputEvent) -> Bool { if case .buttonDown = event { true } else { false } }
     static func isButtonUp(_ event: InputEvent) -> Bool { if case .buttonUp = event { true } else { false } }
 
-    /// Makes the identity read of the check before event `after + 1` take `milliseconds`.
     static func slowCheck(after event: Int, milliseconds: Int64) -> FakeMac {
         FakeMac {
             $0.afterPost[event] = { world, _ in
@@ -62,7 +60,6 @@ struct HoldTests {
     func holdWakesForDeadline() async throws {
         let mac = FakeMac { $0.lease = ExecutorFixture.acquired(ttlMs: 5_000) }
         let harness = try Harness(mac: mac)
-        // The key goes down 30 ms after the lease was acquired, so a 5 s hold would outlast it.
         await harness.onLog(.intent) { mac.advance(byMilliseconds: 30) }
         let answer = await harness.executor.perform(
             try harness.keyboard(["type": "press", "key": "k", "hold_ms": 5000]))
@@ -74,7 +71,6 @@ struct HoldTests {
     @Test("a timer that returns early only makes a hold poll more often")
     func earlyTimerKeepsTheHold() async throws {
         let mac = FakeMac()
-        // Every sleep returns after at most 10 ms, as ExecutionTimer allows; the clock still advances.
         mac.change { world in
             world.onSleep = {
                 mac.change { world in
@@ -96,7 +92,6 @@ struct HoldTests {
     func frozenClockEndsHold() async throws {
         let mac = FakeMac { $0.frozenOffsetMs = 0 }
         let harness = try Harness(mac: mac)
-        // Closes long after the bound, so a hold that ignores it ends as cancelled instead of never.
         let connection = FakeConnection(openReads: 100)
         let answer = await harness.executor.perform(
             try harness.keyboard(["type": "press", "key": "k", "hold_ms": 300], connection: connection))

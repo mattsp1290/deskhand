@@ -7,15 +7,12 @@ public struct X509ParseError: Error, Hashable, Sendable, CustomStringConvertible
     public var description: String { reason }
 }
 
-/// One DER element: its single-byte tag, its content octets and the whole encoding.
 struct DERElement {
     let tag: UInt8
     let content: ArraySlice<UInt8>
     let encoded: ArraySlice<UInt8>
 }
 
-/// Reads definite-length DER elements with low-number tags, which is everything an X.509
-/// certificate's TBS, Name and extension structures use.
 struct DERReader {
     private var bytes: ArraySlice<UInt8>
 
@@ -72,7 +69,6 @@ enum DERTag {
     static let explicitExtensions: UInt8 = 0xA3
 }
 
-/// Object identifiers in dotted-decimal form.
 enum OID {
     static let extendedKeyUsage = "2.5.29.37"
     static let clientAuth = "1.3.6.1.5.5.7.3.2"
@@ -99,8 +95,6 @@ enum OID {
     }
 }
 
-/// The parts of an X.509 certificate the listener inspects. Signatures, validity and the chain are
-/// BoringSSL's job; this reads only an already verified leaf.
 struct X509Certificate {
     struct Extension {
         let oid: String
@@ -108,7 +102,7 @@ struct X509Certificate {
         let value: ArraySlice<UInt8>
     }
 
-    /// The subject `Name` element, tag and length included.
+    let issuer: DERElement
     let subject: DERElement
     let extensions: [Extension]
 
@@ -121,7 +115,7 @@ struct X509Certificate {
         if tbs.nextTag == DERTag.explicitVersion { _ = try tbs.read() }
         _ = try tbs.read(tag: DERTag.integer)
         _ = try tbs.read(tag: DERTag.sequence)  // signature algorithm
-        _ = try tbs.read(tag: DERTag.sequence)  // issuer
+        issuer = try tbs.read(tag: DERTag.sequence)
         _ = try tbs.read(tag: DERTag.sequence)  // validity
         subject = try tbs.read(tag: DERTag.sequence)
         _ = try tbs.read(tag: DERTag.sequence)  // subject public key info
@@ -160,7 +154,6 @@ struct X509Certificate {
         return extensions
     }
 
-    /// The key purposes of the extended key usage extension, or nil when the extension is absent.
     func extendedKeyUsages() throws(X509ParseError) -> [String]? {
         guard let usage = extensions.first(where: { $0.oid == OID.extendedKeyUsage }) else { return nil }
         var wrapper = DERReader(usage.value)

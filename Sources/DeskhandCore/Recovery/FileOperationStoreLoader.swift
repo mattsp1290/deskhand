@@ -26,8 +26,6 @@ public struct FileOperationStoreLoader: OperationStoreLoader {
     }
 }
 
-/// Stands in front of the executor's loader for good: every load passes through, and the first,
-/// which is the start's, is kept for the report.
 final class StartLoadRecorder: OperationStoreLoader {
     private let loader: any OperationStoreLoader
     private let first = Mutex<OperationRecordsRecovery?>(nil)

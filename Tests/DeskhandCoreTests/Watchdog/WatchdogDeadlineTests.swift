@@ -1,15 +1,12 @@
 import DeskhandCore
 import Testing
 
-/// Contract 13.1 and 14.4: the deadline, its timer while idle, and revocation through the watch and
-/// the poll.
 @Suite("Watchdog: deadline and revocation", .timeLimit(.minutes(1)))
 struct WatchdogDeadlineTests {
     struct Sources: CustomTestStringConvertible, Sendable {
         let armedMs: Int64
         let allowanceMs: Int64?
         let leaseTTLMs: Int?
-        /// `nil` when nothing can end.
         let deadlineMs: Int64?
 
         var testDescription: String {
@@ -75,8 +72,6 @@ struct WatchdogDeadlineTests {
         #expect(await executor.interrupts.allSatisfy { $0.1 >= 35_100 })
     }
 
-    /// Moves the clock from one wakeup of the watchdog to the next, evaluating at each, up to
-    /// `endMs`, and returns the times it woke, in milliseconds since t0.
     static func step(_ watchdog: Watchdog, clock: ManualScheduler, until endMs: Int64) async -> [Int64] {
         var woke: [Int64] = []
         var wakeup = await watchdog.evaluate()
@@ -136,7 +131,6 @@ struct WatchdogDeadlineTests {
         let signatures = FakeSignatures()
         signatures.set("/etc/deskhand", inode: 1)
         signatures.set("/etc/deskhand/allowance.json", inode: 2)
-        // Faster than the periodic read, so the poll is what notices.
         let poll = PollingFileChangeSource(
             paths: ["/etc/deskhand", "/etc/deskhand/allowance.json"], interval: .milliseconds(250), scheduler: clock,
             signature: signatures.signature)
@@ -200,7 +194,6 @@ struct WatchdogDeadlineTests {
     }
 }
 
-/// A person who has been away a minute.
 struct StaticActivity: UserActivitySource {
     var idleMs: Int? = 60_000
 

@@ -2,13 +2,11 @@ import DeskhandCore
 import Synchronization
 import Testing
 
-/// Contract 11.5 and 13.2: telling the person's input from deskhand's own, and the watchdog's poll.
 @Suite("Watchdog: the person at the Mac", .timeLimit(.minutes(1)))
 struct PersonActivityTests {
     struct Reading: CustomTestStringConvertible, Sendable {
         let name: String
         let signal: IdleSignal
-        /// How long ago deskhand last posted, if it has.
         let ownPostMsAgo: Int64?
         let idleMs: Int64?
 
@@ -92,13 +90,9 @@ struct PersonActivityTests {
         #expect(recorder.lastPostedEvent == WatchdogFixture.at(20).monotonic)
     }
 
-    /// deskhand's events during one effect, in milliseconds from its start.
     enum Pattern: String, CaseIterable, Sendable {
-        /// A key down and up every 4 ms.
         case typing
-        /// A button down, a move every 16 ms, the button up.
         case drag
-        /// Three modifiers and a key down, held 500 ms, then up.
         case chord
 
         var posts: [Int64] {
@@ -112,8 +106,6 @@ struct PersonActivityTests {
         var end: Int64 { posts.last! }
     }
 
-    /// Runs `pattern` from t0 with the watchdog driven at its own wakeups. The person touches the Mac
-    /// at `personAt`. Returns the interruptions and when they arrived.
     static func watch(
         _ pattern: Pattern, kind: FakeHID.Kind, personAt: Int64?
     ) async -> [(Interruption, Int64)] {
@@ -214,7 +206,6 @@ struct PersonActivityTests {
             activity: PersonActivitySource(signal: hid, posts: PostTimestampRecorder()) { clock.now },
             scheduler: clock)
         await executor.setExecuting(true)
-        // The end of an earlier operation, delivered after the start of this one.
         await watchdog.executionDidChange(executing: true)
         await watchdog.executionDidChange(executing: false)
         clock.advance(byMilliseconds: 100)

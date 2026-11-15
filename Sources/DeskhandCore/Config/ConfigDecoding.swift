@@ -38,8 +38,6 @@ extension DeskhandConfig {
     }
 }
 
-/// Walks a configuration document, collecting every issue. Each method returns `nil` when the
-/// value it reads is unusable, after recording why.
 private struct ConfigReader {
     private(set) var issues: [ConfigIssue] = []
 
@@ -76,8 +74,6 @@ private struct ConfigReader {
             mac: mac, listen: listen, service: service, credentials: credentials, allowance: allowance,
             allowedApps: allowedApps, limits: limits)
     }
-
-    // MARK: Sections
 
     private mutating func readListen(_ value: JSONValue, at path: JSONPointer) -> ListenConfig? {
         guard let members = closedObject(value, at: path, required: ["address", "port"]) else { return nil }
@@ -167,7 +163,6 @@ private struct ConfigReader {
             }
             return id
         }
-        // `null` means a signature with no team identifier, which the policy trusts only as Apple's.
         var signer: TrustedSigner?
         switch members["team_id"] {
         case .some(.null): signer = .apple
@@ -205,8 +200,6 @@ private struct ConfigReader {
             operationMaxRecords: maxRecords)
     }
 
-    /// The four credential files and the allowance must be five different files: a token path that
-    /// equals the key path, say, would publish one credential under another's name.
     private mutating func requireDistinctPaths(credentials: CredentialsConfig, allowance: AllowanceConfig) {
         let credentialsPath = JSONPointer.root.appending("credentials")
         let paths: [(JSONPointer, String)] = [
@@ -226,10 +219,6 @@ private struct ConfigReader {
         }
     }
 
-    // MARK: Values
-
-    /// The object's members, after reporting each unknown member and each missing required one.
-    /// Returns the members even when some are missing, so the present ones are still checked.
     private mutating func closedObject(
         _ value: JSONValue, at path: JSONPointer, required: [String], optional: [String] = []
     ) -> JSONObject? {
@@ -255,7 +244,6 @@ private struct ConfigReader {
         return text
     }
 
-    /// A JSON number with no fraction inside `range`.
     private mutating func integer(_ value: JSONValue, at path: JSONPointer, in range: ClosedRange<Int>) -> Int? {
         guard let integer = value.integer(in: range) else {
             report(path, .integer(range))
@@ -348,8 +336,6 @@ private struct ConfigReader {
         }
         return text
     }
-
-    // MARK: Character rules
 
     private static func isLowerAlphanumeric(_ byte: UInt8) -> Bool {
         (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte) || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)

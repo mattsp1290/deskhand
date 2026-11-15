@@ -1,12 +1,10 @@
 import DeskhandCore
 
-/// Contract section 10, highest first, written out rather than taken from `allCases`.
 let contractPrecedence: [BlockingState] = [
     .gated, .paused, .disarmed, .notConsole, .locked, .displayAsleep, .permissionMissing, .permissionStale,
     .secureInput,
 ]
 
-/// Contract sections 10 and 11.4: the state each platform signal makes hold.
 let stateFedBy: [PlatformSignal: BlockingState] = [
     .notConsole: .notConsole, .loginWindow: .notConsole, .locked: .locked, .displayAsleep: .displayAsleep,
     .permissionMissing: .permissionMissing, .permissionStale: .permissionStale, .secureInput: .secureInput,
@@ -14,21 +12,16 @@ let stateFedBy: [PlatformSignal: BlockingState] = [
 
 let leaseDroppingStates: Set<BlockingState> = [.gated, .paused, .disarmed]
 
-/// The highest-precedence state in `states`, or `ok`.
 func expectedState(_ states: Set<BlockingState>) -> DeskhandState {
     contractPrecedence.first(where: states.contains)?.state ?? .ok
 }
 
-/// Every subset of the blocking states, `paused` without `disarmed` included.
 let everyBlockingSubset: [Set<BlockingState>] = (0..<(1 << contractPrecedence.count)).map { mask in
     Set(contractPrecedence.indices.filter { mask & (1 << $0) != 0 }.map { contractPrecedence[$0] })
 }
 
-/// How arming gets from one value to another in a single reduction.
 enum ArmingStep: Equatable {
-    /// `command` is `nil` when arming does not change.
     case reachable(command: ArmingCommand?)
-    /// `paused` ends only by arming, so `paused` to plain `disarmed` takes two steps.
     case unreachable
 }
 
@@ -36,16 +29,11 @@ enum StateFixture {
     static let t0 = ClockReading(wall: Timestamp(millisecondsSinceEpoch: 1_794_668_539_730), monotonic: .now)
     static let armingPeriod: Duration = .seconds(3600)
     static let armedUntil = t0.monotonic.advanced(by: armingPeriod)
-    /// An allowance that stays valid through every test.
     static let allowance = AllowanceVerdict.valid(expiresAt: t0.wall.adding(milliseconds: 365 * 86_400_000))
-    /// The exhaustive tables check precedence and effects with `gated` and arming independent;
-    /// `gated_ends_arming` has tests of its own.
     static let gateIndependent = StateConfiguration(gatedEndsArming: false)
 
     static func at(_ offsetMs: Int64) -> ClockReading { t0.advanced(byMilliseconds: offsetMs) }
 
-    /// Signals under which exactly the platform states in `states` hold and the allowance is valid
-    /// unless `states` has `gated`. A `loginWindow` condition also makes `not_console` hold.
     static func signals(
         holding states: Set<BlockingState> = [], conditions: Set<Condition> = [], ownInput: OwnInputActivity = .idle
     ) -> StateSignals {
@@ -62,8 +50,6 @@ enum StateFixture {
             ownInput: ownInput)
     }
 
-    /// The arming under which `paused` and `disarmed` hold as they do in `states`, or `nil` for
-    /// `paused` without `disarmed`, which no sequence of commands reaches.
     static func arming(for states: Set<BlockingState>) -> Arming? {
         switch (states.contains(.paused), states.contains(.disarmed)) {
         case (true, true): .paused
@@ -91,7 +77,6 @@ enum StateFixture {
             previous: previous, signals: signals, command: command, configuration: configuration, now: now)
     }
 
-    /// A report with `arming`, reached from `startup` through the public commands at `t0`.
     static func report(arming: Arming, signals: StateSignals) -> StateReport {
         let command: ArmingCommand? =
             switch arming {
@@ -102,7 +87,6 @@ enum StateFixture {
         return reduce(.startup, signals, command).report
     }
 
-    /// A report in which exactly `states` hold, or `nil` when that set is unreachable.
     static func report(holding states: Set<BlockingState>, conditions: Set<Condition> = []) -> StateReport? {
         arming(for: states).map { report(arming: $0, signals: signals(holding: states, conditions: conditions)) }
     }

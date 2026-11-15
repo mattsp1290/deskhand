@@ -4,13 +4,10 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct FrameGeometryTests {
     typealias F = FrameFixtures
 
-    /// The contract 8.2 example: a 3456 x 2234 Retina display at 1728 x 1117 points.
     static let retina = F.geometry(
         GlobalRect(x: 0, y: 0, width: 1728, height: 1117), PixelSize(width: 2408, height: 1556))
-    /// A 4K display at scale 2 left of and above the main display, downscaled to 2576 x 1449.
     static let leftOfMain = F.geometry(
         GlobalRect(x: -1920, y: -300, width: 1920, height: 1080), PixelSize(width: 2576, height: 1449))
-    /// A 1440 x 900 point display at a non-integer scale of 1.5.
     static let scaled = F.geometry(
         GlobalRect(x: 0, y: 0, width: 1440, height: 900), PixelSize(width: 2160, height: 1350))
 
@@ -102,8 +99,6 @@ import Testing
         #expect(FrameGeometry(captureRect: rect, outputPixelSize: size, displayBounds: rect) != nil)
     }
 
-    /// A region frame of 400 x 400 px on a 1728 x 1117 display: a point outside the frame maps to
-    /// nothing, rather than to a clamped place the caller never saw.
     @Test func mapsOnlyPointsInsideTheFrame() {
         let region = F.geometry(
             GlobalRect(x: 100, y: 100, width: 200, height: 200), PixelSize(width: 400, height: 400),
@@ -115,6 +110,5 @@ import Testing
 }
 
 extension FrameGeometry {
-    /// For points the test knows are inside the frame.
     fileprivate func mapped(_ point: FramePoint) -> GlobalPoint { globalPoint(for: point)! }
 }

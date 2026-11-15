@@ -6,7 +6,6 @@ import Testing
 
 @Suite("pointer and keyboard through the dispatcher")
 struct EffectToolTests {
-    /// A harness holding the lease, with one frame of the main display.
     static func ready(ttlMs: Int = 30_000) async throws -> (ToolHarness, FrameID) {
         let harness = try ToolHarness()
         try await harness.lease(.acquire(ttlMs: ttlMs))
@@ -110,7 +109,6 @@ struct EffectToolTests {
         #expect(try await harness.status(StatusArguments(operation: query)).operation == .notFound)
         #expect(await harness.log.entries.allSatisfy { $0.kind == .refusal })
 
-        // The same operation_id is judged afresh on an open connection.
         guard case .completed = try await harness.type("hi", frame: frame) else {
             Issue.record("expected the repeat on an open connection to complete")
             return

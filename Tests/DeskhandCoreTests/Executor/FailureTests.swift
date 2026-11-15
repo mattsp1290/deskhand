@@ -1,8 +1,6 @@
 import DeskhandCore
 import Testing
 
-/// Faults and hang-ups: nothing is posted that was not first recorded (contract 12.3), and a call
-/// whose connection closed before admission is dropped (contract 9.5).
 @Suite("Executor: faults", .timeLimit(.minutes(1)))
 struct FailureTests {
     @Test("an intent the log cannot commit refuses with log_unavailable: nothing posted, no record")
@@ -36,7 +34,6 @@ struct FailureTests {
     @Test("a failed write of executing posts nothing and fails the call; the record is recovered on reload")
     func executingWriteFails() async throws {
         let loader = FakeStoreLoader()
-        // The load's replace crosses boundaries 0 to 3, admission's append and flush 4 and 5.
         loader.faultAt = 6
         let harness = try Harness(loader: loader)
         let call = try harness.keyboard(["type": "type", "text": "hi"])

@@ -28,7 +28,6 @@ public enum PatchVerdict: Hashable, Sendable {
 
 /// The pixels around one pointer target that must look as they did in the frame (contract 8.4).
 public struct TargetPatch: Hashable, Sendable {
-    /// `PATCH_MAX_CHANGED_FRACTION` (0.02) as `1 / 50`, so the threshold is exact integer arithmetic.
     static let changedFractionDenominator = 50
 
     /// The target the patch was cut around.

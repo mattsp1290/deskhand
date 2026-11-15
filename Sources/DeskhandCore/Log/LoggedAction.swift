@@ -93,7 +93,6 @@ public struct LoggedKeyPress: Hashable, Sendable {
         holdMs = press.holdMs
     }
 
-    /// `nil` when `key` breaks the naming rule, so a decoded entry has the one form ``init(_:)`` builds.
     init?(key: LoggedKey, modifiers: Set<Modifier>, holdMs: Int) {
         let named: Bool
         switch key {
@@ -127,7 +126,6 @@ public enum LoggedKey: Hashable, Sendable, JSONRepresentable {
 }
 
 extension Key {
-    /// Letters, digits, punctuation and space: the keys whose press inserts a character.
     fileprivate var producesCharacter: Bool { self == .space || rawValue.unicodeScalars.count == 1 }
 }
 

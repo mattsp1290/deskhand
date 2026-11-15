@@ -8,7 +8,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// Real TLS over loopback against throwaway certificates from ``TestPKI``.
 @Suite(.timeLimit(.minutes(1))) struct ListenerTLSTests {
     @Test func validClientReachesHandlerWithPrincipalBodyAndMCPHeaders() async throws {
         let handler = RecordingHandler()
@@ -199,7 +198,6 @@ import Testing
     @Test func bindRetriesWhileTheAddressIsUnavailable() async throws {
         let pki = try TestPKI.get()
         var configuration = ListenerHarness.configuration()
-        // TEST-NET-1 (RFC 5737) is on no interface, so bind fails with EADDRNOTAVAIL.
         configuration.bindHost = "192.0.2.1"
         configuration.bindRetryInterval = .milliseconds(20)
         let log = EventLog()
@@ -229,7 +227,6 @@ import Testing
         )
         let address = try await listener.start()
         #expect(try await TestClient.roundTrip(.valid(), to: address, pki: pki).status == .ok)
-        // A context whose only trust root is the unrelated CA refuses the valid client.
         let refusing = try ServerTLSCredentials(
             caPEM: Array(try Data(contentsOf: pki.directory.appendingPathComponent("other-ca.pem"))),
             certificatePEM: Array(try Data(contentsOf: URL(fileURLWithPath: pki.serverCertificatePath))),
@@ -241,8 +238,6 @@ import Testing
     }
 }
 
-/// Polls until `condition` holds. The suite's time limit bounds the wait, so a slow machine only
-/// makes the test slower, never wrong.
 private func eventually(_ condition: () -> Bool) async throws {
     while !condition() { try await Task.sleep(for: .milliseconds(10)) }
 }
