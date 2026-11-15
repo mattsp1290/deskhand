@@ -14,14 +14,9 @@ import Testing
     import Glibc
 #endif
 
-/// How a caller's connection can end without a TLS close_notify: how a killed process, a crashed
-/// pod or a client stack's cancel path ends it.
 enum HangUp: CaseIterable, Sendable {
-    /// `SO_LINGER` 0, then close: the kernel sends a reset.
     case reset
-    /// Close without close_notify: a FIN.
     case closeWithoutCloseNotify
-    /// Shut down only the sending side, without close_notify, and keep reading.
     case halfClose
 }
 
@@ -31,7 +26,6 @@ private final class BelowTLS: ChannelOutboundHandler {
     typealias OutboundIn = ByteBuffer
 }
 
-/// A TLS client, as the valid ``TestPKI`` client, that can hang up below TLS.
 struct HangingUpClient {
     let channel: any Channel
 
@@ -78,14 +72,9 @@ struct HangingUpClient {
     }
 }
 
-/// Contract 2.1: closing the connection before the response arrives cancels the call, whichever
-/// way the caller's side ends.
 @Suite(.timeLimit(.minutes(1))) struct HangUpTests {
-    /// Far longer than the cancellation takes, far shorter than the handler's delay.
     static let bound = Duration.seconds(5)
 
-    /// Reviewer repro: a hang-up without close_notify reached `errorCaught` first, which dropped
-    /// the running call's task before `channelInactive` could cancel it.
     @Test(arguments: HangUp.allCases)
     func hangUpWithoutCloseNotifyCancelsTheCall(_ hangUp: HangUp) async throws {
         let handler = RecordingHandler(delay: .seconds(50))
@@ -102,7 +91,6 @@ struct HangingUpClient {
         }
     }
 
-    /// A caller that vanishes without a FIN or a reset is found by keep-alive probes.
     @Test func acceptedConnectionsProbeAQuietPeer() async throws {
         let pki = try TestPKI.get()
         let configuration = ListenerHarness.configuration {
@@ -134,15 +122,12 @@ struct HangingUpClient {
     }
 }
 
-/// Each event that ends a connection, delivered to the handler while a call runs.
 @Suite(.timeLimit(.minutes(1))) struct ConnectionCancellationTests {
     enum Ending: CaseIterable, Sendable {
         /// What NIOSSL reports for a FIN without close_notify.
         case uncleanShutdown
         case reset
-        /// Garbage behind the running request.
         case parseError
-        /// The caller's FIN, where half-closure is reported.
         case inputClosed
         case closed
     }

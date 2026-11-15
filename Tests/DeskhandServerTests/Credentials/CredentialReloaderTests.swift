@@ -73,7 +73,6 @@ private let day: Int64 = 86_400_000
 @Suite struct TokenRotationTests {
     private static let old = "old-test-token-not-a-secret-0001"
     private static let new = "new-test-token-not-a-secret-0002"
-    /// Exactly ``LoadedToken/minimumLength`` characters.
     private static let token = "token-0123456789abcdefghijklmnop"
 
     private static func loaded(_ secret: String) -> LoadedToken { LoadedToken.parse(Array(secret.utf8))! }
@@ -149,8 +148,6 @@ private let day: Int64 = 86_400_000
         }
     }
 
-    /// Reviewer repro: opening a FIFO with no writer blocked forever, at startup and in every reload
-    /// after it, since reloads run one at a time.
     @Test(.timeLimit(.minutes(1))) func aFIFOAtACredentialPathIsRefusedWithoutBlocking() async throws {
         let directory = try CredentialDirectory()
         try directory.replaceWithFIFO(directory.caPath)
@@ -198,7 +195,6 @@ private let day: Int64 = 86_400_000
         let original = reloader.tlsContexts.current
         #expect(!reloader.status.credentialsWarning)
 
-        // Two days on, the 30-day pair in use is still in date and the one-day pair is not.
         wallClock.set(wallClock.now.adding(milliseconds: 2 * day))
         try directory.install(pair)
         let status = await reloader.reload()
@@ -396,7 +392,6 @@ private let day: Int64 = 86_400_000
                 try await TestClient.roundTrip(Self.request(token: ""), to: address, pki: pki).status
                     == .unauthorized)
 
-            // A file caught half written holds a prefix of the token, which must not become one.
             let prefix = String(token.prefix(LoadedToken.minimumLength - 1))
             try directory.writeToken(prefix)
             #expect(await reloader.reload().tokenRejection == .malformed(path: directory.tokenPath))

@@ -15,7 +15,6 @@ import Synchronization
 /// BoringSSL's `SSL_CTX` and `SSL_SESSION` are safe to share between threads, and each exchange
 /// runs on a thread of its own with its own `SSL`.
 final class ResumingTLSClient: @unchecked Sendable {
-    /// A session the server issued, ready to be offered on a later connection.
     final class Session: @unchecked Sendable {
         fileprivate let pointer: OpaquePointer
 
@@ -25,11 +24,8 @@ final class ResumingTLSClient: @unchecked Sendable {
     }
 
     struct Exchange: Sendable {
-        /// The server took the offered session: an abbreviated handshake, no certificate verified.
         let resumed: Bool
-        /// The status code of the HTTP response; nil when none arrived.
         let status: Int?
-        /// The first session the server issued on this connection.
         let issued: Session?
     }
 
@@ -43,7 +39,6 @@ final class ResumingTLSClient: @unchecked Sendable {
 
     private let context: OpaquePointer
 
-    /// No certificate path presents no client certificate.
     init(caPath: String, certificatePath: String?, keyPath: String?) throws {
         guard let context = SSL_CTX_new(TLS_method()) else { throw Failure(description: "SSL_CTX_new failed") }
         self.context = context
@@ -133,7 +128,6 @@ final class ResumingTLSClient: @unchecked Sendable {
         )
     }
 
-    /// `HTTP/1.1 200 OK` gives 200.
     private static func status(of response: [UInt8]) -> Int? {
         let prefix = Array("HTTP/1.1 ".utf8)
         guard response.count >= prefix.count + 3, Array(response[..<prefix.count]) == prefix else { return nil }

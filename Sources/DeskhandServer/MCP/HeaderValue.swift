@@ -1,18 +1,14 @@
 import Foundation
 
-/// One MCP request header as the JSON-RPC layer compares it (contract 2.3).
 enum HeaderValue {
     enum Fault: Error, Hashable {
         case missing
-        /// Repeated, raw non-ASCII, or an `=?base64?…?=` form that does not decode to UTF-8.
         case malformed
     }
 
     private static let encodedPrefix = Array("=?base64?".utf8)
     private static let encodedSuffix = Array("?=".utf8)
 
-    /// The single value of a header, with the `=?base64?<base64 of UTF-8>?=` form decoded. A value
-    /// that is not plain ASCII must arrive in that form.
     static func decode(_ values: [String]) throws(Fault) -> String {
         guard let raw = values.first else { throw .missing }
         guard values.count == 1 else { throw .malformed }
@@ -30,7 +26,6 @@ enum HeaderValue {
         return raw
     }
 
-    /// `YYYY-MM-DD` naming a real calendar date.
     static func isDate(_ text: String) -> Bool {
         let bytes = Array(text.utf8)
         guard bytes.count == 10, bytes[4] == UInt8(ascii: "-"), bytes[7] == UInt8(ascii: "-") else { return false }

@@ -51,7 +51,6 @@ extension DeskhandDispatcher {
             }
         }
         let after = platform.identity.frontmostApp()
-        // Nobody is left to receive the image, so no frame is minted for it.
         guard !Task.isCancelled else { throw internalError("The caller closed the connection.") }
         guard image.size == expected, image.pixels.size == expected.output, !image.bytes.isEmpty,
             image.encoding.format == request.format,
@@ -61,8 +60,6 @@ extension DeskhandDispatcher {
             try refuseUnlessOK()
             throw internalError("The platform's capture does not match the request.")
         }
-        // The capturer applies the limit as it encodes; it is checked again here because an image
-        // over it must never reach the caller, whatever the platform did (contract 7).
         guard image.bytes.count <= request.maxImageBytes else {
             try refuseUnlessOK()
             throw ToolError(
@@ -98,10 +95,6 @@ extension DeskhandDispatcher {
     static let imageTooLargeMessage =
         "The encoded image is over \(ContractConstants.maxImageBytes) bytes. Ask for jpeg or a smaller max_long_edge."
 
-    /// The frontmost app at capture, read before and after it. When the two readings differ, or
-    /// either is uncertain, deskhand cannot say which app was in front, so the frame records an
-    /// undetermined app: a `keyboard` call on it is then refused as `frontmost_changed`, failing
-    /// closed (contract 6.3, 8.3).
     static func frontmostAtCapture(before: ObservedApp, after: ObservedApp) -> AppRef {
         guard before.isCertain, after.isCertain, before.appRef == after.appRef else { return .undetermined }
         return after.appRef

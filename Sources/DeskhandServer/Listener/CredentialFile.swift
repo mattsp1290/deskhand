@@ -72,7 +72,6 @@ public enum CredentialFile {
     }
 }
 
-/// `read` is shadowed inside ``CredentialFile`` by its own static method.
 private enum Syscall {
     static func read(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
         #if canImport(Darwin)

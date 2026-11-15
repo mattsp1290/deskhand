@@ -30,7 +30,6 @@ jobs:
       # Schemas and examples are discovered by layout; see docs/schemas/README.md.
       - run: python scripts/check-contract.py
 
-      # tools/list serves schemas embedded in DeskhandServer; a schema edit must be re-embedded.
       - name: Embedded tool schemas are current
         run: python scripts/embed-tool-schemas.py --check
 

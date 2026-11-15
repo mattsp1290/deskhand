@@ -229,12 +229,8 @@ public actor CredentialReloader {
         }
     }
 
-    /// A pair refused only because it is not valid yet, as when the issuer's clock runs ahead of
-    /// this Mac's, becomes acceptable without its files changing, so the watch tries it again.
     static let notYetValidRetryInterval = Duration.seconds(10)
 
-    /// Takes the file signatures before reading, so a reload from any trigger satisfies a pending
-    /// change and a file rewritten while it reads is seen by the next poll.
     private func performReload() async -> CredentialStatus {
         lastReload = monotonicClock()
         lastSignatures = configuration.watchedPaths.map(FileSignature.of(path:))
@@ -275,8 +271,6 @@ public actor CredentialReloader {
         return status
     }
 
-    /// The fingerprint covers the bytes of all three files, so a reload that finds the pair in use
-    /// unchanged does not swap contexts.
     private static func loadServerPair(
         _ configuration: CredentialReloadConfiguration,
         group: any EventLoopGroup,
@@ -307,8 +301,6 @@ public actor CredentialReloader {
     }
 }
 
-/// The `SIGHUP` dispatch source. Dispatch sources are not `Sendable` on Linux, so the source lives
-/// behind a lock where the reloader's nonisolated `deinit` can still cancel it.
 private final class HangupSignalSource: Sendable {
     private let source = Mutex<(any DispatchSourceSignal)?>(nil)
 

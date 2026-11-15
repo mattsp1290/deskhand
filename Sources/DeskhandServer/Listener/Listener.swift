@@ -122,7 +122,6 @@ public final class DeskhandListener: Sendable {
         for connection in connections { try? await connection.close() }
     }
 
-    /// Open connections, for tests that inspect the accepted sockets.
     var openConnections: [any Channel] { state.withLock { Array($0.connections.values) } }
 
     private func makeBootstrap() -> ServerBootstrap {

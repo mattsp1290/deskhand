@@ -18,7 +18,6 @@ struct StatusToolTests {
         let status = try await harness.status(StatusArguments(holderID: ToolFixture.holder))
         var expected = states
         expected.insert(.notConsole)
-        // `gated_ends_arming` is on by default.
         if states.contains(.gated) { expected.insert(.disarmed) }
         #expect(status.activeStates == ActiveStates(expected))
         #expect(status.activeStates.current == ActiveStates(expected).current)
@@ -64,7 +63,6 @@ struct StatusToolTests {
             platform: .init(
                 capturer: harness.capturer, identity: harness.desk, activity: harness.desk, conditions: conditions),
             digestKey: ToolFixture.digestKey)
-        // The reduction says `log_unavailable` and `credentials_warning` hold; the live sources decide.
         harness.hold([], conditions: [.logUnavailable, .cleanupPending])
         conditions.actionLogDidAppend(succeeded: true)
         harness.desk.change { $0.idleMs = 60_000 }

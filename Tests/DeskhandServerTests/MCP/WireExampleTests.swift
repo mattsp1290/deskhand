@@ -5,8 +5,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// Results that rebuild the `structuredContent` of the wire examples. Timestamps are milliseconds
-/// since the epoch of the examples' RFC 3339 strings.
 private enum WireResults {
     static let frame = FrameID("frm_Zk3vQ8sN1xT5bYc2Lw9RaA")!
     static let textEdit = AppRef(bundleID: "com.apple.TextEdit", teamID: nil, name: "TextEdit")
@@ -52,11 +50,9 @@ private enum WireResults {
         image: image)
 }
 
-/// One `tools-call.*` pair of `docs/schemas/examples/wire/`.
 struct ToolCallExample: Sendable, CustomTestStringConvertible {
     let name: String
     let reply: FakeDispatcher.Reply
-    /// What the dispatcher must receive, from core's own reading of the example's arguments.
     let expectedCall: @Sendable (JSONObject) throws -> DispatchedCall
 
     var testDescription: String { name }
@@ -94,9 +90,7 @@ struct ToolCallExample: Sendable, CustomTestStringConvertible {
     ]
 }
 
-/// Each method's answer compared with the whole-message examples of contract 3.
 @Suite struct WireExampleTests {
-    /// The example request as the listener would hand it over, with headers that agree with the body.
     static func request(_ file: String) throws -> (MCPTestRequest, JSONValue) {
         let bytes = try MCPTest.bytes("examples/wire/\(file)")
         let message = try JSONValue(parsing: bytes)

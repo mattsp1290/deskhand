@@ -1,17 +1,12 @@
 import DeskhandCore
 import Foundation
 
-/// What one tool call produced, before it becomes a `tools/call` result.
 enum ToolOutcome: Hashable, Sendable {
     case success(JSONValue)
     case screenshot(CapturedScreenshot)
     case failure(ToolError)
-    /// A repeated effect call answered from its record: the stored `structuredContent`, an error
-    /// unless the operation completed (contract 12.5).
     case replayed(JSONValue, isError: Bool)
 
-    /// What an effect call answered with. A call dropped before admission has nobody left to
-    /// answer (contract 9.5); its outcome is never sent.
     init(_ answer: EffectAnswer) {
         switch answer {
         case .completed(let result): self = .success(result.jsonValue)
@@ -23,8 +18,6 @@ enum ToolOutcome: Hashable, Sendable {
         }
     }
 
-    /// The result of contract 3.3: `content` ends with the text of `structuredContent`, after the
-    /// image of a successful `screenshot`; `isError` is set exactly for a tool error.
     func result() throws(NonFiniteNumberError) -> JSONValue {
         let structured: JSONValue
         var content: [JSONValue] = []
@@ -54,8 +47,6 @@ enum ToolOutcome: Hashable, Sendable {
     }
 }
 
-/// Validates a `tools/call`'s arguments with core's argument models and hands them to the
-/// dispatcher, in the caller's task so that a hang-up cancels the call.
 struct ToolRunner {
     let dispatcher: any ToolDispatcher
     let caller: ToolCaller

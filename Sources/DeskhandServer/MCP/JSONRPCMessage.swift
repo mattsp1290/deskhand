@@ -1,8 +1,6 @@
 import DeskhandCore
 import NIOHTTP1
 
-/// A request `id`: a string or an integer (contract 3). An integer is limited to the range a double
-/// holds exactly, so that the echo is the same number.
 enum JSONRPCID: Hashable, Sendable {
     case string(String)
     case integer(Int64)
@@ -26,12 +24,9 @@ enum JSONRPCID: Hashable, Sendable {
     }
 }
 
-/// A request refused with a JSON-RPC error (contract 2.4 checks 11 to 20, 9.4).
 struct ProtocolFault: Error, Hashable, Sendable {
     let status: HTTPResponseStatus
     let error: JSONRPCError
-    /// `nil` answers with `"id": null`: the body was not JSON, its `id` was not usable, or it was a
-    /// notification.
     let id: JSONRPCID?
 
     init(_ status: HTTPResponseStatus, _ error: JSONRPCError, id: JSONRPCID?) {
@@ -40,7 +35,6 @@ struct ProtocolFault: Error, Hashable, Sendable {
         self.id = id
     }
 
-    /// `error.data` is `{"detail", "header"}`, for diagnosis only (contract 9.4).
     init(
         _ status: HTTPResponseStatus, _ code: JSONRPCErrorCode, detail: String? = nil, header: String? = nil,
         id: JSONRPCID?
@@ -63,7 +57,6 @@ enum JSONRPCEnvelope {
 
     static func error(_ error: JSONRPCError, id: JSONRPCID?) -> [UInt8] {
         let envelope: JSONValue = ["jsonrpc": "2.0", "id": id?.jsonValue ?? .null, "error": error.jsonValue]
-        // Its only numbers are the integer code and an `id` inside the exact range.
         return try! envelope.canonicalBytes()
     }
 }

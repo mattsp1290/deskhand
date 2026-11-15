@@ -1,26 +1,17 @@
 import DeskhandCore
 
-/// What a `screenshot` captures: the display and the rectangle, aligned outward to whole native
-/// pixels (contract 6.3).
 struct CaptureArea: Hashable, Sendable {
     let display: DisplayInfo
-    /// Global points. The origin may be negative.
     let captureRect: GlobalRect
-    /// Native pixels of `captureRect`.
     let sourcePixelSize: PixelSize
 
     enum Failure: Error, Hashable, Sendable {
-        /// `invalid_argument`: a `display_id` that is not active, or a region not inside its display.
         case invalidArgument(ArgumentError)
-        /// The configuration has no main display, or a display whose size cannot be captured.
         case fault(PlatformFault)
     }
 
-    /// Native pixels are this much off a whole number at most and still count as whole, so the
-    /// rounding of points to pixels never adds a pixel to an edge that lies on the grid.
     private static let gridTolerance = 1e-6
 
-    /// The area `displayID` and `region` name in `configuration`.
     static func resolve(displayID: DisplayID?, region: GlobalRect?, in configuration: DisplayConfiguration)
         throws(Failure) -> CaptureArea
     {
@@ -46,7 +37,6 @@ struct CaptureArea: Hashable, Sendable {
             throw .invalidArgument(
                 ArgumentError(at: JSONPointer(["region"]), "must lie entirely inside the bounds of the display"))
         }
-        // Native pixels per point along each axis.
         let sx = Double(pixels.width) / bounds.width
         let sy = Double(pixels.height) / bounds.height
         let columns = alignedRange(from: region.x - bounds.x, length: region.width, scale: sx)
@@ -61,8 +51,6 @@ struct CaptureArea: Hashable, Sendable {
             sourcePixelSize: PixelSize(width: end.x - first.x, height: end.y - first.y))
     }
 
-    /// The native pixels that cover `[offset, offset + length)` points from the display's origin,
-    /// widened to whole pixels. At least one pixel wide, since the region is at least one point.
     private static func alignedRange(from offset: Double, length: Double, scale: Double) -> Range<Int> {
         let lower = Int((offset * scale + gridTolerance).rounded(.down))
         let upper = Int(((offset + length) * scale - gridTolerance).rounded(.up))

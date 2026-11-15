@@ -1,15 +1,10 @@
-/// What credential validation reads from a server certificate beyond what the listener needs: the
-/// issuer and subject names as encoded, and the DNS names of the subject alternative names.
-/// Signatures and the chain are checked by BoringSSL in ``TLSProbe``.
 struct CertificateFacts {
     static let subjectAlternativeNameOID = "2.5.29.17"
     /// `dNSName [2] IMPLICIT IA5String` in a `GeneralNames` sequence.
     static let dnsNameTag: UInt8 = 0x82
 
-    /// DER of the issuer `Name`, tag and length included.
     let issuer: ArraySlice<UInt8>
     let subject: ArraySlice<UInt8>
-    /// Every `dNSName`, as encoded; empty when the extension is absent.
     let dnsNames: [String]
 
     init(der: [UInt8]) throws(X509ParseError) {
@@ -19,7 +14,7 @@ struct CertificateFacts {
         var tbs = DERReader(try certificateReader.read(tag: DERTag.sequence).content)
         if tbs.nextTag == DERTag.explicitVersion { _ = try tbs.read() }
         _ = try tbs.read(tag: DERTag.integer)
-        _ = try tbs.read(tag: DERTag.sequence)  // signature algorithm
+        _ = try tbs.read(tag: DERTag.sequence)
         issuer = try tbs.read(tag: DERTag.sequence).encoded
         subject = certificate.subject.encoded
         dnsNames = try Self.dnsNames(certificate)

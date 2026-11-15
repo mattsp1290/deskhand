@@ -16,8 +16,6 @@ public final class DeskOwner: StateSource, FrameSource {
         var lease = LeaseManager()
         var frames: FrameStore
         var policy: AppPolicy
-        /// The state that last invalidated every frame, which names the refusal of a screenshot
-        /// that was in flight then (contract 10.3).
         var invalidatedBy: BlockingState?
     }
 
@@ -41,8 +39,6 @@ public final class DeskOwner: StateSource, FrameSource {
         world = Mutex(World(report: report, frames: frames, policy: policy))
     }
 
-    // MARK: StateSource and FrameSource
-
     public func snapshot() -> DeskSnapshot {
         world.withLock { world in
             DeskSnapshot(reading: clock(), report: world.report, lease: world.lease, policy: world.policy)
@@ -55,8 +51,6 @@ public final class DeskOwner: StateSource, FrameSource {
             $0.frames.check(id, in: scope, for: use, displayConfigGeneration: generation, now: now)
         }
     }
-
-    // MARK: The state owner's side
 
     /// What one reduction changed, and what its caller still has to carry out against the executor.
     public struct Reduction: Sendable {
@@ -114,17 +108,11 @@ public final class DeskOwner: StateSource, FrameSource {
     /// Replaces the app policy, for a configuration reload. The next check of every call uses it.
     public func updatePolicy(_ policy: AppPolicy) { world.withLock { $0.policy = policy } }
 
-    // MARK: The tools' side
-
-    /// The lease as `holder` sees it now (contract 5.4), and the rest of what `status` reports, at
-    /// one reading. Changes nothing.
     func statusView(for holder: LeaseHolder?) -> StatusView {
         world.withLock { world in
             let reading = clock()
             let active = world.report.activeStates(at: reading)
             let lease: LeaseView? = holder.map { holder in
-                // A lease that a state dropping it has outlived is gone, though the reduction that
-                // drops it has not run yet (contract 10.4).
                 guard Self.droppingState(in: active) == nil else { return .notHeldByCaller }
                 return world.lease.view(for: holder, now: reading)
             }
@@ -134,8 +122,6 @@ public final class DeskOwner: StateSource, FrameSource {
         }
     }
 
-    /// Runs one `lease` call at the state in force (contract 5). A lease that a state began by the
-    /// clock alone has dropped is settled first, as the next reduction would.
     func applyLease(_ arguments: LeaseArguments, principal: Principal) -> (result: LeaseToolResult, ended: [LeaseEnd]) {
         world.withLock { world in
             let reading = clock()
@@ -152,8 +138,6 @@ public final class DeskOwner: StateSource, FrameSource {
         }
     }
 
-    /// What a capture starts from: the reading, the state, the policy and the frame epoch, which a
-    /// change of state away from `ok` moves before the capture can be recorded.
     func beginCapture() -> CaptureStart {
         world.withLock { world in
             let reading = clock()
@@ -163,8 +147,6 @@ public final class DeskOwner: StateSource, FrameSource {
         }
     }
 
-    /// Mints the frame of a finished capture for `scope`, unless the state left `ok` since it
-    /// started: the screenshot is then refused with that state's name and mints nothing (contract 10.3).
     func record(_ capture: FrameCapture, for scope: FrameScope, startedIn start: CaptureStart) throws(FrameRefusal)
         -> Frame
     {
@@ -180,7 +162,6 @@ public final class DeskOwner: StateSource, FrameSource {
                     capture, for: scope, leaseHolder: leaseHolder, startedIn: start.epoch, now: reading.wall)
             } catch {
                 switch error {
-                // Every invalidation comes with the state that caused it; the fallback is unreachable.
                 case .invalidatedDuringCapture: throw .blocked(world.invalidatedBy ?? .permissionStale)
                 case .inconsistentCapture: throw .inconsistentCapture
                 }
@@ -193,11 +174,9 @@ public final class DeskOwner: StateSource, FrameSource {
     }
 }
 
-/// What `status` reads from the owner at one reading.
 struct StatusView: Sendable {
     let reading: ClockReading
     let activeStates: ActiveStates
-    /// As the latest reduction left them.
     let conditions: Set<Condition>
     let armedUntil: Timestamp?
     let lease: LeaseView?
@@ -205,7 +184,6 @@ struct StatusView: Sendable {
     var state: DeskhandState { activeStates.current }
 }
 
-/// See ``DeskOwner/beginCapture()``.
 struct CaptureStart: Sendable {
     let reading: ClockReading
     let state: DeskhandState
@@ -214,8 +192,6 @@ struct CaptureStart: Sendable {
 }
 
 enum FrameRefusal: Error, Hashable, Sendable {
-    /// The state is not `ok`, or every frame was invalidated while this one was captured.
     case blocked(BlockingState)
-    /// The platform's capture disagrees with itself: `internal_error`.
     case inconsistentCapture
 }

@@ -3,9 +3,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// The codes of contract 9.3 that no other end-to-end suite sends over the wire, a change of state
-/// during an executing operation (contract 10.3, 12.4), and the rule that only a person arms
-/// (contract 10.4).
 @Suite("end to end: codes and state changes", .timeLimit(.minutes(2)))
 struct CoverageEndToEndTests {
     static let terminal = ToolFixture.app("com.apple.Terminal", "Terminal")
@@ -99,7 +96,6 @@ struct CoverageEndToEndTests {
             #expect(oversized.structuredContent?["details"]?["image_bytes"] == 3_750_001)
             #expect(oversized.mcp?.content.contains { $0["type"] == "image" } == false)
 
-            // Neither minted a frame, so the one taken before is still the latest.
             let click = try await stack.call("pointer", Wire.click(frame: frame, "op-1"))
             #expect(click.structuredContent?["status"] == "completed")
         }
@@ -146,7 +142,6 @@ struct CoverageEndToEndTests {
             #expect(status.structuredContent?["state"] == "paused")
             #expect(status.structuredContent?["lease"]?["held_by_caller"] == false)
 
-            // The release deskhand posted is its own input, so a person arms once the lookback passed.
             await stack.hold([])
             stack.clock.advance(byMilliseconds: Int64(ContractConstants.userActivityLookbackMs))
             await stack.arm()
@@ -185,7 +180,6 @@ struct CoverageEndToEndTests {
             proceed.open()
             #expect(try await held.value.structuredContent?["status"] == "completed")
 
-            // Within USER_ACTIVITY_LOOKBACK_MS of deskhand's last event, arming is still refused.
             await stack.arm()
             #expect(abs(try #require(try await Self.armedUntil(stack)) - armedUntil) <= 5)
 
@@ -195,8 +189,6 @@ struct CoverageEndToEndTests {
         }
     }
 
-    /// `status.armed_until` in milliseconds. The report keeps arming on the monotonic clock, so
-    /// its wall rendering can move by a millisecond between two reads.
     static func armedUntil(_ stack: DeskhandStack) async throws -> Int64? {
         guard let text = try await stack.call("status").structuredContent?["armed_until"]?.stringValue,
             let timestamp = Timestamp(canonical: text)

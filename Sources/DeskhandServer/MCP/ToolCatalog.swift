@@ -1,7 +1,5 @@
 import DeskhandCore
 
-/// The four behavior hints of a tool, always sent explicitly because the specification's defaults
-/// (`destructiveHint` and `openWorldHint` true) are wrong for most of deskhand's tools (contract 3.2).
 struct ToolAnnotations: Hashable, Sendable {
     let readOnly: Bool
     let destructive: Bool
@@ -16,19 +14,14 @@ struct ToolAnnotations: Hashable, Sendable {
     }
 }
 
-/// Why the embedded schemas could not be served. A test keeps them in step with `docs/schemas/`, so
-/// this only happens to a broken build.
 struct ToolCatalogError: Error, Hashable, Sendable, CustomStringConvertible {
     let description: String
 }
 
-/// The results of `server/discover` and `tools/list` (contract 3.1, 3.2). Neither changes while
-/// deskhand runs.
 enum ToolCatalog {
     static let defsReference = "../defs.json#/$defs/"
     static let localReference = "#/$defs/"
 
-    /// Title and annotations of each tool: the table of contract 3.2.
     static func entry(for tool: ToolName) -> (title: String, annotations: ToolAnnotations) {
         switch tool {
         case .status:
@@ -60,12 +53,10 @@ enum ToolCatalog {
         ]
     }
 
-    /// Built once from the embedded schemas.
     static let listResult: Result<JSONValue, ToolCatalogError> = Result { () throws(ToolCatalogError) in
         try makeListResult(sources: ToolSchemaSources.files)
     }
 
-    /// The six tools in the order of `ToolName`, which is the order of contract 3.2, in one page.
     static func makeListResult(sources: [String: String]) throws(ToolCatalogError) -> JSONValue {
         let defs = try schema("defs.json", in: sources)["$defs"]?.objectValue ?? [:]
         var tools: [JSONValue] = []
@@ -88,8 +79,6 @@ enum ToolCatalog {
         ]
     }
 
-    /// Contract 3.2: copy every entry of `defs.json`'s `$defs` into the schema's own `$defs`, rewrite
-    /// each `../defs.json#/$defs/NAME` to `#/$defs/NAME`, and remove `$id`.
     static func bundle(_ schema: JSONObject, defs: JSONObject) throws(ToolCatalogError) -> JSONValue {
         var bundled = schema
         bundled["$id"] = nil

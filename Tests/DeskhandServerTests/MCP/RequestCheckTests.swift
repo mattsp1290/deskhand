@@ -4,14 +4,11 @@ import Testing
 
 @testable import DeskhandServer
 
-/// One request that fails a check of contract 2.4 and, where possible, also a later one, so that the
-/// expected answer proves the checks run in table order.
 struct CheckCase: Sendable, CustomTestStringConvertible {
     let check: Int
     let label: String
     let request: MCPTestRequest
     let status: HTTPResponseStatus
-    /// The JSON-RPC error code; `nil` for an answer with no body.
     let code: Int?
     let id: JSONValue
 
@@ -21,7 +18,6 @@ struct CheckCase: Sendable, CustomTestStringConvertible {
         #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"#
         + #""io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#
 
-    /// Fails check 13 as well, so a later code proves the earlier check ran first.
     static func raw(_ text: String, method: String = "tools/list") -> MCPTestRequest {
         MCPTestRequest.raw(text, method: method).with { $0.protocolVersion = [] }
     }

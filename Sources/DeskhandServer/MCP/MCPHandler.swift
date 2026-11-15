@@ -39,7 +39,6 @@ public struct MCPHandler: RequestHandler {
         }
     }
 
-    /// From here on the status is `200` and a refusal is an `isError` result (contract 2.4).
     private func callTool(_ tool: ToolName, _ arguments: ToolArguments, caller: ToolCaller, id: JSONRPCID) async
         -> HandlerResponse
     {

@@ -1,20 +1,15 @@
 import DeskhandCore
 import NIOHTTP1
 
-/// The MCP methods deskhand implements (contract 3).
 enum MCPMethod: String, CaseIterable, Sendable {
     case discover = "server/discover"
     case listTools = "tools/list"
     case callTool = "tools/call"
 }
 
-/// The `arguments` of a `tools/call`: `{}` when the request omitted them (contract 3.3).
 struct ToolArguments: Hashable, Sendable {
     let object: JSONObject
-    /// The first strict-JSON fault inside `arguments` (contract 2.4), as an argument fault. While it
-    /// is set, `object` holds one of several readings and nothing may act on it.
     let strictFault: ArgumentError?
-    /// Read from `object`, leaving out a member that a strict-JSON fault makes ambiguous.
     let handles: EffectHandles
 }
 
@@ -24,15 +19,11 @@ enum MCPCall: Hashable, Sendable {
     case callTool(ToolName, ToolArguments)
 }
 
-/// A body that passed contract 2.4 checks 11 to 20.
 enum CheckedRequest: Hashable, Sendable {
-    /// Check 15: answered `202` with no body.
     case notification
     case request(JSONRPCID, MCPCall)
 }
 
-/// Contract 2.4 checks 11 to 20, in table order, on a request the listener admitted (checks 1 to 10).
-/// Pure: it reads the body and the MCP headers and decides nothing else.
 enum RequestChecks {
     static let protocolVersionKey = "io.modelcontextprotocol/protocolVersion"
     static let argumentsLocation = JSONPointer(["params", "arguments"])
@@ -75,8 +66,6 @@ enum RequestChecks {
         }
     }
 
-    /// Check 11. A strictness fault inside `params.arguments` of a `tools/call` is returned, as a
-    /// pointer into `arguments`, for the tool's argument check; any other fault is `-32700`.
     private static func parseStrictly(_ body: [UInt8]) throws(ProtocolFault) -> (JSONValue, [ArgumentError]) {
         let parsed: (value: JSONValue, faults: [JSONParseError])
         do {
@@ -95,9 +84,6 @@ enum RequestChecks {
         return (parsed.value, argumentFaults)
     }
 
-    /// Where a strictness fault lies inside `params.arguments`, or `nil` when it lies outside. A
-    /// repeated name is located at the repeating member, so a second `arguments` member is outside;
-    /// invalid Unicode in a member name is located at the object holding it.
     private static func argumentPointer(of fault: JSONParseError) -> JSONPointer? {
         guard fault.kind.isStrictness, let pointer = fault.location.relative(to: argumentsLocation) else { return nil }
         switch fault.kind {
@@ -112,7 +98,6 @@ enum RequestChecks {
         let params: JSONValue?
     }
 
-    /// Check 12: one JSON-RPC 2.0 request or notification object. A usable `id` is echoed even here.
     private static func readEnvelope(_ value: JSONValue) throws(ProtocolFault) -> Envelope {
         guard case .object(let message) = value else {
             let detail =
@@ -141,7 +126,6 @@ enum RequestChecks {
         return Envelope(id: id, method: method, params: params)
     }
 
-    /// Check 16.
     private static func readProtocolVersion(_ params: JSONObject, id: JSONRPCID) throws(ProtocolFault) -> String {
         let value = params.member("_meta")?.objectValue?.member(protocolVersionKey)
         guard let version = value?.stringValue else {
@@ -152,7 +136,6 @@ enum RequestChecks {
         return version
     }
 
-    /// The second half of check 18, on `tools/call`.
     private static func matchName(_ headers: MCPRequestHeaders, params: JSONObject, id: JSONRPCID)
         throws(ProtocolFault)
     {
@@ -165,7 +148,6 @@ enum RequestChecks {
         }
     }
 
-    /// Check 20. `params.name` is a string: check 18 compared it with `Mcp-Name`.
     private static func toolCall(_ params: JSONObject, argumentFaults: [ArgumentError], id: JSONRPCID)
         throws(ProtocolFault) -> MCPCall
     {
@@ -203,8 +185,6 @@ enum RequestChecks {
 }
 
 extension JSONObject {
-    /// The member whose name is exactly `name`, compared by Unicode scalars: a name that is only
-    /// canonically equivalent is a different member.
     fileprivate func member(_ name: String) -> JSONValue? {
         guard let index = index(forKey: name), self[index].key.matchesScalars(of: name) else { return nil }
         return self[index].value

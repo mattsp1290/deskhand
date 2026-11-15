@@ -17,7 +17,6 @@ struct DispatcherWiringTests {
         #expect(NodeAddress(socketAddress: try SocketAddress(unixDomainSocketPath: "/tmp/deskhand.sock")) == nil)
     }
 
-    /// One `tools/call` through the MCP layer and the real dispatcher, from `node`.
     static func call(_ harness: ToolHarness, _ tool: String, _ arguments: JSONObject) async -> MCPTestResponse {
         let handler = MCPHandler(dispatcher: harness.dispatcher, serverVersion: "0.1.0")
         let request = MCPTestRequest.tool(tool, arguments)

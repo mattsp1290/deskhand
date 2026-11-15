@@ -5,7 +5,6 @@ import Synchronization
 
 @testable import DeskhandServer
 
-/// One call the fake dispatcher received.
 enum DispatchedCall: Hashable, Sendable {
     case status(StatusArguments)
     case displays
@@ -16,7 +15,6 @@ enum DispatchedCall: Hashable, Sendable {
     case refusal(ToolRefusal, ToolName, EffectHandles)
 }
 
-/// A ``ToolDispatcher`` that records each call and answers with one fixed reply.
 final class FakeDispatcher: ToolDispatcher {
     enum Reply: Sendable {
         case status(StatusResult)
@@ -25,7 +23,6 @@ final class FakeDispatcher: ToolDispatcher {
         case effect(EffectResult)
         case lease(LeaseToolResult)
         case error(ToolError)
-        /// Blocks until the calling task is cancelled.
         case waitForCancellation
     }
 
@@ -38,7 +35,6 @@ final class FakeDispatcher: ToolDispatcher {
     private let reply: Reply
     private let record = Mutex(Record())
     private let startedContinuation: AsyncStream<Void>.Continuation
-    /// Yields once each time a tool method starts.
     let started: AsyncStream<Void>
 
     init(_ reply: Reply = .error(FakeDispatcher.unexpected)) {
@@ -52,7 +48,6 @@ final class FakeDispatcher: ToolDispatcher {
     var principals: [Principal] { record.withLock { $0.principals } }
     var cancellations: Int { record.withLock { $0.cancellations } }
 
-    /// Waits for a cancellation to be recorded, up to `limit`.
     func waitForCancellation(limit: Duration = .seconds(10)) async -> Bool {
         let deadline = ContinuousClock.now + limit
         while ContinuousClock.now < deadline {
@@ -149,7 +144,6 @@ final class FakeDispatcher: ToolDispatcher {
     }
 }
 
-/// A request as the listener hands it over, built field by field.
 struct MCPTestRequest: Sendable {
     var body: [UInt8]
     var protocolVersion: [String] = [ContractConstants.mcpProtocolVersion]
@@ -159,7 +153,6 @@ struct MCPTestRequest: Sendable {
     static let principal = Principal(certificateSubject: "CN=crew-executor,O=forge")
     static let meta: JSONValue = [RequestChecks.protocolVersionKey: .string(ContractConstants.mcpProtocolVersion)]
 
-    /// A request whose headers agree with its body.
     static func call(_ method: String, params: JSONObject = [:], id: JSONValue? = 1) -> MCPTestRequest {
         var params = params
         if params["_meta"] == nil { params["_meta"] = meta }
@@ -177,7 +170,6 @@ struct MCPTestRequest: Sendable {
         return call("tools/call", params: params, id: id)
     }
 
-    /// A raw body with the given headers.
     static func raw(_ text: String, method: String = "tools/list", name: String? = nil) -> MCPTestRequest {
         MCPTestRequest(body: Array(text.utf8), method: [method], name: name.map { [$0] } ?? [])
     }
@@ -195,7 +187,6 @@ struct MCPTestRequest: Sendable {
     }
 }
 
-/// A handler response, with its body parsed.
 struct MCPTestResponse {
     let status: HTTPResponseStatus
     let body: [UInt8]?
@@ -223,7 +214,6 @@ struct MCPTestResponse {
         return blocks
     }
 
-    /// The text block's text, parsed as JSON.
     var contentText: JSONValue? {
         content.last?["text"]?.stringValue.flatMap { try? JSONValue(parsing: $0) }
     }

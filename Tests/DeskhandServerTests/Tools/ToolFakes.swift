@@ -31,13 +31,11 @@ enum ToolFixture {
             AllowedApp(bundleID: BundleID("com.apple.Notes")!, signer: .apple),
         ])
 
-    /// The built-in panel: 1728 x 1117 points at 2 pixels per point.
     static let main = DisplayInfo(
         displayID: DisplayID(1), uuid: UUID(uuidString: "6B1B4C5E-0000-4000-8000-000000000001")!,
         name: "Built-in Retina Display", isMain: true, isBuiltin: true, asleep: false,
         bounds: GlobalRect(x: 0, y: 0, width: 1728, height: 1117), pixelSize: PixelSize(width: 3456, height: 2234),
         pointPixelScale: 2)
-    /// Left of the main display, so its origin is negative: 1920 x 1080 points at 1 pixel per point.
     static let side = DisplayInfo(
         displayID: DisplayID(2), uuid: UUID(uuidString: "6B1B4C5E-0000-4000-8000-000000000002")!,
         name: "Side Display", isMain: false, isBuiltin: false, asleep: false,
@@ -45,7 +43,6 @@ enum ToolFixture {
         pointPixelScale: 1)
     static let generation = DisplayConfigGeneration(4)
 
-    /// Signals under which exactly `states` hold (a `loginWindow` condition adds `not_console`).
     static func signals(holding states: Set<BlockingState> = [], conditions: Set<Condition> = []) -> StateSignals {
         let fed: [PlatformSignal: BlockingState] = [
             .notConsole: .notConsole, .locked: .locked, .displayAsleep: .displayAsleep,
@@ -65,7 +62,6 @@ enum ToolFixture {
     }
 }
 
-/// The fake clock every seam reads.
 final class ToolClock: Sendable {
     private let offsetMs = Mutex<Int64>(0)
 
@@ -99,17 +95,13 @@ final class FakeDisplays: DisplayProvider {
     func failReads(_ fail: Bool = true) { state.withLock { $0.fault = fail } }
 }
 
-/// Answers every capture with a uniform image of the requested output size: `bytes` long when
-/// set, JPEG at the first quality or PNG as asked. `during` runs inside the capture.
 final class FakeCapturer: ScreenCapturer {
     struct Behavior: Sendable {
         var imageBytes = 1000
         var tooLarge: Int?
         var fault = false
         var pointer: GlobalPoint? = GlobalPoint(x: 100, y: 50)
-        /// Overrides the size the platform reports, to model a capture that disagrees with the request.
         var reportedSize: ScreenshotSize?
-        /// Overrides the encoding the platform reports, to model a capture in a format not asked for.
         var reportedEncoding: ImageEncoding?
         var during: (@Sendable () async -> Void)?
     }
@@ -143,26 +135,19 @@ final class FakeCapturer: ScreenCapturer {
     }
 }
 
-/// The Mac behind the executor's synchronous seams and the dispatcher's identity and activity.
 final class FakeDesk: IdentityMeasurer, UserActivitySource, EventPoster, KeyCodeMapper, ExecutionTimer,
     ExecutorObserver, TargetPatchVerifier
 {
     struct World: Sendable {
         var frontmost = ToolFixture.textEdit
-        /// Read on every later identity read; models the front app changing during a capture.
         var nextFrontmost: [ObservedApp] = []
-        /// The app whose window is under every pointer target; the frontmost app when `nil`.
         var underTarget: ObservedApp?
         var idleMs: Int? = 60_000
         var posted: [InputEvent] = []
-        /// What ``postRelease(_:)`` let up, in order.
         var released: [HeldInput] = []
-        /// Every release fails to reach the OS while set.
         var releaseFails = false
-        /// What the recapture of every target patch finds.
         var patch: PatchVerdict = .unchanged
         var logAppends: [Bool] = []
-        /// Runs once, inside the next wait of an executing operation.
         var onSleep: (@Sendable () async -> Void)?
     }
 
@@ -238,17 +223,16 @@ final class Counter: Sendable {
     func increment() { count.withLock { $0 += 1 } }
 }
 
-final class MemoryStorage: OperationStorage {
-    var bytes: [UInt8]?
+final class MemoryStorage: OperationStorage, Sendable {
+    private let bytes = Mutex<[UInt8]?>(nil)
 
-    func read() throws(StorageError) -> [UInt8]? { bytes }
-    func append(_ more: [UInt8]) throws(StorageError) { bytes = (bytes ?? []) + more }
+    func read() throws(StorageError) -> [UInt8]? { bytes.withLock { $0 } }
+    func append(_ more: [UInt8]) throws(StorageError) { bytes.withLock { $0 = ($0 ?? []) + more } }
     func synchronize() throws(StorageError) {}
-    func replace(with bytes: [UInt8]) throws(StorageError) { self.bytes = bytes }
+    func replace(with bytes: [UInt8]) throws(StorageError) { self.bytes.withLock { $0 = bytes } }
 }
 
-/// One in-memory record file, loaded the way a restart would load it.
-final class MemoryStoreLoader: OperationStoreLoader, @unchecked Sendable {
+final class MemoryStoreLoader: OperationStoreLoader, Sendable {
     private let lock = Mutex(())
     private let storage = MemoryStorage()
 
@@ -266,7 +250,6 @@ final class MemoryLedgerStore: HeldInputStore, Sendable {
     func replace(with bytes: [UInt8]) throws { self.bytes.withLock { $0 = bytes } }
 }
 
-/// One dispatcher on one fake Mac, armed and `ok` unless a test reduces otherwise.
 struct ToolHarness {
     let clock = ToolClock()
     let displays = FakeDisplays()
@@ -299,7 +282,6 @@ struct ToolHarness {
         if armed { owner.reduce(signals: ToolFixture.signals(), command: .arm(for: .seconds(3600))) }
     }
 
-    /// Reduces to exactly `states`. `paused` needs the kill switch and `disarmed` a disarm.
     @discardableResult
     func hold(_ states: Set<BlockingState>, conditions: Set<Condition> = []) -> DeskOwner.Reduction {
         let command: ArmingCommand? =
@@ -320,7 +302,6 @@ struct ToolHarness {
         try await dispatcher.lease(LeaseArguments(holderID: holder, command: command), caller: caller)
     }
 
-    /// `screenshot` arguments under `holder`; the rest as given.
     static func shot(_ arguments: JSONObject = [:], holder: HolderID = ToolFixture.holder) -> ScreenshotArguments {
         var arguments = arguments
         arguments["holder_id"] = .string(holder.rawValue)
@@ -333,7 +314,6 @@ struct ToolHarness {
         try await dispatcher.screenshot(arguments, caller: caller)
     }
 
-    /// What step 9 makes of `frame` for a `pointer` call under `caller` and `holder` now.
     func check(
         _ frame: FrameID, holder: HolderID = ToolFixture.holder, caller: ToolCaller = ToolFixture.caller,
         use: FrameUse = .pointer
@@ -345,8 +325,6 @@ struct ToolHarness {
         }
     }
 
-    /// A `keyboard` `type` call through the MCP layer's own path: validated arguments and the raw
-    /// arguments they came from.
     func type(
         _ text: String, frame: FrameID, operation: String = "op-1", holder: HolderID = ToolFixture.holder,
         caller: ToolCaller = ToolFixture.caller
@@ -369,7 +347,6 @@ extension EffectAnswer {
 }
 
 extension ToolError {
-    /// `operation` whichever context carries it.
     var operationView: OperationView? {
         switch operation {
         case .existing(let view)?, .result(let view)?, .replayed(let view, _)?: view
@@ -378,7 +355,6 @@ extension ToolError {
     }
 }
 
-/// Runs `body` with the error a throwing call refused with, or records a failure when it did not.
 func refusal<T>(_ body: () async throws(ToolError) -> T) async -> ToolError? {
     do {
         _ = try await body()

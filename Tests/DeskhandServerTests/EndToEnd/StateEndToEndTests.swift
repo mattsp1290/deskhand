@@ -3,11 +3,8 @@ import Testing
 
 @testable import DeskhandServer
 
-/// States (contract 10) and the conditions that are not states (contract 11) over the wire, with
-/// their side effects on the fake Mac and the action log.
 @Suite("end to end: states and conditions", .timeLimit(.minutes(2)))
 struct StateEndToEndTests {
-    /// The states that drop the lease and refuse `acquire` and `renew` with their name (contract 5.2).
     static let leaseDropping: Set<BlockingState> = [.gated, .paused, .disarmed]
 
     @Test(
@@ -138,7 +135,6 @@ struct StateEndToEndTests {
             #expect(pending.operation == nil)
             #expect(stack.desk.posted.count == 1)
 
-            // The watchdog retries a second after the failed attempt; this time the release goes out.
             stack.desk.change { $0.releaseFails = false }
             stack.clock.advance(byMilliseconds: 1000)
             let key = HeldInput.key(try #require(stack.desk.code(for: .a)))

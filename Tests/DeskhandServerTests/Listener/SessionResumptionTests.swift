@@ -44,7 +44,6 @@ import Testing
         }
     }
 
-    /// Reviewer repro: save a session, then offer it with no client certificate at all.
     @Test func aSavedSessionWithoutACertificateIsRefused() async throws {
         let handler = RecordingHandler()
         try await ListenerHarness.withListener(handler: handler) { address, pki, _ in

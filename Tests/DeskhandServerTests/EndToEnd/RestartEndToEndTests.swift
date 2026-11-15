@@ -3,8 +3,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// A restart in the middle of an operation (contract 12.9), from the files a crash leaves: the
-/// record file and the ledger as they were on disk while a key was held.
 @Suite("end to end: restart", .timeLimit(.minutes(2)))
 struct RestartEndToEndTests {
     @Test("aborted_by_restart, interrupted on repeat, owed releases posted once cleanup is authorized")
@@ -58,11 +56,8 @@ struct RestartEndToEndTests {
             #expect(try await stack.reportedConditions().contains("cleanup_pending"))
             let record = try #require(try await stack.lookUp("op-1"))
             #expect(record["status"] == "aborted_by_restart")
-            // The record is written `executing` with 0 and its count is not written while the
-            // operation runs, so the files the crash left say 0 (contract 12.9).
             #expect(record["events_posted"] == 0)
 
-            // A start is disarmed, which outranks locked; the record still comes with the state's name.
             let blockedRepeat = try await stack.call("keyboard", arguments)
             ContractShape.expectToolError(blockedRepeat, "disarmed")
             #expect(blockedRepeat.operation == record)
@@ -72,7 +67,6 @@ struct RestartEndToEndTests {
             #expect(try await eventually { !(try await stack.reportedConditions()).contains("cleanup_pending") })
             #expect(try await stack.activeStates() == ["disarmed"])
 
-            // The owed release is deskhand's own input: arming waits out the lookback (contract 10.4).
             stack.clock.advance(byMilliseconds: Int64(ContractConstants.userActivityLookbackMs))
             await stack.arm()
             let repeated = try await stack.call("keyboard", arguments)

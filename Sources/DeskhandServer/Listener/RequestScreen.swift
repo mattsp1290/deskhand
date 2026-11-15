@@ -1,7 +1,5 @@
 import NIOHTTP1
 
-/// A refusal from contract 2.4 checks 2 to 10. Each is answered by status code alone, with no body,
-/// and the connection is closed after it.
 enum HTTPRefusal: Error, Hashable, Sendable, CaseIterable {
     case headerTooLarge
     case notFound
@@ -36,7 +34,6 @@ enum HTTPRefusal: Error, Hashable, Sendable, CaseIterable {
     }
 }
 
-/// A request head that passed checks 2 to 8 (and 9, when `Content-Length` was declared).
 struct AdmittedHead {
     let version: HTTPVersion
     let keepAlive: Bool
@@ -44,9 +41,6 @@ struct AdmittedHead {
     let declaredLength: Int?
 }
 
-/// Contract 2.4 checks 2 to 10, in table order. Pure: the caller supplies the tokens and the clock.
-/// Checks 2 to 8 need only the head; 9 is decided from `Content-Length` when declared and otherwise
-/// as the body arrives; 10 waits until the body is complete so that 9 is reported first.
 struct RequestScreen: Sendable {
     let hosts: HostAllowlist
     let maxHeaderBytes: Int
@@ -102,16 +96,12 @@ struct RequestScreen: Sendable {
         Self.acceptAdmitsJSON(head.headers["Accept"]) ? nil : .notAcceptable
     }
 
-    /// The bytes of the request line and header block as sent in canonical form. The decoder caps
-    /// the raw request target plus header names and values at the same limit, which bounds memory
-    /// before this exact count runs.
     static func headerBlockSize(_ head: HTTPRequestHead) -> Int {
         var size = head.method.rawValue.utf8.count + 1 + head.uri.utf8.count + 1 + "HTTP/1.1\r\n".utf8.count
         for (name, value) in head.headers { size += name.utf8.count + 2 + value.utf8.count + 2 }
         return size + 2
     }
 
-    /// RFC 6750 `Bearer <token>`: one header, scheme case-insensitive, then one or more spaces.
     static func bearerToken(_ values: [String]) -> Substring? {
         guard values.count == 1, let space = values[0].firstIndex(of: " ") else { return nil }
         let value = values[0]
@@ -121,7 +111,6 @@ struct RequestScreen: Sendable {
         return token
     }
 
-    /// `application/json`, case-insensitive, with no parameter other than `charset=utf-8`.
     static func isJSONContentType(_ values: [String]) -> Bool {
         guard values.count == 1 else { return false }
         let parts = values[0].split(separator: ";", omittingEmptySubsequences: false).map(trimmed)
@@ -136,7 +125,6 @@ struct RequestScreen: Sendable {
         }
     }
 
-    /// Absent admits; present admits when some range covers `application/json` with a non-zero q.
     static func acceptAdmitsJSON(_ values: [String]) -> Bool {
         guard !values.isEmpty else { return true }
         let ranges = values.flatMap { $0.split(separator: ",") }

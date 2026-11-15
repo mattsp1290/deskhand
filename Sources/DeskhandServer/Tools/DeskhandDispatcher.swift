@@ -75,8 +75,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
         self.leaseDidChange = leaseDidChange
     }
 
-    // MARK: status
-
     /// Answers in every state and changes nothing (contract 6.1).
     public func status(_ arguments: StatusArguments, caller: ToolCaller) async throws(ToolError) -> StatusResult {
         let view = owner.statusView(
@@ -92,9 +90,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
             operation: operation, displayConfigGeneration: owner.displays.generation, limits: configuration.limits)
     }
 
-    /// Each condition from the one place that knows it now (contract 11): `login_window` from the
-    /// latest reduction, `cleanup_pending` from the executor's ledger, `user_active` from the idle
-    /// signal at this moment, and `credentials_warning` and `log_unavailable` from the provider.
     private func conditions(reduced: Set<Condition>) async -> Set<Condition> {
         var conditions = reduced.intersection([.loginWindow])
         conditions.formUnion(platform.conditions.conditions().intersection([.credentialsWarning, .logUnavailable]))
@@ -105,16 +100,11 @@ public struct DeskhandDispatcher: ToolDispatcher {
         return conditions
     }
 
-    /// The executor's rule (contract 13.2): input within `USER_ACTIVITY_LOOKBACK_MS`, or an idle
-    /// signal that cannot be read, is activity.
     static func personIsActive(idleMilliseconds: Int?) -> Bool {
         guard let idle = idleMilliseconds else { return true }
         return idle < ContractConstants.userActivityLookbackMs
     }
 
-    /// `status.operation`: never executes anything, needs no lease and counts toward nothing. A
-    /// record file that a failed write left unavailable is loaded again first, while no call is in
-    /// the admission section (contract 12.3).
     private func lookUp(_ key: OperationKey, state: DeskhandState) async throws(ToolError) -> StatusOperation {
         if await !executor.storesAvailable { await executor.reloadUnavailableStores() }
         do {
@@ -124,8 +114,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
         }
     }
 
-    // MARK: displays
-
     public func displays(caller: ToolCaller) async throws(ToolError) -> DisplaysResult {
         try refuseUnlessOK()
         let configuration: DisplayConfiguration
@@ -134,12 +122,9 @@ public struct DeskhandDispatcher: ToolDispatcher {
         } catch {
             throw internalError(error.detail)
         }
-        // A call that has not answered when the state leaves `ok` gets the new state's name (10.3).
         try refuseUnlessOK()
         return DisplaysResult(displayConfigGeneration: configuration.generation, displays: configuration.displays)
     }
-
-    // MARK: lease
 
     /// A refused operation is an outcome, not an error (contract 5.1). Every live lease the call
     /// ends stops an effect executing under it (contract 5.3).
@@ -149,8 +134,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
         await leaseDidChange()
         return application.result
     }
-
-    // MARK: refusals
 
     /// Contract 9.5: `status` and `lease` refuse only with `invalid_argument`; every other tool
     /// with the state's name first. For `pointer` and `keyboard` the executor words it, so that it
@@ -170,8 +153,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
                 return await executor.refusal(
                     for: error, tool: tool, handles: handles, principal: caller.principal, nodeAddress: nodeAddress)
             }
-            // Without the node the refusal entry cannot be written; it is best effort (contract
-            // 12.10), so the refusal is the same without it.
             let reason: ToolErrorReason = state.blocking.map { .blocked($0) } ?? .invalidArgument(error.pointer)
             return ToolError(
                 reason, message: reason.code == .invalidArgument ? error.description : Self.message(for: state),
@@ -185,8 +166,6 @@ public struct DeskhandDispatcher: ToolDispatcher {
             return ToolError(.internalError, message: "The tool result could not be serialized.", state: state)
         }
     }
-
-    // MARK: shared
 
     func refuseUnlessOK() throws(ToolError) {
         if let blocking = owner.snapshot().state.blocking { throw Self.blocked(blocking) }

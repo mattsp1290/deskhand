@@ -6,18 +6,11 @@ import NIOSSL
 /// credential; every key lives in a fresh temporary directory.
 struct TestPKI: Sendable {
     enum Client: CaseIterable, Sendable {
-        /// Signed by the CA, EKU clientAuth, the expected subject.
         case valid
-        /// Same subject and EKU, signed by an unrelated CA.
         case wrongCA
-        /// EKU serverAuth only.
         case serverAuthOnly
-        /// No extended key usage extension at all, which BoringSSL accepts and D11 does not.
         case noExtendedKeyUsage
-        /// EKU clientAuth but another subject.
         case wrongSubject
-        /// `valid` re-issued: the same subject and EKU with a new key and serial, so the same
-        /// principal after the caller's certificate is rotated.
         case reissued
     }
 
@@ -50,7 +43,6 @@ struct TestPKI: Sendable {
 
     func identity(_ client: Client) -> Identity { clients[client]! }
 
-    /// `openssl x509 -noout -subject -nameopt RFC2253` for `path`: an independent RFC 4514 rendering.
     func opensslSubject(of path: String) throws -> String {
         let output = try Self.openssl(
             ["x509", "-in", path, "-noout", "-subject", "-nameopt", "RFC2253"], in: directory)

@@ -18,21 +18,12 @@ public enum TokenRejection: Error, Hashable, Sendable, CustomStringConvertible {
     }
 }
 
-/// A token read from the token file. The digest identifies it across reloads, so an unchanged
-/// file is not a rotation; the secret itself is not kept.
 struct LoadedToken {
-    /// A file caught half written, or by a `SIGHUP` that skips the watcher's settling interval,
-    /// holds a prefix of the token. Below this length that prefix is refused rather than
-    /// installed as the credential; 32 characters is 128 bits of hex, the weakest token worth
-    /// accepting.
     static let minimumLength = 32
 
     let token: BearerToken
     let digest: SHA256Hex
 
-    /// The file holds the token on one line: one trailing LF or CRLF is dropped, and what remains
-    /// must be at least ``minimumLength`` characters of visible ASCII (`%x21-7E`), which is
-    /// everything the listener can match in `Authorization: Bearer <token>`.
     static func parse(_ contents: [UInt8]) -> LoadedToken? {
         var secret = contents[...]
         if secret.last == UInt8(ascii: "\n") { secret = secret.dropLast() }
@@ -55,8 +46,6 @@ struct LoadedToken {
     }
 }
 
-/// Which tokens are accepted after each token reload. Owned by the ``CredentialReloader``, which
-/// applies reloads one at a time.
 struct TokenRotation {
     private(set) var accepted = AcceptedTokens.none
     private var currentDigest: SHA256Hex?
@@ -66,9 +55,6 @@ struct TokenRotation {
         self.overlap = overlap
     }
 
-    /// Returns whether the accepted token changed. A file holding the token already in use changes
-    /// nothing, so a reload for another file does not restart the overlap window. With no token,
-    /// nothing is accepted, the previous token included.
     mutating func apply(_ loaded: LoadedToken?, at now: ContinuousClock.Instant) -> Bool {
         guard let loaded else {
             let changed = currentDigest != nil || accepted.previous != nil

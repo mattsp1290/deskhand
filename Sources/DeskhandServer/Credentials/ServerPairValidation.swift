@@ -46,10 +46,6 @@ public enum ServerPairValidator {
         public let context: NIOSSLContext
     }
 
-    /// The checks that need no handshake, in the order their reasons are reported.
-    ///
-    /// A name is matched exactly, after ASCII lowercasing; a wildcard SAN does not cover a
-    /// configured name, so a per-Mac certificate must list each one.
     static func structuralRejection(
         _ credentials: ServerTLSCredentials,
         serviceNames: [String],

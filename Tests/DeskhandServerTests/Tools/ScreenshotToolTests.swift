@@ -65,7 +65,6 @@ struct ScreenshotToolTests {
         #expect(result.jsonValue["jpeg_quality"] == 85)
         #expect(result.capturedAt == ToolFixture.t0.wall)
         #expect(result.maxAgeMs == 45_000)
-        // The fake pointer is at (100, 50) points: pixel (100 * 2355 / 1728, 50 * 1522 / 1117).
         #expect(result.pointerPosition == FramePoint(x: 136, y: 68))
         #expect(result.frontmostApp == ToolFixture.textEdit.appRef)
         #expect(await harness.check(result.frameID) == nil)
@@ -89,7 +88,6 @@ struct ScreenshotToolTests {
         let harness = try ToolHarness()
         let region: JSONValue = ["x": 10.25, "y": 20.3, "width": 100.5, "height": 50]
         let shot = try await harness.screenshot(ToolHarness.shot(["region": region]))
-        // At 2 pixels per point: x 20.5..221.5 -> 20..222, y 40.6..140.6 -> 40..141.
         #expect(shot.result.captureRect == GlobalRect(x: 10, y: 20, width: 101, height: 50.5))
         #expect(shot.result.sourcePixelSize == PixelSize(width: 202, height: 101))
         #expect(shot.result.outputPixelSize == PixelSize(width: 202, height: 101))
@@ -101,7 +99,6 @@ struct ScreenshotToolTests {
         #expect(sideShot.result.displayID == DisplayID(2))
         #expect(sideShot.result.pointerPosition == nil)
 
-        // An edge on the pixel grid stays where it is; one between pixels moves outward.
         let onGrid: JSONValue = ["x": -100, "y": 0.5, "width": 1, "height": 1]
         let gridShot = try await harness.screenshot(ToolHarness.shot(["display_id": 2, "region": onGrid]))
         #expect(gridShot.result.captureRect == GlobalRect(x: -100, y: 0, width: 1, height: 2))
@@ -283,7 +280,6 @@ struct ScreenshotToolTests {
         #expect(error?.code == .locked)
         harness.hold([])
 
-        // Back to `ok` before the capture returns: the frames were still invalidated meanwhile.
         harness.capturer.configure {
             $0.during = {
                 owner.reduce(signals: ToolFixture.signals(holding: [.secureInput]))

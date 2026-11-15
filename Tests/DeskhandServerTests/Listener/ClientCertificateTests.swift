@@ -5,7 +5,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// Builds DER for hand-made `Name` values.
 private enum DER {
     static func tlv(_ tag: UInt8, _ content: [UInt8]) -> [UInt8] {
         let count = content.count
@@ -36,7 +35,6 @@ private enum DER {
         return bytes
     }
 
-    /// RDNs in encoded order; each attribute is (OID, value TLV).
     static func name(_ rdns: [[(String, [UInt8])]]) -> DERElement {
         let encoded = tlv(
             DERTag.sequence,
@@ -50,8 +48,6 @@ private enum DER {
 
     static func utf8(_ text: String) -> [UInt8] { tlv(DERTag.utf8String, Array(text.utf8)) }
 
-    /// A certificate with only what ``X509Certificate`` reads: `subject` and EKU `clientAuth`. The
-    /// policy runs after BoringSSL has verified the chain, so nothing here is signed.
     static func clientLeaf(commonName: String) -> [UInt8] {
         let subject = tlv(
             DERTag.sequence, tlv(DERTag.set, tlv(DERTag.sequence, oid("2.5.4.3") + utf8(commonName))))
@@ -169,8 +165,6 @@ private let organizationalUnit = "2.5.4.11"
         }
     }
 
-    /// D11: `é` precomposed and `e` with a combining acute are equal as `String`s but are different
-    /// subjects, so neither spelling admits a certificate carrying the other.
     @Test func canonicallyEquivalentSubjectIsRefused() throws {
         let precomposed = "caf\u{E9}"
         let decomposed = "cafe\u{301}"
@@ -188,7 +182,6 @@ private let organizationalUnit = "2.5.4.11"
         }
     }
 
-    /// Contract 2.2: in date, both ends of the validity period included, to the second.
     @Test(
         arguments: [
             (-1, .notYetValid), (0, nil), (999, nil), (1000, nil), (1999, nil), (2000, .expired),

@@ -7,7 +7,6 @@ import Testing
 
 @testable import DeskhandServer
 
-/// A handler that holds each call until the test releases it.
 private final class GatedHandler: RequestHandler {
     private let gate = Mutex<CheckedContinuation<Void, Never>?>(nil)
     private let entered: AsyncStream<Void>.Continuation
@@ -28,8 +27,6 @@ private final class GatedHandler: RequestHandler {
     func release() { gate.withLock { $0.take() }?.resume() }
 }
 
-/// A ``ConnectionHandler`` on a testing channel whose event-loop clock the test advances, behind an
-/// already authenticated handshake.
 enum EmbeddedConnection {
     static func make(
         handler: any RequestHandler,
@@ -64,7 +61,6 @@ enum EmbeddedConnection {
         try await channel.writeInbound(HTTPServerRequestPart.end(nil))
     }
 
-    /// The response head, after which the body and end are consumed.
     static func response(from channel: NIOAsyncTestingChannel) async throws -> HTTPResponseHead {
         guard case .head(let head) = try await channel.waitForOutboundWrite(as: HTTPServerResponsePart.self) else {
             throw ChannelError.inappropriateOperationForState
@@ -74,8 +70,6 @@ enum EmbeddedConnection {
     }
 }
 
-/// `CONNECTION_MAX_AGE` (contract 2.1) and the request body deadline on the connection's own event
-/// loop, whose clock the test advances, so the outcome does not depend on how fast the machine runs.
 @Suite(.timeLimit(.minutes(1))) struct ConnectionMaxAgeTests {
     private let maxAge = ListenerHarness.configuration().connectionMaxAge
     private let bodyTimeout = ListenerHarness.configuration().requestBodyTimeout
@@ -95,7 +89,6 @@ enum EmbeddedConnection {
         try await EmbeddedConnection.response(from: channel)
     }
 
-    /// A head whose `Content-Length` promises more body than ever arrives.
     private func sendStalledRequest(to channel: NIOAsyncTestingChannel) async throws {
         try await EmbeddedConnection.sendHead(.valid(), to: channel)
         try await channel.writeInbound(HTTPServerRequestPart.body(ByteBuffer(bytes: [0x7B])))
@@ -113,8 +106,6 @@ enum EmbeddedConnection {
         #expect(handler.requests.isEmpty)
     }
 
-    /// Reviewer repro: with no body deadline before it, the max age alone closes a stalled body,
-    /// where before it only marked the connection to close after a response that never came.
     @Test func stalledBodyIsClosedAtTheMaxAge() async throws {
         let handler = RecordingHandler()
         let configuration = ListenerHarness.configuration { $0.requestBodyTimeout = .hours(24) }
