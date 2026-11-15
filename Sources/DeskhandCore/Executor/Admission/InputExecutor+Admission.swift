@@ -73,7 +73,8 @@ extension InputExecutor {
         await logRefusal(
             ActionLogRefusal(
                 time: snapshot.reading.wall, nodeAddress: nodeAddress, principal: principal, tool: tool,
-                holderID: handles.holderID, operationID: handles.operationID, frameID: nil, frameSHA256: nil,
+                holderID: handles.holderID, operationID: handles.operationID, frameID: handles.frameID,
+                frameSHA256: nil,
                 action: nil, frontmostApp: nil, code: toolError.code))
         return toolError
     }
@@ -126,7 +127,7 @@ extension InputExecutor {
         let live: LiveFrame
         let frames = seams.frames
         let (frameID, scope, now) = (call.arguments.frameID, call.scope, snapshot.reading.wall)
-        switch await awaitBounded(within: waitLimit, { await frames.check(frameID, in: scope, for: use, now: now) }) {
+        switch await boundedRead({ await frames.check(frameID, in: scope, for: use, now: now) }) {
         case .stale(let reason, let sha256)?:
             return .refused(Refusal(.staleFrame(reason), frontmostApp: frontmost, frameSHA256: sha256))
         case .valid(let checked)?: live = checked
@@ -167,7 +168,7 @@ extension InputExecutor {
         if case .pointer(let pointer) = call.arguments {
             let beforeCapture = seams.state.snapshot().reading.monotonic
             let patches = seams.patches
-            let verdict = await awaitBounded(within: waitLimit) {
+            let verdict = await boundedRead {
                 await TargetPatchCheck.run(pointer.action, on: live, verifier: patches)
             }
             guard let verdict else { return refused(.staleFrame(.pixelsChanged(pointIndex: 0))) }

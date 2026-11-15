@@ -37,41 +37,59 @@ output=$(find "$@" -name '*.swift' ! -path 'Tests/DeskhandTestSupport/Tags.swift
         }
         inattr = 0
     }
-    FNR == 1 { unterminated(prev); prev = FILENAME }
+    FNR == 1 {
+        unterminated(prev); prev = FILENAME
+        blockDepth = 0; mode = ""
+    }
     {
         rest = $0
-        while (length(rest) > 0) {
+        n = length(rest)
+        for (i = 1; i <= n; i++) {
+            c = substr(rest, i, 1)
+            pair = substr(rest, i, 2)
+            if (blockDepth > 0) {
+                if (pair == "/*") { blockDepth++; i++ }
+                else if (pair == "*/") { blockDepth--; i++ }
+                continue
+            }
+            if (mode != "") {
+                if (mode == "esc" && c == "\\") {
+                    if (inattr) buf = buf substr(rest, i, 2)
+                    i++; continue
+                }
+                if (substr(rest, i, length(closer)) == closer) {
+                    if (inattr) buf = buf closer
+                    i += length(closer) - 1; mode = ""; continue
+                }
+                if (inattr) buf = buf c
+                continue
+            }
+            if (pair == "//") break
+            if (pair == "/*") {
+                blockDepth = 1; i++
+                if (inattr) { buf = buf " "; code = code " " }
+                continue
+            }
+            if (match(substr(rest, i), /^#*"("")?/)) {
+                open = substr(rest, i, RLENGTH); hashes = open; gsub(/"/, "", hashes)
+                closer = substr(open, length(hashes) + 1) hashes
+                mode = length(hashes) ? "raw" : "esc"
+                if (inattr) buf = buf open
+                i += RLENGTH - 1; continue
+            }
             if (!inattr) {
-                if (!match(rest, /@(Test|Suite)[ \t]*\(/)) break
-                buf = code = substr(rest, RSTART, RLENGTH)
-                rest = substr(rest, RSTART + RLENGTH)
-                inattr = 1; depth = 1; mode = ""; start = FNR
-            }
-            n = length(rest)
-            closed = 0
-            for (i = 1; i <= n; i++) {
-                c = substr(rest, i, 1)
-                if (mode != "") {
-                    if (mode == "esc" && c == "\\") { buf = buf substr(rest, i, 2); i++; continue }
-                    if (substr(rest, i, length(closer)) == closer) {
-                        buf = buf closer; i += length(closer) - 1; mode = ""; continue
-                    }
-                    buf = buf c; continue
+                if (match(substr(rest, i), /^@(Test|Suite)[ \t]*\(/)) {
+                    buf = code = substr(rest, i, RLENGTH)
+                    i += RLENGTH - 1
+                    inattr = 1; depth = 1; start = FNR
                 }
-                if (c == "/" && substr(rest, i + 1, 1) == "/") { buf = buf substr(rest, i); break }
-                if (match(substr(rest, i), /^#*"("")?/)) {
-                    open = substr(rest, i, RLENGTH); hashes = open; gsub(/"/, "", hashes)
-                    closer = substr(open, length(hashes) + 1) hashes
-                    mode = length(hashes) ? "raw" : "esc"
-                    buf = buf open; i += RLENGTH - 1; continue
-                }
-                buf = buf c; code = code c
-                if (c == "(") depth++
-                else if (c == ")" && --depth == 0) { closed = 1; break }
+                continue
             }
-            if (closed) { check(); inattr = 0; rest = substr(rest, i + 1) }
-            else { buf = buf "\n"; code = code "\n"; break }
+            buf = buf c; code = code c
+            if (c == "(") depth++
+            else if (c == ")" && --depth == 0) { check(); inattr = 0 }
         }
+        if (inattr) { buf = buf "\n"; code = code "\n" }
     }
     END {
         unterminated(prev)

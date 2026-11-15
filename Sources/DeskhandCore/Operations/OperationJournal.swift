@@ -1,13 +1,46 @@
 enum OperationJournal {
     static let format = "deskhand-operations"
-    static let version = 1
+    static let version = 2
     static let admittedAtRange = 0...253_402_300_799_999
     static let countRange = 0...JSONValue.maxExactInteger
 
+    private struct SnapshotHeader {
+        let recordCount: Int
+        let payloadBytes: Int
+        let payloadSHA256: SHA256Hex
+
+        var object: JSONObject {
+            [
+                "journal": .string(format), "version": JSONValue(version),
+                "record_count": JSONValue(recordCount), "payload_bytes": JSONValue(payloadBytes),
+                "payload_sha256": .string(payloadSHA256.description),
+            ]
+        }
+    }
+
+    private struct VerifiedSnapshot {
+        let records: [OperationKey: OperationRecord]
+        let appendOffset: Int
+        let appendLine: Int
+    }
+
     static func snapshot(_ records: some Sequence<OperationRecord>) throws(NonFiniteNumberError) -> [UInt8] {
-        var bytes = try line(["journal": .string(format), "version": JSONValue(version)])
-        for record in records { bytes += try Entry.record(record).line() }
-        return bytes
+        var payload: [UInt8] = []
+        var count = 0
+        let ordered = records.sorted {
+            ($0.admittedAt, $0.key.principal.certificateSubject, $0.key.holderID.rawValue, $0.key.operationID.rawValue)
+                < (
+                    $1.admittedAt, $1.key.principal.certificateSubject, $1.key.holderID.rawValue,
+                    $1.key.operationID.rawValue
+                )
+        }
+        for record in ordered {
+            payload += try Entry.record(record).line()
+            count += 1
+        }
+        let header = SnapshotHeader(
+            recordCount: count, payloadBytes: payload.count, payloadSHA256: SHA256Hex(hashing: payload))
+        return try line(header.object) + payload
     }
 
     static func line(_ object: JSONObject) throws(NonFiniteNumberError) -> [UInt8] {
@@ -15,14 +48,13 @@ enum OperationJournal {
     }
 
     static func replay(_ bytes: [UInt8]) throws(OperationStoreLoadError) -> [OperationKey: OperationRecord] {
-        var lines = bytes.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+        let snapshot = try verifySnapshot(bytes)
+        var records = snapshot.records
+        var lines = bytes[snapshot.appendOffset...].split(
+            separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
         lines.removeLast()
-        guard let header = lines.first, isHeader(header) else {
-            throw .corrupt(line: 1, reason: "missing \(format) version \(version) header")
-        }
-        var records: [OperationKey: OperationRecord] = [:]
-        for (offset, line) in lines.enumerated().dropFirst() {
-            let lineNumber = offset + 1
+        for (offset, line) in lines.enumerated() {
+            let lineNumber = snapshot.appendLine + offset
             let entry: Entry
             do throws(EntryError) {
                 entry = try Entry(decoding: line)
@@ -35,9 +67,45 @@ enum OperationJournal {
         return records
     }
 
-    private static func isHeader(_ line: ArraySlice<UInt8>) -> Bool {
-        guard let object = try? JSONValue(parsing: line).objectValue else { return false }
-        return object == ["journal": .string(format), "version": JSONValue(version)]
+    private static func verifySnapshot(_ bytes: [UInt8]) throws(OperationStoreLoadError) -> VerifiedSnapshot {
+        guard let headerEnd = bytes.firstIndex(of: UInt8(ascii: "\n")),
+            let object = try? JSONValue(parsing: bytes[..<headerEnd]).objectValue,
+            object["journal"] == .string(format)
+        else { throw .corrupt(line: 1, reason: "missing \(format) version \(version) header") }
+        if object["version"] == JSONValue(1) {
+            throw .corrupt(
+                line: 1, reason: "unsupported legacy version 1 journal; snapshot integrity cannot be verified")
+        }
+        let payloadStart = headerEnd + 1
+        guard object["version"] == JSONValue(version),
+            Set(object.keys) == ["journal", "version", "record_count", "payload_bytes", "payload_sha256"],
+            let byteCount = object["payload_bytes"]?.integer(in: 0...(bytes.count - payloadStart)),
+            let recordCount = object["record_count"]?.integer(in: 0...byteCount),
+            let hash = object["payload_sha256"]?.stringValue.flatMap(SHA256Hex.init(hex:))
+        else { throw .corrupt(line: 1, reason: "invalid or truncated snapshot header") }
+        let header = SnapshotHeader(recordCount: recordCount, payloadBytes: byteCount, payloadSHA256: hash)
+        let appendOffset = payloadStart + header.payloadBytes
+        let payload = bytes[payloadStart..<appendOffset]
+        guard SHA256Hex(hashing: payload) == header.payloadSHA256,
+            payload.isEmpty || payload.last == UInt8(ascii: "\n")
+        else { throw .corrupt(line: 1, reason: "snapshot payload is incomplete or its digest does not match") }
+        var lines = payload.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+        lines.removeLast()
+        guard lines.count == header.recordCount else {
+            throw .corrupt(line: 1, reason: "snapshot record count does not match")
+        }
+        var records: [OperationKey: OperationRecord] = [:]
+        for (offset, line) in lines.enumerated() {
+            let entry: Entry
+            do throws(EntryError) {
+                entry = try Entry(decoding: line)
+            } catch { throw .corrupt(line: offset + 2, reason: error.reason) }
+            guard case .record(let record) = entry, records[record.key] == nil else {
+                throw .corrupt(line: offset + 2, reason: "snapshot requires unique record entries")
+            }
+            records[record.key] = record
+        }
+        return VerifiedSnapshot(records: records, appendOffset: appendOffset, appendLine: lines.count + 2)
     }
 
     enum Entry: Hashable {

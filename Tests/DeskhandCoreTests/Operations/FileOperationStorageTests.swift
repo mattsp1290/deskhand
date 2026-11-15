@@ -138,7 +138,9 @@ import Testing
             #expect(
                 try restarted.record(for: Sample.key("waiting"), now: Sample.start)?.phase == .failedBeforeExecution)
             let text = try String(contentsOfFile: path, encoding: .utf8)
-            #expect(text.hasPrefix(#"{"journal":"deskhand-operations","version":1}"#))
+            let header = try JSONValue(parsing: String(text.prefix { $0 != "\n" }))
+            #expect(header["journal"] == "deskhand-operations")
+            #expect(header["version"] == 2)
             #expect(text.hasSuffix("}\n"), "the torn tail is gone")
 
             let replayed = try restarted.lookup(Sample.key("done"), digest: Sample.digest("a"), now: Sample.start)

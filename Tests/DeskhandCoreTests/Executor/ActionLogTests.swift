@@ -246,12 +246,18 @@ struct ActionLogTests {
         #expect(refusal.frontmostApp == ExecutorFixture.textEdit.appRef)
     }
 
-    @Test("arguments that did not validate get a refusal entry with the code they were answered")
-    func invalidArgumentsAreLogged() async throws {
-        let harness = try Harness()
-        let handles = EffectHandles(arguments: [
-            "holder_id": .string(ExecutorFixture.holder.rawValue), "operation_id": "op-1", "action": "bad",
+    @Test(
+        "arguments that did not validate retain independently valid frame correlation",
+        arguments: [
+            "frm_Zk3vQ8sN1xT5bYc2Lw9RaA", "bad frame id", "", nil,
         ])
+    func invalidArgumentsAreLogged(frameID: String?) async throws {
+        let harness = try Harness()
+        var arguments: JSONObject = [
+            "holder_id": .string(ExecutorFixture.holder.rawValue), "operation_id": "op-1", "action": "bad",
+        ]
+        arguments["frame_id"] = frameID.map(JSONValue.string)
+        let handles = EffectHandles(arguments: arguments)
         let error = ArgumentError(at: JSONPointer(["action"]), "must be an object")
         _ = await harness.executor.refusal(
             for: error, tool: .keyboard, handles: handles, principal: ExecutorFixture.principal,
@@ -266,6 +272,7 @@ struct ActionLogTests {
             return refusal
         }
         #expect(refusals.map(\.code) == [.invalidArgument, .paused])
+        #expect(refusals.allSatisfy { $0.frameID == frameID.flatMap(FrameID.init) && $0.frameSHA256 == nil })
         #expect(refusals.allSatisfy { $0.tool == .keyboard && $0.operationID == OperationID("op-1") })
     }
 }

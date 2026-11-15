@@ -3,8 +3,8 @@ public struct JSONParseError: Error, Hashable, Sendable, CustomStringConvertible
     public enum Kind: Hashable, Sendable {
         /// Not JSON: `-32700` wherever it is.
         case syntax
-        /// A number that a double cannot hold: it overflows, or it underflows to zero or to a
-        /// subnormal value. Not I-JSON, so `-32700` like a syntax error.
+        /// A number that overflows a double or whose nonzero mantissa underflows to zero.
+        /// Reported as `-32700` like a syntax error.
         case numberOutOfRange
         /// Two members of one object with the same name.
         case duplicateMemberName
@@ -295,7 +295,7 @@ private struct JSONParser {
         let nonZeroMantissa = bytes[start..<mantissaEnd].contains {
             (UInt8(ascii: "1")...UInt8(ascii: "9")).contains($0)
         }
-        guard !(value == 0 && nonZeroMantissa), value == 0 || abs(value) >= .leastNormalMagnitude else {
+        guard !(value == 0 && nonZeroMantissa) else {
             throw outOfRange
         }
         return value

@@ -47,3 +47,30 @@ final class FirstAnswer<T: Sendable>: Sendable {
         return true
     }
 }
+
+struct OutstandingRead: Sendable {
+    let id: ObjectIdentifier
+    let task: Task<Void, Never>
+}
+
+extension InputExecutor {
+    func boundedRead<T: Sendable>(_ operation: @escaping @Sendable () async -> T) async -> T? {
+        guard outstandingRead == nil else { return nil }
+        return await withCheckedContinuation { continuation in
+            let answer = FirstAnswer(continuation)
+            let id = ObjectIdentifier(answer)
+            let timeout = Task {
+                await waitLimit.timer.sleep(for: waitLimit.duration)
+                guard !Task.isCancelled, outstandingRead?.id == id else { return }
+                if answer.resume(returning: nil) { outstandingRead?.task.cancel() }
+            }
+            let task = Task {
+                let value = await operation()
+                if outstandingRead?.id == id { outstandingRead = nil }
+                answer.resume(returning: value)
+                timeout.cancel()
+            }
+            outstandingRead = OutstandingRead(id: id, task: task)
+        }
+    }
+}

@@ -37,11 +37,25 @@ import Testing
         #expect(error.offset == 9)
     }
 
-    @Test(arguments: ["1e-400", "-1e-400", "0.1e-399", "4.9e-324", "1e400"])
+    @Test(arguments: ["1e-400", "-1e-400", "0.1e-399", "1e-324", "1e400"])
     func rejectsNumbersADoubleCannotHold(text: String) throws {
         let error = try #require(throws: JSONParseError.self) { try JSONValue(parsing: text) }
         #expect(error.kind == .numberOutOfRange)
         #expect(!error.kind.isStrictness)
+    }
+
+    @Test(arguments: ["5e-324", "4.9e-324", "1e-308", "-5e-324", "-4.9e-324", "-1e-308"])
+    func subnormalNumbersRoundTripAndDecodeScreenshot(text: String) throws {
+        let value = try JSONValue(parsing: text)
+        #expect(value == .number(Double(text)!))
+        #expect(try JSONValue(parsing: value.canonicalBytes()) == value)
+        let arguments = try #require(
+            JSONValue(
+                parsing:
+                    "{\"holder_id\":\"h\",\"region\":{\"x\":\(text),\"y\":0,\"width\":1,\"height\":1}}"
+            ).objectValue)
+        let screenshot = try ScreenshotArguments(arguments: arguments)
+        #expect(screenshot.region?.x == Double(text))
     }
 
     @Test func zeroWithAnyExponentIsZero() throws {

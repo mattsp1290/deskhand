@@ -582,7 +582,7 @@ import Testing
     @Test func refusesAFileWithoutTheHeader() {
         let disk = FakeDisk("{\"journal\":\"something-else\",\"version\":1}\n")
         #expect(
-            throws: OperationStoreLoadError.corrupt(line: 1, reason: "missing deskhand-operations version 1 header")
+            throws: OperationStoreLoadError.corrupt(line: 1, reason: "missing deskhand-operations version 2 header")
         ) {
             try Sample.store(disk)
         }

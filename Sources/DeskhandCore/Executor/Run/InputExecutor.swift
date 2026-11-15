@@ -83,6 +83,7 @@ public actor InputExecutor {
     var section: AdmissionSection = .idle
     var interruptions = PendingInterruptions()
     var logAttempts = ActionLogAttempts()
+    var outstandingRead: OutstandingRead?
 
     /// Loads the operation store, which applies the restart rules (contract 12.9), and takes the
     /// ledger as the previous run left it: any entry is owed a release, and a ledger that could not
