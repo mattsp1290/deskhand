@@ -23,7 +23,7 @@ verify_app() {
   [[ "$cert_hash" == "$identity" ]] || fail 'Wrong signing certificate'
   verified_cdhash=$(printf '%s\n' "$facts" | awk -F= '$1 == "CDHash" {print $2}')
   [[ -n "$verified_cdhash" ]] || fail 'Missing signed code hash'
-  /usr/bin/codesign --verify --strict -R "anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$app"
+  /usr/bin/codesign --verify --strict -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$app"
   /usr/sbin/spctl --assess --type execute --verbose=2 "$app"
   /usr/bin/xcrun stapler validate "$app"
   [[ -f "$app/Contents/Resources/BuildReceipt.json" ]] || fail 'Missing signed build receipt'
