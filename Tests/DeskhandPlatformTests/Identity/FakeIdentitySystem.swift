@@ -14,6 +14,8 @@ final class FakeIdentitySystem: IdentitySystem {
     let reused: Set<pid_t>
     let reusedBeforeFirstRead: Set<pid_t>
     let deactivatedAfterFirstRead: Set<pid_t>
+    /// The pid is reused once its start time has been read this many times.
+    let reusedAfterReads: [pid_t: Int]
     private let lookups = Mutex<[pid_t: Int]>([:])
     private let startTimeReads = Mutex<[pid_t: Int]>([:])
     private let activationReads = Mutex<[pid_t: Int]>([:])
@@ -23,7 +25,7 @@ final class FakeIdentitySystem: IdentitySystem {
         focus: FocusedApplicationLookup = .noFocus, signatures: [pid_t: CodeSignatureLookup] = [:],
         activation: [pid_t: ActivationLookup] = [:], names: [pid_t: String] = [:],
         focusedTitles: [pid_t: String] = [:], reused: Set<pid_t> = [], reusedBeforeFirstRead: Set<pid_t> = [],
-        deactivatedAfterFirstRead: Set<pid_t> = []
+        deactivatedAfterFirstRead: Set<pid_t> = [], reusedAfterReads: [pid_t: Int] = [:]
     ) {
         self.windows = windows
         self.frontmost = frontmost
@@ -35,6 +37,7 @@ final class FakeIdentitySystem: IdentitySystem {
         self.reused = reused
         self.reusedBeforeFirstRead = reusedBeforeFirstRead
         self.deactivatedAfterFirstRead = deactivatedAfterFirstRead
+        self.reusedAfterReads = reusedAfterReads
     }
 
     static let now = ProcessStartTime(seconds: 1_000_000, microseconds: 0)
@@ -71,7 +74,8 @@ final class FakeIdentitySystem: IdentitySystem {
             defer { reads[pid, default: 0] += 1 }
             return reads[pid, default: 0]
         }
-        let replaced = reused.contains(pid) && earlierReads > 0
+        let replaced =
+            (reused.contains(pid) && earlierReads > 0) || reusedAfterReads[pid].map { earlierReads >= $0 } == true
         return ProcessStartTime(seconds: 1_000 + Int64(pid), microseconds: replaced ? 1 : 0)
     }
 }

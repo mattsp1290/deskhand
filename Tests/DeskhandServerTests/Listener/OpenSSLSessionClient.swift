@@ -45,9 +45,14 @@ enum OpenSSLTool {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return false }
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: watchdog)
+        defer { watchdog.cancel() }
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
-        guard process.terminationStatus == 0, text.hasPrefix("OpenSSL ") else { return false }
+        guard process.terminationReason == .exit, process.terminationStatus == 0, text.hasPrefix("OpenSSL ") else {
+            return false
+        }
         let version = text.dropFirst("OpenSSL ".count).prefix { !$0.isWhitespace }
         let numbers = version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
         return numbers.lexicographicallyPrecedes([1, 1, 1]) == false
@@ -109,8 +114,14 @@ struct OpenSSLSessionClient: Sendable {
         let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: watchdog)
         defer { watchdog.cancel() }
-        try input.fileHandleForWriting.write(contentsOf: request)
-        try input.fileHandleForWriting.close()
+        do {
+            try input.fileHandleForWriting.write(contentsOf: request)
+            try input.fileHandleForWriting.close()
+        } catch {
+            process.terminate()
+            process.waitUntilExit()
+            throw error
+        }
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
 

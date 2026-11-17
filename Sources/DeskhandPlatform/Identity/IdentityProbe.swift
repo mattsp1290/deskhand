@@ -86,7 +86,8 @@ public struct IdentityProbe: Sendable {
     /// it is active; when it is not (a stale reading) or cannot be asked, the frontmost app is uncertain.
     /// A non-activating panel of another process holding keyboard focus leaves it confirmed. Activation
     /// is read inside the start-time pin and again after the code is read, so an app switch during
-    /// the measurement also leaves it uncertain.
+    /// the measurement also leaves it uncertain; the start time is read once more after that, so the
+    /// second answer came from the same process.
     public func frontmostApp() -> MeasuredApp {
         let before = system.wallClock()
         guard let pid = system.frontmostProcess() else { return .unidentified(.noFrontmostApp) }
@@ -96,6 +97,9 @@ public struct IdentityProbe: Sendable {
         guard app.isCertain else { return app }
         guard activeWhenPinned, system.activation(of: pid) == .active else {
             return .unidentified(.frontmostUnconfirmed)
+        }
+        guard system.processStartTime(of: pid) == started else {
+            return MeasuredApp(pid: pid, signature: .processGone, name: nil)
         }
         return app
     }
