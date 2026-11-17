@@ -3,6 +3,7 @@
   "$id": "https://deskhand.invalid/schemas/tools/displays.output.json",
   "title": "displays structuredContent",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/displays_result" },
     { "$ref": "#/$defs/displays_error" }

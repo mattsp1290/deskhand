@@ -85,6 +85,8 @@ private func sleeper() throws -> Process {
         let started = try #require(system.processStartTime(of: pid))
         #expect(system.processStartTime(of: pid) == started)
         #expect(started.seconds >= launchd.seconds)
+        #expect(started <= system.wallClock())
+        #expect(launchd < started)
         process.terminate()
         process.waitUntilExit()
         #expect(system.processStartTime(of: pid) == nil)

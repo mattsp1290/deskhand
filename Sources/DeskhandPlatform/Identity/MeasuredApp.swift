@@ -6,8 +6,8 @@ import Foundation
 public enum IdentityUncertainty: Hashable, Sendable {
     /// No app is frontmost.
     case noFrontmostApp
-    /// Accessibility does not name the app AppKit reports frontmost as the focused app, so the frontmost
-    /// reading may be stale: AppKit's value is only as fresh as the main run loop.
+    /// The app AppKit reports frontmost does not confirm through Accessibility that it is active, so the
+    /// frontmost reading may be stale: AppKit's value is only as fresh as the main run loop.
     case frontmostUnconfirmed
     /// Accessibility reports that no app has keyboard focus.
     case noFocusedApp
@@ -23,8 +23,8 @@ public enum IdentityUncertainty: Hashable, Sendable {
     case windowUnreadable
     /// The window has no owning process.
     case noOwnerProcess
-    /// The process exited before its identity was read, or its pid was reused by another process while
-    /// it was being read.
+    /// The process exited before its identity was read, or its pid was reused by another process between
+    /// the pid being obtained and its identity being read.
     case processGone
     /// The Security framework could not read the code: this `OSStatus`.
     case signatureUnreadable(Int32)

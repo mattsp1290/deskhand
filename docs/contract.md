@@ -92,9 +92,12 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   cuts a call short to enforce the cap. A caller MUST be ready to reconnect
   between requests.
 - Closing the connection before the response arrives cancels the call. An
-  effect call that is executing is aborted, and one that has not been
-  admitted yet is never admitted ([section 9.5](#95-order-of-refusals)). See
-  [section 4.3](#43-operation_id).
+  effect call that has not been admitted when deskhand observes the close
+  is never admitted ([section 9.5](#95-order-of-refusals)), and one that is
+  executing is aborted at its next check, if one is still to come
+  ([section 4.3](#43-operation_id)). A connection is "closed" once deskhand
+  has observed the close, a moment the caller cannot see
+  ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
   "unavailable", not as an error from deskhand. A Mac whose LAN gate has
@@ -513,10 +516,16 @@ Results and input:
   out. Input that was posted cannot be undone.
 - `failed`: an internal fault after admission. `events_posted` is reported the
   same way.
-- When the caller closes the connection mid-call, the operation is aborted and
-  recorded with code `cancelled`. Repeating the `operation_id` returns it.
-- A call whose connection closes before it is admitted is dropped. Nothing is
-  posted and no record is kept.
+- A call whose connection deskhand has observed closed
+  ([section 12.5](#125-repeats-and-stored-results)) before admission is
+  dropped: nothing is posted and no record is kept. After admission
+  deskhand looks at the connection before every event and at every poll of
+  a hold ([section 12.3](#123-write-ordering)). A close it observes at one
+  of those checks aborts the operation, recorded with code `cancelled`
+  unless the same check found another cause
+  ([section 12.4](#124-aborts)), and repeating the `operation_id` returns
+  it. A close it observes after the check before the last event does not
+  stop the call, which ends as it would have.
 
 Records are kept for a configured window and up to a configured number per
 principal. The defaults are 24 hours and 10,000, and `status.limits` reports
@@ -631,8 +640,7 @@ The `lease` member of a `lease` result has the same shape and is never
 - No result carries a `holder_id`. deskhand never tells one caller the label
   of another. Crew shares one principal, and the label is the only thing
   that separates its internal callers. The schemas forbid a `holder_id`
-  member in the lease view, in the `status` result and in the `lease`
-  result.
+  member anywhere in a tool's result or tool error.
 - `{held_by_caller: false}` does not say whether the lease is free. A holder
   finds that out by calling `lease` with `acquire`, which answers
   `lease_held_by_other` and `expires_in_ms` when it is not.
@@ -866,9 +874,14 @@ and `measured_at`, and `drag_end` for a `drag`.
   `null`. The schemas enforce this. A call for which deskhand could not
   measure them is refused ([section 6.9](#69-app-policy)).
 - `window_title` is `null` when the window has no title, on every
-  `denied_app`, and whenever the app is on the Mac's capture exclusion list.
-  A title that the frame hides is never sent on the wire. The same rules
-  cover `drag_end.window_title`.
+  `denied_app`, whenever the app is on the Mac's capture exclusion list, and
+  whenever the Mac's app policy ([section 6.9](#69-app-policy)) refuses the
+  app that owns the window at the check that measured it, whatever code the
+  call ends with. A call that ends with an earlier code in the order of
+  [section 9.5](#95-order-of-refusals), such as `user_active`, therefore
+  never reports the title of a window whose app is not allowed. A title that
+  the frame hides is never sent on the wire. The same rules cover
+  `drag_end.window_title`.
 - `drag_end` is present whenever `measured` is present for a `drag`, with one
   exception: a `denied_app` never has it, because `measured` then describes
   only the check that failed. The schema enforces the exception.
@@ -883,7 +896,8 @@ depends on the result:
 
 | Result | `measured` is taken at |
 | --- | --- |
-| A success, and every error of an admitted call other than `denied_app` and `interrupted` | The last look. It shows what was true when the first event went out, or was about to. The last look takes these facts even when it fails for another cause. |
+| A success, and every error of an admitted call other than `denied_app`, `interrupted` and the next row | The last look. It shows what was true when the first event went out, or was about to. The last look takes these facts even when it fails for another cause. |
+| An error of an admitted call that ended before the last look ran: `internal_error` from the `executing` record write (step 4 of [section 12.3](#123-write-ordering)), or from the ledger write of the first event of a `keyboard` call (step 6.1 of [section 12.3](#123-write-ordering)) | Step 14 of [section 9.5](#95-order-of-refusals). There are no last-look facts to report. |
 | `log_unavailable` | Step 14. The call was refused before admission and never reached the last look. |
 | `denied_app`, before or after admission | The check that failed. `target_app` is the app that caused the refusal and `global_point` is the point that was being checked. |
 
@@ -1255,7 +1269,7 @@ Schema: `defs.json#/$defs/tool_error`.
 | `message` | always | For people and models. Not stable. Never parse it. |
 | `state` | always | The highest-precedence state when the error was produced. On a replay it is the state stored with the result, not the state now. |
 | `operation_id` | effect tools, when it parsed | Echoed. |
-| `operation` | effect tools, when a record exists for this `operation_id` | `{status, events_posted}`. Its presence means a call with this `operation_id` was admitted and input may have been posted. Its absence means nothing was ever posted for it. One exception: on `operation_in_progress` and `operation_id_conflict` it can describe a first call that is still being admitted (`accepted`, 0 events). |
+| `operation` | effect tools, when a record exists for this `operation_id` | `{status, events_posted}`. Its presence means a call with this `operation_id` was admitted and input may have been posted. Its absence means nothing has been posted for it so far; whether that is final is said in "When `null` is final" in [section 12.5](#125-repeats-and-stored-results). One exception: on `operation_in_progress` and `operation_id_conflict` it can describe a first call that is still being admitted (`accepted`, 0 events). |
 | `replayed` | exactly on the result of an admitted call | `false` when the result is first returned, `true` when it is the stored result returned to a repeat. |
 | `current_state` | exactly when `replayed` is `true` | The highest-precedence state when this response was produced. `state` says what held when the earlier call ended, and `current_state` says what holds now ([section 12.5](#125-repeats-and-stored-results)). |
 | `retry_after_ms` | `rate_limited` | The earliest useful retry. |
@@ -1338,15 +1352,18 @@ also used to end an admitted call part-way.
 | `operation_capacity` | effects | no | The principal's operation records inside the retention window are at the cap (10,000 in 24 h by default). | Wait. |
 | `log_unavailable` | effects | no | The action log could not record the intent, so nothing was posted. | An operator must look. |
 | `cleanup_pending` | effects | no | Input from an earlier operation still has to be released. | Wait. |
-| `cancelled` | effects | no | The caller closed the connection during an earlier call with this `operation_id`. Seen only on a replay. | Treat as an aborted operation; see `operation`. |
+| `cancelled` | effects | no | deskhand observed the connection closed during an earlier call with this `operation_id`. Seen only on a replay. | Treat as an aborted operation; see `operation`. |
 | `interrupted` | effects | no | deskhand restarted during an earlier call with this `operation_id`. Seen only on a replay. | See `operation.status`. |
 | `internal_error` | all | maybe | A fault inside deskhand. | Report it. Do not assume nothing was posted unless `operation` is absent. |
 
 How to read `operation` on any error:
 
 - `operation` describes the record for this `operation_id`, whichever call
-  created it. If it is absent, no input was ever posted for this
-  `operation_id`.
+  created it. If it is absent, no input has been posted for this
+  `operation_id` so far. Another request with the same `operation_id` that
+  is still in transit can yet be admitted; "When `null` is final" in
+  [section 12.5](#125-repeats-and-stored-results) says when absence is
+  final.
 - If it is present, `operation.events_posted` events went out for this
   `operation_id`. Unless `operation.status` is `accepted` or `executing`, the
   operation is over and what it pressed has been released (or
@@ -1451,9 +1468,9 @@ never queues an effect and never runs two.
 - A call whose connection is closed is never admitted. deskhand looks at the
   caller's connection when the call enters the section at step 3, and again
   immediately before it creates the record
-  ([section 12.3](#123-write-ordering)). If the caller has closed it, the
-  call leaves the section, posts nothing and leaves no record. Nobody is
-  left to answer.
+  ([section 12.3](#123-write-ordering)). If deskhand has observed it closed
+  by then, the call leaves the section, posts nothing and leaves no record.
+  Nobody is left to answer.
 - `lease`, `status`, `displays` and `screenshot` do not enter the section and
   are never answered `busy`.
 
@@ -1849,12 +1866,14 @@ An effect call goes through these steps in this order.
 2. The intent entry is committed to the action log (check 15). If it cannot
    be committed, the call is refused with `log_unavailable`, nothing is
    posted and no record exists.
-3. deskhand looks at the caller's connection. If the caller has closed it,
-   the call ends here: nothing is posted and no record is created. The
-   action log gets a refusal entry with the outcome `cancelled`
+3. deskhand looks at the caller's connection. If deskhand has observed it
+   closed ([section 12.5](#125-repeats-and-stored-results)), the call ends
+   here: nothing is posted and no record is created. The action log gets a
+   refusal entry with the outcome `cancelled`
    ([section 12.10](#1210-action-log-entries)), so the intent entry of step
-   2 does not stand alone. Otherwise the record is created as `accepted`,
-   and the call is now admitted.
+   2 normally does not stand alone. The refusal entry is best effort.
+   Otherwise the record is created as `accepted`, and the call is now
+   admitted.
 4. The record is written as `executing` and flushed to stable storage
    (`fsync`). This happens before the first event is posted.
 5. **The last look.** Immediately before the first event, with nothing
@@ -1874,6 +1893,13 @@ An effect call goes through these steps in this order.
    If any of these fails, the operation is aborted with the code of the
    cause and `events_posted` 0. Nothing was posted. A closed connection is
    `cancelled`.
+
+   The last look is the checks of step 6.2 for the first event. For
+   `keyboard` the first event is always a key-down (a modifier counts as a
+   key), so its ledger entry is written first (step 6.1): the ledger write
+   comes before the last look, and nothing comes between the last look and
+   the post. For `pointer` the first event is always a move, which writes
+   no ledger entry.
 6. The events are posted. Before every event deskhand repeats the state,
    deadline, activity, app-policy, lease and connection checks of step 5
    ([section 12.4](#124-aborts)). For every event, the first included, the
@@ -1923,7 +1949,7 @@ first event only.
 | The patch check was more than 250 ms old when the first event was due (`pointer` only) | `stale_frame`, reason `pixels_changed` | `aborted`, 0 events |
 | The lease ran out | `lease_expired` | `aborted` |
 | The holder released the lease | `lease_not_held` | `aborted` |
-| The caller closed the connection | `cancelled`, seen on a repeat | `aborted` |
+| deskhand observed the connection closed ([section 12.5](#125-repeats-and-stored-results)) | `cancelled`, seen on a repeat | `aborted` |
 | A fault inside deskhand | `internal_error` | `failed` |
 | deskhand stopped or crashed | `interrupted`, seen on a repeat | `aborted_by_restart` |
 
@@ -2025,19 +2051,29 @@ the call again.
   admission section, again before it creates the record, and before every
   event ([section 12.3](#123-write-ordering)). So the caller closes the
   connection that carried the call first, and then looks the call up on
-  another connection.
-- **Its frame is no longer the latest.** After it sent the call and before
-  the lookup, the caller received a new screenshot of the same display
-  under the same `holder_id`. The lost call names the older frame, so step
-  9 refuses it with `stale_frame` whenever it arrives
-  ([section 8.3](#83-frame-staleness)).
+  another connection. The caller cannot tell when this way has taken
+  effect (see "Closed" below), so on its own it leaves the outcome
+  uncertain.
+- **Its frame is no longer the latest.** After it sent the call, the caller
+  sent a `screenshot` request for the same display under the same
+  `holder_id`, and it received that request's frame before the lookup.
+  deskhand minted that frame after the frame the lost call names, so the
+  lost call names an older frame, and step 9 refuses it with `stale_frame`
+  whenever it arrives ([section 8.3](#83-frame-staleness)). A screenshot
+  that was requested before the call was sent does not count, even if it
+  arrives after: its frame can be older than the call's.
 
-"Closed" means that the close has reached the Mac: the caller shut the
-connection down and the Mac acknowledged it, or the Mac closed it. The
-lookup travels on another connection and can overtake a close that is still
-in flight. While the path is stalled and the close is unacknowledged, the
-request can still be admitted, and `null` is not yet final. A caller in
-that position records the outcome as uncertain and looks again later.
+"Closed" means that deskhand has observed the connection closed. From then
+on the call is cancelled ([section 2.1](#21-endpoint)), and every later
+check of it sees the connection closed. In this version the caller has no
+signal for that moment. deskhand's TLS `close_notify` or end of stream
+shows that the connection is going away, but deskhand can send them before
+it cancels the call, and on a plain end of stream from the caller it sends
+no `close_notify` at all. A reset or a timeout proves nothing either. The
+lookup travels on another connection and can overtake a close that deskhand
+has not yet observed, and until then the request can still be admitted and
+`null` is not yet final. A caller that relies on this way alone records the
+outcome as uncertain and looks again later.
 
 Repeating the call stays allowed, and it is the only way to get the stored
 result itself. Inside the retention window a repeat of an admitted call
@@ -2165,7 +2201,7 @@ entry.
 | --- | --- | --- |
 | intent | Before admission (step 2 of [section 12.3](#123-write-ordering)). | The call is refused with `log_unavailable`. |
 | outcome | After the final record write (step 8). | The call still returns its true result, and the `log_unavailable` condition is set. |
-| refusal | When an effect call is refused before admission, for any code. | Nothing changes for the call. It is best effort. |
+| refusal | When an effect call is refused before admission, and when it is dropped because its connection closed before admission (step 3 of [section 12.3](#123-write-ordering), or before it entered the admission section), with the code `cancelled`. | Nothing changes for the call. It is best effort. |
 
 Every entry has these fields:
 
@@ -2179,7 +2215,7 @@ Every entry has these fields:
 | tool, action | The tool name and `action.type`. |
 | `frame_id`, frame digest | The frame the call named, and its `sha256` when deskhand still has the frame. |
 | frontmost app | `bundle_id`, `team_id` and name as measured; on an outcome also the target app. |
-| outcome | On an outcome or a refusal: `completed` or the error code, `operation.status` and `events_posted`. |
+| outcome | On an outcome: `completed` or the error code, `operation.status` and `events_posted`. On a refusal: the error code only. A refusal entry never carries `operation`, even for `operation_in_progress` or `operation_id_conflict`, where a record of an earlier call can exist. |
 
 - Typed text is logged as its length only.
 - No entry holds image bytes, a window title, a token or any part of a
@@ -2188,6 +2224,15 @@ Every entry has these fields:
   (`denied_app`, `denied_shortcut`) even though no operation record exists.
   It does not fail closed: a refusal posts nothing, so nothing is lost if the
   entry is.
+- There is no refusal entry when deskhand could not read the connection's
+  source address or compute the request digest, or
+  for invalid arguments on a connection whose source address it could not
+  read.
+- An intent entry with no outcome or refusal entry after it for the same
+  (principal, `holder_id`, `operation_id`) means only that no outcome was
+  logged: the call may have been dropped or refused with its refusal entry
+  lost, deskhand may have stopped, or the outcome entry may have failed. The operation record, or
+  its absence, decides whether input was posted.
 - The encoding of an entry, the file's location and its rotation are
   implementation matters and are not part of this contract.
 
@@ -2702,9 +2747,10 @@ no approval note, and they are listed so that nobody finds them by surprise.
    uncertain and never retried". `status` with `operation` lets Crew resolve
    the uncertainty without sending the call again
    ([section 12.5](#125-repeats-and-stored-results)). Crew closes the
-   connection of the lost call before it asks. Until that close has reached
-   the Mac, a `null` answer is "no record now" and the outcome stays
-   uncertain.
+   connection of the lost call before it asks. Until deskhand has observed
+   that close, a `null` answer is "no record now" and the outcome stays
+   uncertain. Crew has no signal for that moment
+   ([section 12.5](#125-repeats-and-stored-results)).
 
 ## 18. Verified against the specification on 2026-11-14
 
@@ -2944,8 +2990,9 @@ items 37, 46, 50 and 53 by the re-review.
     sliding 60 s window.
 56. `keyboard` checks the owner of keyboard focus and reports it as
     `measured.target_app`, which was `null` for `keyboard` until 0.9-draft.
-57. `measured.window_title` is `null` on every `denied_app` and for every
-    app on the capture exclusion list.
+57. `measured.window_title` is `null` on every `denied_app`, for every
+    app on the capture exclusion list, and for every app that the Mac's
+    app policy refuses at the check that measured it, whatever the code.
 58. A drag is checked along its whole path at steps of 8 frame pixels,
     checks the next point before each move, and reports its last point in
     `measured.drag_end`. `denied_app` carries `details.point_index` when a
@@ -2966,7 +3013,8 @@ items 37, 46, 50 and 53 by the re-review.
 65. Action log entries: the fields of
     [section 12.10](#1210-action-log-entries), with `principal`,
     `holder_id`, kind and action added to the list in deskhand-r-nkjj. A
-    refused effect call is logged once, best effort.
+    refused effect call is logged at most once, best effort; section 12.10
+    lists the refusals that are not logged.
 66. `server/discover` and `tools/list` send `ttlMs` 300,000 and `cacheScope`
     `private`. `server/discover` sends no `instructions`. A notification is
     answered `202` only after the version header checks. A timestamp that is
@@ -2976,20 +3024,23 @@ items 37, 46, 50 and 53 by the re-review.
     in `ok`.
 68. deskhand never admits a call whose connection is closed, and it checks
     the connection at the last look and before every event. A lookup's
-    `null` is final once the caller's own request has completed, once its
-    connection is closed and the close has reached the Mac, or once a newer
-    screenshot has made its frame stale. The third way is this document's
-    addition; it follows from the `not_latest` rule.
+    `null` is final once the caller's own request has completed, once
+    deskhand has observed its connection closed, or once a screenshot that
+    the caller requested after it sent the call has made the call's frame
+    stale. The third way is this document's addition; it follows from the
+    `not_latest` rule. The caller has no signal for when deskhand has
+    observed a close, so the second way leaves the outcome uncertain.
 69. `duration_ms` of a drag is a minimum. How deskhand looks through the
     drag-image window is a spike item.
 70. `measured` on a success, and on an error of an admitted call, is taken
-    at the last look. `log_unavailable` reports step 14 and `denied_app`
-    reports the check that failed. `drag_end` is absent on `denied_app` and
-    present on every other `measured` of a drag, and its app is identified
-    on a success.
+    at the last look. `log_unavailable`, and an admitted call that fails
+    with `internal_error` before the last look, report step 14, and
+    `denied_app` reports the check that failed. `drag_end` is absent on
+    `denied_app` and present on every other `measured` of a drag, and its
+    app is identified on a success.
 71. For every event the order is ledger write, checks, post. A ledger entry
     whose down event was never posted is cleared without a release.
-72. The schemas forbid a `holder_id` member in the lease view, the `status`
-    result and the `lease` result.
+72. The schemas forbid a `holder_id` member anywhere in a tool's result or
+    tool error. They forbid `current_state` on a success.
 73. Whether `pointer` can reach the menu bar depends on which process owns
     it, which the spike records.
