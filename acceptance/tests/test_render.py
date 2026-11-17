@@ -1,5 +1,9 @@
 import contextlib
 import io
+import json
+import os
+import shutil
+import subprocess
 import unittest
 
 from support import render
@@ -15,6 +19,7 @@ class RenderTests(unittest.TestCase):
         configmap, job = self.manifests()
         self.assertEqual(configmap["kind"], "ConfigMap")
         self.assertEqual(configmap["data"]["deskhand_acceptance.py"], render.SCRIPT.read_text())
+        self.assertIs(configmap["immutable"], True)
         volume = job["spec"]["template"]["spec"]["volumes"][0]
         self.assertEqual(volume["configMap"]["name"], configmap["metadata"]["name"])
 
@@ -30,6 +35,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(pod["metadata"]["labels"]["birb.homes/deskhand-egress"], "true")
         ps = pod["spec"]
         self.assertEqual(ps["restartPolicy"], "Never")
+        self.assertIn("birb.homes/acceptance-client-sha256", pod["metadata"]["annotations"])
         self.assertIs(ps["automountServiceAccountToken"], False)
         self.assertEqual(ps["nodeSelector"], {"kubernetes.io/hostname": "infra-control-master"})
         self.assertIs(ps["securityContext"]["runAsNonRoot"], True)
@@ -55,17 +61,31 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(env["DESKHAND_MAC"], "m1max2021")
 
     def test_rejects_bad_inputs(self):
-        for bad in (["--run-id", "Bad_ID"], ["--mac", "other-mac"], ["--port", "0"], ["--node", "a b"]):
-            argv = list(ARGS)
-            argv[argv.index(bad[0]) + 1] = bad[1]
+        for bad in (["--run-id", "Bad_ID"], ["--mac", "other-mac"], ["--port", "0"], ["--node", "a b"],
+                    ["--checks", "statsu"], ["--checks", ","]):
+            argv = ARGS + bad  # argparse keeps the last value of a repeated flag
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 render.parse_args(argv)
 
     def test_yaml_emitter(self):
-        doc = {"a": 1, "b": True, "c": "x: y", "d": [{"e": "f", "g": []}, "h"], "i": "l1\n  l2\n", "j": {}}
+        doc = {"a": 1, "b": True, "c": "x: y", "d": [{"e": "f", "g": []}, "h"], "i": "l1\n  l2\n", "j": {},
+               "k": "cr\r\n"}
         self.assertEqual(render.to_yaml(doc), "\n".join([
             "a: 1", "b: true", 'c: "x: y"', "d:", '  - e: "f"', "    g: []", '  - "h"',
-            "i: |2", "  l1", "    l2", "j: {}"]))
+            "i: |2", "  l1", "    l2", "j: {}", 'k: "cr\\r\\n"']))
+
+    def test_yaml_parses_to_the_model(self):
+        # Ruby's YAML library is an independent parser that GitHub's Ubuntu runners have.
+        usable = shutil.which("ruby") and subprocess.run(["ruby", "-ryaml", "-e", "1"],
+                                                         capture_output=True).returncode == 0
+        if not usable and os.environ.get("DESKHAND_REQUIRE_E2E") != "1":
+            self.skipTest("ruby with its yaml library is not available")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            render.main(ARGS)
+        parsed = subprocess.run(["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_stream(STDIN.read))"],
+                                input=out.getvalue(), capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(parsed), self.manifests())
 
     def test_main_prints_two_documents(self):
         out = io.StringIO()

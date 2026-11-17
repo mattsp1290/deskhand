@@ -7,6 +7,8 @@ birbhomes gates (Service port, secret names).
 """
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import pathlib
 import re
@@ -22,6 +24,13 @@ RUN_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$")
 NODE_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 
 
+def load_client():
+    spec = importlib.util.spec_from_file_location("deskhand_acceptance", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def build(args):
     script = SCRIPT.read_text(encoding="utf-8")
     name = f"deskhand-acceptance-{args.run_id}"
@@ -30,18 +39,23 @@ def build(args):
     configmap = {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": f"{name}-script", "namespace": NAMESPACE, "labels": labels},
+        "immutable": True,
         "data": {"deskhand_acceptance.py": script},
     }
     env = {
         "DESKHAND_HOST": host, "DESKHAND_PORT": str(args.port), "DESKHAND_MAC": args.mac,
         "DESKHAND_RUN_ID": args.run_id, "DESKHAND_CHECKS": args.checks,
-        "DESKHAND_CREDENTIALS_DIR": MOUNT, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1",
+        "DESKHAND_CREDENTIALS_DIR": MOUNT,
+        # Ten requests' worth of timeout fits well inside the deadline; SIGTERM then releases the lease.
+        "DESKHAND_TIMEOUT_S": "10",
     }
+    if args.permitted_apps:
+        env["DESKHAND_PERMITTED_APPS"] = args.permitted_apps
     container = {
         "name": "acceptance",
         "image": args.image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["python3", "-I", "/opt/acceptance/deskhand_acceptance.py"],
+        "command": ["python3", "-I", "-B", "-u", "/opt/acceptance/deskhand_acceptance.py"],
         "env": [{"name": k, "value": v} for k, v in env.items()]
         + [{"name": "NODE_NAME", "valueFrom": {"fieldRef": {"fieldPath": "spec.nodeName"}}}],
         "resources": {"requests": {"cpu": "50m", "memory": "64Mi"},
@@ -58,9 +72,12 @@ def build(args):
     }
     secret_files = [{"key": k, "path": k} for k in ("tls.crt", "tls.key", "ca.crt")]
     pod = {
-        "metadata": {"labels": {**labels, "birb.homes/deskhand-egress": "true"}},
+        "metadata": {"labels": {**labels, "birb.homes/deskhand-egress": "true"},
+                     "annotations": {"birb.homes/acceptance-client-sha256": hashlib.sha256(
+                         script.encode()).hexdigest()}},
         "spec": {
             "restartPolicy": "Never",
+            "terminationGracePeriodSeconds": 30,
             "automountServiceAccountToken": False,
             "enableServiceLinks": False,
             "nodeSelector": {"kubernetes.io/hostname": args.node},
@@ -109,7 +126,7 @@ def to_yaml(value, indent=0):
             else:
                 lines.append(prefix)
                 lines.append(to_yaml(item, indent + 2))
-        elif isinstance(item, str) and "\n" in item:
+        elif isinstance(item, str) and "\n" in item and all(c == "\n" or " " <= c <= "~" for c in item):
             # Explicit indentation indicator, so a first line that starts with spaces stays literal.
             lines.append(f"{prefix} |2{'' if item.endswith(chr(10)) else '-'}")
             lines.extend(f"{pad}  {line}" if line else "" for line in item.rstrip("\n").split("\n"))
@@ -128,12 +145,13 @@ def parse_args(argv):
     p.add_argument("--port", required=True, type=int, help="deskhand Service port (birbhomes-r-5elb)")
     p.add_argument("--host", help="Service DNS name; default deskhand-<mac>.forge.svc")
     p.add_argument("--checks", default="default", help="passed to the client as DESKHAND_CHECKS")
+    p.add_argument("--permitted-apps", help="DESKHAND_PERMITTED_APPS for pointer_move and type_text")
     p.add_argument("--image", default=DEFAULT_IMAGE)
     p.add_argument("--tls-secret", default="deskhand-acceptance-client-tls",
                    help="Secret with tls.crt, tls.key and ca.crt (placeholder)")
     p.add_argument("--token-secret", help="Secret with the Mac's token; default deskhand-token-<mac> (placeholder)")
     p.add_argument("--token-key", default="token")
-    p.add_argument("--deadline", type=int, default=300, help="activeDeadlineSeconds")
+    p.add_argument("--deadline", type=int, default=600, help="activeDeadlineSeconds")
     args = p.parse_args(argv)
     if not RUN_ID_RE.match(args.run_id):
         p.error("--run-id must match " + RUN_ID_RE.pattern)
@@ -141,6 +159,10 @@ def parse_args(argv):
         p.error("--node is not a valid node name")
     if not 1 <= args.port <= 65535:
         p.error("--port must be 1 to 65535")
+    try:
+        load_client().select_checks(args.checks)
+    except ValueError as exc:
+        p.error(f"--checks: {exc}")
     args.token_secret = args.token_secret or f"deskhand-token-{args.mac}"
     return args
 

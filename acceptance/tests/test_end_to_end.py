@@ -9,14 +9,18 @@ import hashlib
 import http.server
 import io
 import json
+import os
 import re
+import signal
 import ssl
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 
-from support import client as dh, make_pki
-from test_client import png
+from support import ACCEPTANCE, client as dh, make_pki
+from test_client import jpeg
 
 TOKEN = "e2e-token-value-never-printed"
 
@@ -101,13 +105,14 @@ class FakeDeskhand(http.server.BaseHTTPRequestHandler):
                 {"display_id": 1, "is_main": True, "pixel_size": {"width": 4, "height": 3}}]}, []
         if name == "screenshot":
             st["frames"] += 1
-            data = png(4, 3)
+            data = jpeg(4, 3)
             frame_id = f"frm_{st['frames']:022d}"
             st["live"].add(frame_id)
             sc = {"frame_id": frame_id, "sha256": hashlib.sha256(data).hexdigest(), "image_bytes": len(data),
-                  "output_pixel_size": {"width": 4, "height": 3}, "format": "png", "mime_type": "image/png",
+                  "output_pixel_size": {"width": 4, "height": 3}, "format": "jpeg", "mime_type": "image/jpeg",
+                  "jpeg_quality": 85,
                   "pointer_position": None, "max_age_ms": 60000}
-            return sc, [{"type": "image", "data": base64.b64encode(data).decode(), "mimeType": "image/png"}]
+            return sc, [{"type": "image", "data": base64.b64encode(data).decode(), "mimeType": "image/jpeg"}]
         if name == "lease":
             op, holder = args["op"], args["holder_id"]
             if op == "acquire":
@@ -123,6 +128,9 @@ class FakeDeskhand(http.server.BaseHTTPRequestHandler):
             return {**err, "code": "lease_not_held"}, []
         if args["frame_id"] not in st["live"]:
             return {**err, "code": "stale_frame", "details": {"reason": "unknown"}}, []
+        if name in st.get("hang_tools", ()):
+            st["hanging"].set()
+            st["unhang"].wait(10)
         if name in st["fail_tools"]:
             return {**err, "code": "user_active", "details": {"idle_ms": 0}}, []
         app = {"bundle_id": "com.apple.TextEdit", "team_id": None, "name": "TextEdit"}
@@ -145,6 +153,8 @@ class EndToEndTests(unittest.TestCase):
         cls.pki = make_pki(cls.tmp.name)
         if cls.pki is None:
             cls.tmp.cleanup()
+            if os.environ.get("DESKHAND_REQUIRE_E2E") == "1":
+                raise RuntimeError("DESKHAND_REQUIRE_E2E=1 but test certificates could not be made")
             raise unittest.SkipTest("openssl CLI missing or could not create test certificates")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -195,6 +205,27 @@ class EndToEndTests(unittest.TestCase):
         self.assertFalse(by_name["type_text"]["ok"])
         self.assertTrue(by_name["lease_release"]["ok"])
         self.assertIsNone(self.handler.state["holder"])
+
+    def test_sigterm_releases_the_lease(self):
+        self.handler.state = {"holder": None, "frames": 0, "live": set(), "fail_tools": set(),
+                              "hang_tools": {"keyboard"}, "hanging": threading.Event(), "unhang": threading.Event()}
+        proc = subprocess.Popen([sys.executable, "-I", str(ACCEPTANCE / "deskhand_acceptance.py"),
+                                 "--checks", "type_text"], env=self.env, stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(self.handler.state["hanging"].wait(10), "client never reached the keyboard call")
+            self.assertIsNotNone(self.handler.state["holder"])
+            proc.send_signal(signal.SIGTERM)
+            out, _ = proc.communicate(timeout=10)
+        finally:
+            self.handler.state["unhang"].set()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        self.assertEqual(proc.returncode, 1)
+        self.assertIsNone(self.handler.state["holder"])
+        summary = json.loads(out.splitlines()[-1])["summary"]
+        self.assertTrue(summary["terminated"])
+        self.assertNotIn(TOKEN, out)
 
     def test_wrong_ca_fails_tls(self):
         env = dict(self.env, DESKHAND_CA_CERT=str(self.pki / "client.crt"))

@@ -19,6 +19,12 @@ def png(width, height):
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
+def jpeg(width, height):
+    """SOI, an APP0 stub and a baseline SOF0 header: enough for image_size, not a decodable image."""
+    return (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00"
+            + b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 3) + b"\x00" * 8 + b"\xff\xd9")
+
+
 class BuildRequestTests(unittest.TestCase):
     def build(self, method, params, **kw):
         headers, body = dh.build_request(method, params, host="deskhand-m1max2021.forge.svc", port=8443,
@@ -77,19 +83,24 @@ class ResponseTests(unittest.TestCase):
 
     def test_image_size(self):
         self.assertEqual(dh.image_size(png(5, 3), "image/png"), (5, 3))
-        jpeg = (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00"
-                + b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, 7, 9, 3) + b"\x00" * 8)
-        self.assertEqual(dh.image_size(jpeg, "image/jpeg"), (9, 7))
+        self.assertEqual(dh.image_size(jpeg(9, 7), "image/jpeg"), (9, 7))
         self.assertIsNone(dh.image_size(b"junk", "image/jpeg"))
 
 
 class SelectionTests(unittest.TestCase):
-    def test_default_excludes_typing(self):
+    def test_default_excludes_operator_checks(self):
         self.assertNotIn("type_text", dh.select_checks("default"))
+        self.assertNotIn("pointer_move", dh.select_checks("default"))
         self.assertIn("type_text", dh.select_checks("all"))
         self.assertEqual(dh.select_checks("status, lease"), ["status", "lease"])
-        with self.assertRaises(ValueError):
-            dh.select_checks("status,nope")
+        for bad in ("status,nope", ",", " , "):
+            with self.assertRaises(ValueError):
+                dh.select_checks(bad)
+
+    def test_refusal_names_preconditions(self):
+        self.assertIn("state is disarmed", dh.refusal({"code": "disarmed", "state": "disarmed"}))
+        self.assertIn("another holder", dh.refusal({"code": "lease_held_by_other", "state": "ok"}))
+        self.assertEqual(dh.refusal({"code": "busy", "state": "ok"}), "got busy")
 
 
 class RedactionTests(unittest.TestCase):
@@ -98,6 +109,9 @@ class RedactionTests(unittest.TestCase):
         redact.add(TOKEN)
         redact.add("")
         self.assertEqual(redact(f"Bearer {TOKEN} and {TOKEN}"), "Bearer [REDACTED] and [REDACTED]")
+        quoted = dh.Redactor()
+        quoted.add('a"b\\c')
+        self.assertNotIn("b", quoted(json.dumps({"error": 'x a"b\\c'})))
 
     def config_error(self, token_text, **env):
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,6 +134,10 @@ class RedactionTests(unittest.TestCase):
         text = self.config_error("abc\ndef-secret\n")
         self.assertIn("not a valid bearer token", text)
         self.assertNotIn("secret", text)
+
+    def test_bad_handles_are_config_errors(self):
+        self.assertIn("alphabet", self.config_error(TOKEN, DESKHAND_RUN_ID="has space"))
+        self.assertIn("alphabet", self.config_error(TOKEN, DESKHAND_HOLDER_ID="x" * 129))
 
     def test_emit_redacts(self):
         out = io.StringIO()

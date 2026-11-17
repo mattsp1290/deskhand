@@ -14,8 +14,10 @@ import hashlib
 import http.client
 import json
 import os
+import pathlib
 import re
 import secrets
+import signal
 import ssl
 import struct
 import sys
@@ -26,8 +28,10 @@ CONTRACT_VERSION = "0.11-draft"  # status.contract_version this client was writt
 MAX_LONG_EDGE = 2576  # section 16
 MAX_PIXELS = 3_588_000
 MAX_IMAGE_BYTES = 3_750_000
+JPEG_QUALITY_STEPS = (85, 75, 65, 60)
 MAX_RESPONSE_BODY_BYTES = 5_400_000
-FRAME_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # section 4.2
+FRAME_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")  # section 4.2; used with fullmatch
+HANDLE_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")  # holder_id, operation_id (4.1, 4.3)
 TOKEN_RE = re.compile(r"^[\x21-\x7e]+\Z")  # visible ASCII, as deskhand loads it; keeps the header well formed
 
 # Section 3.2: order, titles and annotations of the six tools.
@@ -45,13 +49,18 @@ HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
 PRE_LEASE = ["discover", "tools_list", "status", "neg_missing_token", "neg_wrong_token", "neg_get",
              "neg_delete", "neg_wrong_host", "neg_unsupported_version", "neg_method_mismatch",
              "neg_name_mismatch", "neg_missing_header", "neg_no_lease", "displays", "screenshot"]
-UNDER_LEASE = ["pointer_move", "neg_stale_frame", "type_text"]
+UNDER_LEASE = ["neg_stale_frame", "pointer_move", "type_text"]
 ALL_CHECKS = PRE_LEASE + ["lease"] + UNDER_LEASE
-DEFAULT_CHECKS = [c for c in ALL_CHECKS if c != "type_text"]  # typing needs an operator
+OPERATOR_CHECKS = ("pointer_move", "type_text")  # need a permitted app set up at the Mac (6.9)
+DEFAULT_CHECKS = [c for c in ALL_CHECKS if c not in OPERATOR_CHECKS]
 
 
 class CheckFailed(Exception):
     pass
+
+
+class Terminated(BaseException):
+    """Raised from the SIGTERM handler (Job deadline) so finally blocks release the lease."""
 
 
 def expect(cond, message):
@@ -66,8 +75,8 @@ class Redactor:
         self._secrets = []
 
     def add(self, value):
-        if value:
-            self._secrets.append(value)
+        if value:  # also the form json.dumps gives a value with quotes or backslashes
+            self._secrets += [value, json.dumps(value)[1:-1]]
 
     def __call__(self, text):
         for value in self._secrets:
@@ -93,8 +102,11 @@ class Config:
         self.token_file = env.get("DESKHAND_TOKEN_FILE", f"{base}/token/token")
         self.run_id = env.get("DESKHAND_RUN_ID") or secrets.token_hex(4)
         self.holder_id = env.get("DESKHAND_HOLDER_ID") or f"acceptance-{self.run_id}-{secrets.token_hex(4)}"
-        self.permitted_apps = [a for a in env.get("DESKHAND_TYPE_PERMITTED_APPS",
-                                                  "com.apple.TextEdit").split(",") if a]
+        # operation_id is "acc-<run_id>-<12 hex>", so run_id leaves room for 17 characters.
+        if not HANDLE_RE.fullmatch(self.holder_id) or not HANDLE_RE.fullmatch(f"acc-{self.run_id}-{'0' * 12}"):
+            raise ValueError("DESKHAND_RUN_ID or DESKHAND_HOLDER_ID is outside the contract 4.1/4.3 alphabet")
+        apps = env.get("DESKHAND_PERMITTED_APPS", "com.apple.TextEdit").split(",")
+        self.permitted_apps = list(dict.fromkeys(a.strip() for a in apps if a.strip()))
         self.node = env.get("NODE_NAME", "")
         self.timeout = float(env.get("DESKHAND_TIMEOUT_S", "30"))
 
@@ -185,6 +197,16 @@ class Client:
         return self.rpc("tools/call", {"name": tool, "arguments": arguments}, **kwargs).tool_result()
 
 
+def refusal(sc):
+    """Describe a tool error, naming the precondition when one is not met (9.5 step 1, 5.1)."""
+    sc = sc or {}
+    if sc.get("state", "ok") != "ok":
+        return f"precondition: deskhand state is {sc['state']}, not ok (9.5 step 1)"
+    if sc.get("code") == "lease_held_by_other":
+        return "precondition: another holder holds the lease"
+    return f"got {sc.get('code')}"
+
+
 def image_size(data, mime_type):
     """Pixel size read from the PNG IHDR or the JPEG SOFn marker, or None."""
     if mime_type == "image/png" and data[:8] == b"\x89PNG\r\n\x1a\n":
@@ -238,7 +260,8 @@ class Run:
         info = result.get("_meta", {}).get("io.modelcontextprotocol/serverInfo", {})
         facts.update(supported_versions=result.get("supportedVersions"), server=info)
         expect(result.get("supportedVersions") == [PROTOCOL_VERSION], "supportedVersions")
-        expect(result.get("capabilities", {}).get("tools") == {"listChanged": False}, "tools capability")
+        expect(result.get("resultType") == "complete", "resultType")
+        expect(result.get("capabilities", {}).get("tools", {}).get("listChanged") is False, "tools capability")
         expect(info.get("name") == "deskhand", "serverInfo.name")
         expect(result.get("ttlMs") == 300000 and result.get("cacheScope") == "private", "caching hints")
 
@@ -250,6 +273,8 @@ class Run:
         facts["tools"] = [t.get("name") for t in tools]
         expect(facts["tools"] == [t[0] for t in TOOLS], "tool names or order differ from section 3.2")
         expect("nextCursor" not in result, "nextCursor present")
+        expect(result.get("resultType") == "complete", "resultType")
+        expect(result.get("ttlMs") == 300000 and result.get("cacheScope") == "private", "caching hints")
         for tool, (name, title, hints) in zip(tools, TOOLS):
             expect(tool.get("title") == title, f"{name}: title")
             got = tuple(tool.get("annotations", {}).get(h) for h in HINTS)
@@ -259,17 +284,17 @@ class Run:
 
     def status(self, facts):
         sc, is_error, _ = self.client.call("status", {"holder_id": self.cfg.holder_id})
-        expect(not is_error, f"tool error {sc.get('code')}")
+        expect(not is_error, refusal(sc))
         facts.update({k: sc.get(k) for k in ("contract_version", "mcp_protocol_version", "server_version",
                                              "mac", "state", "active_states", "conditions")})
         facts["contract_version_matches"] = sc.get("contract_version") == CONTRACT_VERSION
         expect(sc.get("mcp_protocol_version") == PROTOCOL_VERSION, "mcp_protocol_version")
         expect(sc.get("mac") == self.cfg.mac, "mac differs from DESKHAND_MAC")
-        expect(sc.get("lease") == {"held_by_caller": False}, "lease view before acquire")
+        expect((sc.get("lease") or {}).get("held_by_caller") is False, "lease view before acquire")
 
     def displays(self, facts):
         sc, is_error, _ = self.client.call("displays", {})
-        expect(not is_error, f"tool error {sc.get('code')}")
+        expect(not is_error, refusal(sc))
         facts["display_config_generation"] = sc.get("display_config_generation")
         facts["displays"] = [{k: d.get(k) for k in ("display_id", "is_main", "pixel_size")}
                              for d in sc.get("displays", [])]
@@ -277,14 +302,15 @@ class Run:
 
     def take_screenshot(self, facts):
         sc, is_error, content = self.client.call("screenshot", {"holder_id": self.cfg.holder_id})
-        expect(not is_error, f"tool error {sc.get('code')}")
-        expect(content[0].get("type") == "image", "first content block is not an image")
+        expect(not is_error, refusal(sc))
+        expect(len(content) == 2 and content[0].get("type") == "image", "want an image block then a text block")
         data = base64.b64decode(content[0]["data"], validate=True)
         w, h = sc["output_pixel_size"]["width"], sc["output_pixel_size"]["height"]
         facts.update(frame_id=sc["frame_id"], image_bytes=len(data), sha256=sc["sha256"],
                      output_pixel_size=[w, h], format=sc.get("format"), max_age_ms=sc.get("max_age_ms"),
                      frontmost_app=sc.get("frontmost_app"))
-        expect(FRAME_ID_RE.match(sc["frame_id"]), "frame_id alphabet")
+        expect(FRAME_ID_RE.fullmatch(sc["frame_id"]), "frame_id alphabet")
+        expect(sc.get("format") == "jpeg" and sc.get("jpeg_quality") in JPEG_QUALITY_STEPS, "default format")
         expect(len(data) == sc["image_bytes"] <= MAX_IMAGE_BYTES, "image_bytes")
         expect(hashlib.sha256(data).hexdigest() == sc["sha256"], "sha256 does not match image")
         expect(max(w, h) <= MAX_LONG_EDGE and w * h <= MAX_PIXELS, "size over contract limits")
@@ -302,13 +328,13 @@ class Run:
         if ttl_ms is not None:
             args["ttl_ms"] = ttl_ms
         sc, is_error, _ = self.client.call("lease", args)
-        expect(not is_error, f"tool error {sc.get('code')}")
+        expect(not is_error, refusal(sc))
         facts.update(lease_result=sc.get("lease_result"), held_by_caller=sc["lease"].get("held_by_caller"),
                      expires_in_ms=sc["lease"].get("expires_in_ms"))
         return sc
 
     def lease_acquire(self, facts):
-        sc = self.lease("acquire", facts, ttl_ms=60000)
+        sc = self.lease("acquire", facts, ttl_ms=120000)  # the longest TTL (5.1); renewed after the checks
         expect(sc["lease_result"].get("outcome") == "acquired", "outcome is not acquired")
         expect(sc["lease"].get("held_by_caller") is True, "held_by_caller")
 
@@ -321,7 +347,7 @@ class Run:
         sc = self.lease("release", facts)
         expect(sc["lease_result"].get("outcome") == "released", "outcome is not released")
         view, _, _ = self.client.call("status", {"holder_id": self.cfg.holder_id})
-        expect(view.get("lease") == {"held_by_caller": False}, "status still shows the lease")
+        expect((view.get("lease") or {}).get("held_by_caller") is False, "status still shows the lease")
 
     # --- effects (section 6.4, 6.5, 6.7) ---------------------------------------------------
     def effect(self, tool, action, frame_id, extra=None):
@@ -332,10 +358,10 @@ class Run:
         return args, sc, is_error
 
     def check_effect(self, args, sc, is_error, facts):
-        expect(not is_error, f"tool error {sc.get('code')} {sc.get('details')}")
-        measured = sc.get("measured", {})
+        measured = sc.get("measured") or {}
         facts.update(events_posted=sc.get("events_posted"), target_app=measured.get("target_app"),
                      frontmost_app=measured.get("frontmost_app"), global_point=measured.get("global_point"))
+        expect(not is_error, f"{refusal(sc)} {sc.get('details')}")
         expect(sc.get("status") == "completed", "status is not completed")
         expect(sc.get("replayed") is False, "replayed")
         expect(sc.get("operation_id") == args["operation_id"] and sc.get("frame_id") == args["frame_id"],
@@ -347,7 +373,7 @@ class Run:
         size = frame["output_pixel_size"]
         target = frame.get("pointer_position") or {"x": size["width"] // 2, "y": size["height"] // 2}
         args, sc, is_error = self.effect("pointer", {"type": "move", "x": target["x"], "y": target["y"]},
-                                         frame["frame_id"])
+                                         frame["frame_id"], {"permitted_apps": self.cfg.permitted_apps})
         self.check_effect(args, sc, is_error, facts)
         expect(facts["global_point"] is not None, "measured.global_point is null")
 
@@ -377,6 +403,7 @@ class Run:
     def neg_wrong_token(self, facts):
         resp = self.client.rpc("server/discover", token=secrets.token_urlsafe(32))
         self.expect_status(resp, 401, facts)
+        expect(resp.headers.get("www-authenticate", "").startswith("Bearer"), "WWW-Authenticate")
 
     def _method(self, http_method, facts):
         headers, _ = build_request("server/discover", {}, host=self.cfg.host, port=self.cfg.port,
@@ -416,7 +443,7 @@ class Run:
     def expect_tool_error(self, tool, args, code, facts):
         sc, is_error, _ = self.client.call(tool, args)
         facts.update(code=sc.get("code"), details=sc.get("details"), operation_present="operation" in sc)
-        expect(is_error and sc.get("code") == code, f"got {sc.get('code')}, want {code}")
+        expect(is_error and sc.get("code") == code, f"{refusal(sc)}, want {code}")
         return sc
 
     def bogus_effect_args(self):
@@ -464,6 +491,8 @@ def select_checks(spec):
     if spec == "all":
         return list(ALL_CHECKS)
     names = [n.strip() for n in spec.split(",") if n.strip()]
+    if not names:
+        raise ValueError("no checks selected")
     unknown = [n for n in names if n not in ALL_CHECKS]
     if unknown:
         raise ValueError(f"unknown checks: {', '.join(unknown)}")
@@ -492,13 +521,26 @@ def main(argv=None, env=None, out=None):
         return 2
     run = Run(cfg, client, out, redact)
     started = time.time()
-    run.execute(selected)
+    terminated = False
+
+    def on_sigterm(signum, frame):
+        raise Terminated()
+
+    previous = signal.signal(signal.SIGTERM, on_sigterm)
+    try:
+        run.execute(selected)
+    except Terminated:  # the lease was released by the finally in execute
+        terminated = True
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     failed = [r["check"] for r in run.results if not r["ok"]]
+    ok = not failed and not terminated and bool(run.results)
     run.emit({"summary": {"mac": cfg.mac, "host": cfg.host, "port": cfg.port, "node": cfg.node,
                           "run_id": cfg.run_id, "holder_id": cfg.holder_id, "checks": len(run.results),
-                          "failed": failed, "ok": not failed,
+                          "failed": failed, "terminated": terminated, "ok": ok,
+                          "client_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
                           "seconds": round(time.time() - started, 2)}})
-    return 0 if not failed else 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
