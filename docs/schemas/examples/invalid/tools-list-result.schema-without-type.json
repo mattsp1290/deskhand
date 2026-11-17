@@ -1,0 +1,22 @@
+{
+  "resultType": "complete",
+  "tools": [
+    {
+      "name": "status",
+      "title": "Status",
+      "description": "Report deskhand's state.",
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {},
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "ttlMs": 300000,
+  "cacheScope": "private"
+}

@@ -3,6 +3,7 @@
   "$id": "https://deskhand.invalid/schemas/tools/pointer.output.json",
   "title": "pointer structuredContent",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/pointer_result" },
     { "$ref": "#/$defs/pointer_error" }
