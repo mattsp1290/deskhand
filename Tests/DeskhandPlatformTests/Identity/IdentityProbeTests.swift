@@ -254,6 +254,14 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(system.signatureLookups(of: editorPID) == 0)
     }
 
+    /// Another app activated while the frontmost app's code was being read.
+    @Test func frontmostAppDeactivatedWhileMeasuredIsUncertain() {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
+            deactivatedAfterFirstRead: [editorPID])
+        #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
+    }
+
     @Test func noFrontmostAppIsUncertain() {
         #expect(probe(FakeIdentitySystem(frontmost: nil)).frontmostApp().uncertainty == .noFrontmostApp)
     }

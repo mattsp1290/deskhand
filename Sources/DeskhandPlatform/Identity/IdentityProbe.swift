@@ -84,15 +84,19 @@ public struct IdentityProbe: Sendable {
 
     /// The frontmost app. AppKit's reading is confirmed by asking that app through Accessibility whether
     /// it is active; when it is not (a stale reading) or cannot be asked, the frontmost app is uncertain.
-    /// A non-activating panel of another process holding keyboard focus leaves it confirmed.
+    /// A non-activating panel of another process holding keyboard focus leaves it confirmed. Activation
+    /// is read inside the start-time pin and again after the code is read, so an app switch during
+    /// the measurement also leaves it uncertain.
     public func frontmostApp() -> MeasuredApp {
         let before = system.wallClock()
         guard let pid = system.frontmostProcess() else { return .unidentified(.noFrontmostApp) }
         let started = system.processStartTime(of: pid)
-        let activation = system.activation(of: pid)
+        let activeWhenPinned = system.activation(of: pid) == .active
         let app = measure(pid: pid, started: started, before: before, fallbackName: nil)
         guard app.isCertain else { return app }
-        guard activation == .active else { return .unidentified(.frontmostUnconfirmed) }
+        guard activeWhenPinned, system.activation(of: pid) == .active else {
+            return .unidentified(.frontmostUnconfirmed)
+        }
         return app
     }
 
