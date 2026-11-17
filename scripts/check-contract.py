@@ -270,6 +270,11 @@ SCHEMA_KEYWORDS = SUBSCHEMA_KEYWORDS | SUBSCHEMA_LIST_KEYWORDS | SUBSCHEMA_MAP_K
     "deprecated", "readOnly", "writeOnly", "examples", "format", "contentEncoding", "contentMediaType"}
 
 
+def unwrap(text: str) -> str:
+    """Joins hard-wrapped prose lines into one line, keeping headings and table rows apart."""
+    return re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", text)
+
+
 def number(text: str):
     text = text.replace(",", "")
     return float(text) if "." in text else int(text)
@@ -1129,7 +1134,7 @@ class Checker:
                         self.fail(f"contract.md {prefix.strip()}: says {group} where {rel}#{ptr}/{kw} is {bound}")
         # "`NAME` = 1" and "`NAME` is 1" anywhere, also when the line wraps after "=" (section 7) or
         # the figure is a default ("`NAME` is 0 by default", also with a unit: "is 5 ms by default").
-        flat = re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", self.md)
+        flat = unwrap(self.md)
         for name, verb, value, by_default in re.findall(
                 rf"`([A-Z][A-Z_]+)` (=|is) ({NUM})(?: (?!by\b)[a-z()]+){{0,3}}( by default)?", flat):
             part = "default" if by_default else "value"
@@ -1172,7 +1177,7 @@ class Checker:
             "pixels": {pixels: "MAX_PIXELS"},
             "characters": {image * 4 // 3: "MAX_IMAGE_BYTES in base64"},
         }
-        flat = re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", self.md)  # joins wrapped lines, keeps headings apart
+        flat = unwrap(self.md)
         left = dict(OTHER_FIGURES)
         for m in re.finditer(r"(?<![\d,.])(\d{1,3}(?:,\d{3}){2,}) (?:base64 )?(bytes|pixels|characters)\b", flat):
             value, unit = number(m.group(1)), m.group(2)

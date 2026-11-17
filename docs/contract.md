@@ -96,9 +96,8 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   aborted, and one that has not been admitted by then is never admitted
   ([section 9.5](#95-order-of-refusals)). See
   [section 4.3](#43-operation_id). deskhand reads the connection while a
-  call runs. Once deskhand observes that the connection has closed, it
-  cancels the call, and every later check of that call sees the connection
-  closed. The caller cannot observe that moment
+  call runs. Here and throughout, "closed" means that deskhand has observed
+  the close, a moment the caller cannot see
   ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
@@ -518,13 +517,11 @@ Results and input:
   out. Input that was posted cannot be undone.
 - `failed`: an internal fault after admission. `events_posted` is reported the
   same way.
-- When the caller closes the connection mid-call, the operation is aborted and
-  recorded with code `cancelled`. Repeating the `operation_id` returns it.
-- A call whose connection deskhand observes closed before it is admitted is
-  dropped. Nothing is posted and no record is kept. A close that deskhand
-  observes only after admission aborts the call with `cancelled` and 0
-  events, and its record is kept
-  ([section 12.5](#125-repeats-and-stored-results)).
+- A call whose connection deskhand has observed closed
+  ([section 12.5](#125-repeats-and-stored-results)) before admission is
+  dropped: nothing is posted and no record is kept. Observed after
+  admission, the operation is aborted and recorded with code `cancelled`,
+  and repeating the `operation_id` returns it.
 
 Records are kept for a configured window and up to a configured number per
 principal. The defaults are 24 hours and 10,000, and `status.limits` reports
@@ -639,9 +636,7 @@ The `lease` member of a `lease` result has the same shape and is never
 - No result carries a `holder_id`. deskhand never tells one caller the label
   of another. Crew shares one principal, and the label is the only thing
   that separates its internal callers. The schemas forbid a `holder_id`
-  member at the top level of every tool's result and of a tool error, and
-  in the lease view, the `lease_result`, a tool error's `details`, the
-  `operation` view and `measured`.
+  member anywhere in a tool's result or tool error.
 - `{held_by_caller: false}` does not say whether the lease is free. A holder
   finds that out by calling `lease` with `acquire`, which answers
   `lease_held_by_other` and `expires_in_ms` when it is not.
@@ -1867,9 +1862,10 @@ An effect call goes through these steps in this order.
 2. The intent entry is committed to the action log (check 15). If it cannot
    be committed, the call is refused with `log_unavailable`, nothing is
    posted and no record exists.
-3. deskhand looks at the caller's connection. If the caller has closed it,
-   the call ends here: nothing is posted and no record is created. The
-   action log gets a refusal entry with the outcome `cancelled`
+3. deskhand looks at the caller's connection. If deskhand has observed it
+   closed ([section 12.5](#125-repeats-and-stored-results)), the call ends
+   here: nothing is posted and no record is created. The action log gets a
+   refusal entry with the outcome `cancelled`
    ([section 12.10](#1210-action-log-entries)), so the intent entry of step
    2 normally does not stand alone. The refusal entry is best effort.
    Otherwise the record is created as `accepted`, and the call is now
@@ -2064,8 +2060,8 @@ the call again.
   arrives after: its frame can be older than the call's.
 
 "Closed" means that deskhand has observed the connection closed. From then
-on the call is cancelled, and every later check of it sees the connection
-closed ([section 2.1](#21-endpoint)). In this version the caller has no
+on the call is cancelled ([section 2.1](#21-endpoint)), and every later
+check of it sees the connection closed. In this version the caller has no
 signal for that moment. deskhand's TLS `close_notify` or end of stream
 shows that the connection is going away, but deskhand can send them before
 it cancels the call, and on a plain end of stream from the caller it sends
@@ -2201,7 +2197,7 @@ entry.
 | --- | --- | --- |
 | intent | Before admission (step 2 of [section 12.3](#123-write-ordering)). | The call is refused with `log_unavailable`. |
 | outcome | After the final record write (step 8). | The call still returns its true result, and the `log_unavailable` condition is set. |
-| refusal | When an effect call is refused before admission, for any code, and when it is dropped because its connection closed before admission (step 3 of [section 12.3](#123-write-ordering), or before it entered the admission section), with the code `cancelled`. There is none when deskhand could not read the connection's source address or compute the request digest (both `internal_error`), and none for invalid arguments on a connection whose source address it could not read. | Nothing changes for the call. It is best effort. |
+| refusal | When an effect call is refused before admission, and when it is dropped because its connection closed before admission (step 3 of [section 12.3](#123-write-ordering), or before it entered the admission section), with the code `cancelled`. | Nothing changes for the call. It is best effort. |
 
 Every entry has these fields:
 
@@ -2224,6 +2220,10 @@ Every entry has these fields:
   (`denied_app`, `denied_shortcut`) even though no operation record exists.
   It does not fail closed: a refusal posts nothing, so nothing is lost if the
   entry is.
+- There is no refusal entry when deskhand could not read the connection's
+  source address or compute the request digest (both `internal_error`), or
+  for invalid arguments on a connection whose source address it could not
+  read.
 - An intent entry with no outcome or refusal entry after it for the same
   (principal, `holder_id`, `operation_id`) means only that no outcome was
   logged: the call may have been dropped or refused with its refusal entry
@@ -3035,9 +3035,7 @@ items 37, 46, 50 and 53 by the re-review.
     app is identified on a success.
 71. For every event the order is ledger write, checks, post. A ledger entry
     whose down event was never posted is cleared without a release.
-72. The schemas forbid a `holder_id` member at the top level of every
-    tool's result and of a tool error, and in the lease view, the
-    `lease_result`, a tool error's `details`, the `operation` view and
-    `measured`. They forbid `current_state` on a success.
+72. The schemas forbid a `holder_id` member anywhere in a tool's result or
+    tool error. They forbid `current_state` on a success.
 73. Whether `pointer` can reach the menu bar depends on which process owns
     it, which the spike records.

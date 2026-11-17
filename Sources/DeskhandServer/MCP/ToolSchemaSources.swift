@@ -108,6 +108,12 @@ enum ToolSchemaSources {
               "pattern": "^[A-Za-z0-9._:-]+$",
               "not": { "pattern": "[^A-Za-z0-9._:-]" }
             },
+            "no_holder_id": {
+              "description": "No object anywhere in a tool result or tool error has a holder_id member (docs/contract.md section 5.4): not the caller's own label, and not the other holder's beside lease_held_by_other. Every output schema applies this at its root.",
+              "not": { "type": "object", "required": ["holder_id"] },
+              "additionalProperties": { "$ref": "#/$defs/no_holder_id" },
+              "items": { "$ref": "#/$defs/no_holder_id" }
+            },
             "operation_id": {
               "description": "Caller-supplied idempotency key for one effect call (Crew sends its call ID): 1 to 128 characters from A-Z a-z 0-9 . _ : -. Unique per (principal, holder_id) for the retention window.",
               "type": "string",
@@ -304,11 +310,7 @@ enum ToolSchemaSources {
                 "window_title",
                 "global_point",
                 "measured_at"
-              ],
-              "not": {
-                "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
-                "required": ["holder_id"]
-              }
+              ]
             },
             "operation_status": {
               "description": "Lifecycle state of an operation record. accepted and executing are transient; the rest are terminal.",
@@ -334,11 +336,7 @@ enum ToolSchemaSources {
                   "minimum": 0
                 }
               },
-              "required": ["status", "events_posted"],
-              "not": {
-                "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
-                "required": ["holder_id"]
-              }
+              "required": ["status", "events_posted"]
             },
             "stale_frame_reason": {
               "type": "string",
@@ -369,7 +367,6 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["held_by_caller"],
-              "not": { "required": ["holder_id"] },
               "if": {
                 "properties": { "held_by_caller": { "const": true } },
                 "required": ["held_by_caller"]
@@ -426,8 +423,8 @@ enum ToolSchemaSources {
                 "completed_at"
               ],
               "not": {
-                "$comment": "A success has no code, gains no current_state on a replay (docs/contract.md section 12.5), and carries no holder_id (section 5.4).",
-                "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }, { "required": ["holder_id"] }]
+                "$comment": "A success has no code, and gains no current_state on a replay (docs/contract.md section 12.5).",
+                "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }]
               }
             },
             "tool_error": {
@@ -483,18 +480,10 @@ enum ToolSchemaSources {
                     "denied_by": { "enum": ["policy", "permitted_apps"] },
                     "shortcut": { "type": "string" },
                     "expires_in_ms": { "type": "integer", "minimum": 0 }
-                  },
-                  "not": {
-                    "$comment": "No result carries a holder_id, not even the other holder's beside lease_held_by_other.",
-                    "required": ["holder_id"]
                   }
                 }
               },
               "required": ["code", "message", "state"],
-              "not": {
-                "$comment": "No result carries a holder_id.",
-                "required": ["holder_id"]
-              },
               "allOf": [
                 {
                   "if": {
@@ -762,6 +751,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/displays.output.json",
           "title": "displays structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/displays_result" },
             { "$ref": "#/$defs/displays_error" }
@@ -805,10 +795,7 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["display_config_generation", "displays"],
-              "not": {
-                "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
-                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-              }
+              "not": { "required": ["code"] }
             },
             "display": {
               "type": "object",
@@ -928,6 +915,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/keyboard.output.json",
           "title": "keyboard structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/keyboard_result" },
             { "$ref": "#/$defs/keyboard_error" }
@@ -1026,6 +1014,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/lease.output.json",
           "title": "lease structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/lease_tool_result" },
             { "$ref": "#/$defs/lease_error" }
@@ -1039,10 +1028,7 @@ enum ToolSchemaSources {
                 "lease": { "$ref": "../defs.json#/$defs/lease_view" }
               },
               "required": ["lease_result", "lease"],
-              "not": {
-                "$comment": "No result carries a holder_id.",
-                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-              },
+              "not": { "required": ["code"] },
               "if": {
                 "properties": {
                   "lease_result": {
@@ -1090,10 +1076,6 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["op", "outcome"],
-              "not": {
-                "$comment": "No result carries a holder_id, not even the other holder's beside lease_held_by_other.",
-                "required": ["holder_id"]
-              },
               "allOf": [
                 {
                   "if": {
@@ -1308,6 +1290,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/pointer.output.json",
           "title": "pointer structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/pointer_result" },
             { "$ref": "#/$defs/pointer_error" }
@@ -1420,6 +1403,7 @@ enum ToolSchemaSources {
           "title": "screenshot structuredContent",
           "description": "Frame metadata. The image itself is the image content block of the same result.",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/screenshot_result" },
             { "$ref": "#/$defs/screenshot_error" }
@@ -1542,10 +1526,7 @@ enum ToolSchemaSources {
                 "pointer_position",
                 "frontmost_app"
               ],
-              "not": {
-                "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
-                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-              },
+              "not": { "required": ["code"] },
               "if": {
                 "properties": { "format": { "const": "jpeg" } },
                 "required": ["format"]
@@ -1598,6 +1579,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/status.output.json",
           "title": "status structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/status_result" },
             { "$ref": "#/$defs/status_error" }
@@ -1675,12 +1657,8 @@ enum ToolSchemaSources {
                 "limits"
               ],
               "not": {
-                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result. No result carries a holder_id.",
-                "anyOf": [
-                  { "required": ["code"] },
-                  { "required": ["lease_result"] },
-                  { "required": ["holder_id"] }
-                ]
+                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
+                "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
               },
               "allOf": [
                 {

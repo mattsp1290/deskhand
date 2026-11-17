@@ -3,6 +3,7 @@
   "$id": "https://deskhand.invalid/schemas/tools/displays.output.json",
   "title": "displays structuredContent",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/displays_result" },
     { "$ref": "#/$defs/displays_error" }
@@ -46,10 +47,7 @@
         }
       },
       "required": ["display_config_generation", "displays"],
-      "not": {
-        "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
-        "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-      }
+      "not": { "required": ["code"] }
     },
     "display": {
       "type": "object",

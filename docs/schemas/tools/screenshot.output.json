@@ -4,6 +4,7 @@
   "title": "screenshot structuredContent",
   "description": "Frame metadata. The image itself is the image content block of the same result.",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/screenshot_result" },
     { "$ref": "#/$defs/screenshot_error" }
@@ -126,10 +127,7 @@
         "pointer_position",
         "frontmost_app"
       ],
-      "not": {
-        "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
-        "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-      },
+      "not": { "required": ["code"] },
       "if": {
         "properties": { "format": { "const": "jpeg" } },
         "required": ["format"]
