@@ -163,7 +163,7 @@ public actor Watchdog {
     /// for a deadline the file moved (contract 13.1, 14.4). Waits for the owner, never for the
     /// executor; returns at once while another reduction runs, which then reads the file again.
     public func allowanceFileDidChange() async {
-        await reduce(allowanceChanged: true, ownerLoopLooksAfter: true)
+        await reduce(allowanceChanged: true)
         ring(.owner)
         ring(.executor)
     }
@@ -174,14 +174,20 @@ public actor Watchdog {
     /// executes, retries cleanup, and returns when it next needs to run: `nil` when nothing is due
     /// until something changes.
     public func evaluate() async -> ContinuousClock.Instant? {
-        let ownerWakeup = await readIfDue(ownerLoopLooksAfter: false)
+        let ownerWakeup = await readIfDue()
         let executorWakeup = await act(on: owner.snapshot())
         return [ownerWakeup, executorWakeup].compactMap { $0 }.min()
     }
 
     private func ownerLoop() async {
         while !Task.isCancelled {
-            let wakeup = await readIfDue(ownerLoopLooksAfter: true)
+            let wakeup = await readIfDue()
+            // `wakeup` comes from state read after the loop's last suspension, and nothing suspends
+            // before the sleep, so a ring that reached this loop while it was awake, its own
+            // reduction's deferred ring among them, is already in it. Keeping that ring would end
+            // the sleep at once and reduce a passed deadline the owner does not settle again
+            // without the pause of ``Configuration/deadlineRetryInterval``.
+            alarms[.owner, default: Alarm()].rangWhileAwake = false
             await sleep(.owner, until: wakeup)
         }
     }
@@ -193,13 +199,13 @@ public actor Watchdog {
         }
     }
 
-    private func readIfDue(ownerLoopLooksAfter: Bool) async -> ContinuousClock.Instant? {
+    private func readIfDue() async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
         let readDue = nextAllowanceRead.map { $0 <= now } ?? true
         let deadlinePassed = Self.deadline(of: snapshot).map { $0 <= now } ?? false
         if readDue || deadlinePassed {
-            await reduce(allowanceChanged: readDue, ownerLoopLooksAfter: ownerLoopLooksAfter)
+            await reduce(allowanceChanged: readDue)
             ring(.executor)
         }
         let after = owner.snapshot()
@@ -233,11 +239,9 @@ public actor Watchdog {
         return idle < ContractConstants.userActivityLookbackMs ? .userActive(idleMs: max(0, idle)) : nil
     }
 
-    /// A refresh from inside the reduction rings the owner's loop once the reduction ends, unless
-    /// the caller has that loop look again anyway: ringing the loop that runs the reduction would
-    /// end its next sleep at once, and a passed deadline the owner does not settle would then be
-    /// reduced again without pause instead of after ``Configuration/deadlineRetryInterval``.
-    private func reduce(allowanceChanged: Bool, ownerLoopLooksAfter: Bool) async {
+    /// A refresh from inside the reduction rings the owner's loop once the reduction ends, so a
+    /// loop that slept through a reduction another task ran looks again at once.
+    private func reduce(allowanceChanged: Bool) async {
         allowanceChangePending = allowanceChangePending || allowanceChanged
         guard !reducing else { return }
         reducing = true
@@ -252,7 +256,7 @@ public actor Watchdog {
         reducing = false
         if ownerRangDuringReduction {
             ownerRangDuringReduction = false
-            if !ownerLoopLooksAfter { ring(.owner) }
+            ring(.owner)
         }
     }
 
