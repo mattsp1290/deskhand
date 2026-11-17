@@ -2,8 +2,10 @@ import Foundation
 import NIOSSL
 
 /// A throwaway private CA, server and client certificates, generated once per test process with the
-/// `openssl` command line (present on macOS and in the swift:6.2-noble image). Nothing here is a real
-/// credential; every key lives in a fresh temporary directory.
+/// `openssl` command line (present on macOS and in the swift:6.2-noble image), run through
+/// ``OpenSSLTool/run(_:input:in:timeout:at:)``. LibreSSL can generate it; the resumption tests need
+/// OpenSSL 1.1.1 or later. Nothing here is a real credential; every key lives in a fresh temporary
+/// directory.
 struct TestPKI: Sendable {
     enum Client: CaseIterable, Sendable {
         case valid
@@ -124,21 +126,11 @@ struct TestPKI: Sendable {
 
     @discardableResult
     private static func openssl(_ arguments: [String], in directory: URL) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["openssl"] + arguments
-        process.currentDirectoryURL = directory
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw OpenSSLFailure(arguments: arguments, status: process.terminationStatus, output: text)
+        let run = try OpenSSLTool.run(arguments, in: directory, timeout: 60)
+        guard run.status == 0, !run.timedOut else {
+            throw OpenSSLFailure(arguments: arguments, status: run.status, output: run.output)
         }
-        return text
+        return run.output
     }
 
     struct OpenSSLFailure: Error, CustomStringConvertible {
