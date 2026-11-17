@@ -6,8 +6,6 @@
     import Musl
 #endif
 
-public typealias AllowanceFileStatus = FileStatus
-
 /// Why `open` or `openat` failed.
 public enum AllowanceOpenError: Error, Hashable, Sendable {
     case notFound
@@ -19,10 +17,10 @@ public enum AllowanceOpenError: Error, Hashable, Sendable {
 /// One look at the allowance directory and file, as raw facts. The reader decides what they mean.
 public enum AllowanceProbe: Hashable, Sendable {
     case directoryFailed(AllowanceOpenError)
-    case fileFailed(directory: AllowanceFileStatus, error: AllowanceOpenError)
+    case fileFailed(directory: FileStatus, error: AllowanceOpenError)
     /// `contents` is read only from a regular file, and holds at most `maxBytes + 1` bytes so that
     /// an oversized file shows as one.
-    case opened(directory: AllowanceFileStatus, file: AllowanceFileStatus, contents: [UInt8])
+    case opened(directory: FileStatus, file: FileStatus, contents: [UInt8])
 }
 
 /// The system calls behind the allowance check, so tests can supply owners and modes that only

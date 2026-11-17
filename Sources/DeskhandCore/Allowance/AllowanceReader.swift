@@ -84,7 +84,7 @@ public struct AllowanceReader: Sendable {
     /// Reads the file now and judges it at `now`, with no cache.
     public func verdict(now: Timestamp) -> AllowanceVerdict { verdict(for: read(), now: now) }
 
-    private static func directoryProblem(_ status: AllowanceFileStatus) -> AllowanceInvalidReason? {
+    private static func directoryProblem(_ status: FileStatus) -> AllowanceInvalidReason? {
         guard status.kind == .directory else { return .directoryNotADirectory }
         guard status.owner == 0 else { return .directoryNotRootOwned(owner: status.owner) }
         guard !status.isWritableByGroupOrOthers else {
@@ -93,7 +93,7 @@ public struct AllowanceReader: Sendable {
         return nil
     }
 
-    private static func fileProblem(_ status: AllowanceFileStatus) -> AllowanceInvalidReason? {
+    private static func fileProblem(_ status: FileStatus) -> AllowanceInvalidReason? {
         guard status.kind == .regular else { return .notRegularFile }
         guard status.owner == 0 else { return .notRootOwned(owner: status.owner) }
         guard !status.isWritableByGroupOrOthers else {

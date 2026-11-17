@@ -28,8 +28,8 @@ import Testing
             #expect(
                 result
                     == .opened(
-                        directory: AllowanceFileStatus(kind: .directory, owner: UInt32(geteuid()), permissions: 0o755),
-                        file: AllowanceFileStatus(kind: .regular, owner: UInt32(geteuid()), permissions: 0o644),
+                        directory: FileStatus(kind: .directory, owner: UInt32(geteuid()), permissions: 0o755),
+                        file: FileStatus(kind: .regular, owner: UInt32(geteuid()), permissions: 0o644),
                         contents: Array(contents.utf8)))
         }
     }

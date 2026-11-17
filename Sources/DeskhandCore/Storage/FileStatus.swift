@@ -55,12 +55,7 @@ func readContents(of descriptor: Int32, limit: Int = .max) throws(SystemCallErro
     var buffer = [UInt8](repeating: 0, count: max(0, min(limit, 65_536)))
     while contents.count < limit {
         let wanted = min(buffer.count, limit - contents.count)
-        var failure: Int32 = 0
-        let count = buffer.withUnsafeMutableBytes { bytes in
-            let count = systemRead(descriptor, bytes.baseAddress, wanted)
-            if count < 0 { failure = errno }
-            return count
-        }
+        let (count, failure) = buffer.withUnsafeMutableBytes { (systemRead(descriptor, $0.baseAddress, wanted), errno) }
         if count < 0 {
             if failure == EINTR { continue }
             throw SystemCallError(errno: failure)

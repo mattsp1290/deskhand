@@ -2,7 +2,7 @@ import DeskhandCore
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct AllowanceReaderTests {
-    typealias Status = AllowanceFileStatus
+    typealias Status = FileStatus
 
     @Test func aValidAllowanceIsValidUntilItsExpiry() {
         let reader = AllowanceSample.reader(AllowanceSample.opened())
