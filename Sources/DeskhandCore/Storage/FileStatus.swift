@@ -29,10 +29,10 @@ public struct FileStatus: Hashable, Sendable {
     /// Group or others may write it. Whoever can write a directory can replace what it holds.
     public var isWritableByGroupOrOthers: Bool { permissions & 0o022 != 0 }
 
-    /// `fstat` of `descriptor`, or `nil` with `errno` set.
-    static func of(_ descriptor: Int32) -> FileStatus? {
+    /// `fstat` of `descriptor`.
+    static func of(_ descriptor: Int32) throws(SystemCallError) -> FileStatus {
         var status = stat()
-        guard fstat(descriptor, &status) == 0 else { return nil }
+        guard fstat(descriptor, &status) == 0 else { throw SystemCallError(errno: errno) }
         let mode = UInt32(status.st_mode)
         let kind: Kind =
             switch mode & UInt32(S_IFMT) {
@@ -44,16 +44,26 @@ public struct FileStatus: Hashable, Sendable {
     }
 }
 
-/// Up to `limit` bytes from `descriptor` until end of file, or `nil` with `errno` set.
-func readContents(of descriptor: Int32, limit: Int = .max) -> [UInt8]? {
+/// A system call failed with `errno`, read where it failed.
+struct SystemCallError: Error, Hashable {
+    let errno: Int32
+}
+
+/// Up to `limit` bytes from `descriptor`, fewer at end of file.
+func readContents(of descriptor: Int32, limit: Int = .max) throws(SystemCallError) -> [UInt8] {
     var contents: [UInt8] = []
-    var buffer = [UInt8](repeating: 0, count: 65_536)
+    var buffer = [UInt8](repeating: 0, count: min(limit, 65_536))
     while contents.count < limit {
         let wanted = min(buffer.count, limit - contents.count)
-        let count = buffer.withUnsafeMutableBytes { systemRead(descriptor, $0.baseAddress, wanted) }
+        var failure: Int32 = 0
+        let count = buffer.withUnsafeMutableBytes { bytes in
+            let count = systemRead(descriptor, bytes.baseAddress, wanted)
+            if count < 0 { failure = errno }
+            return count
+        }
         if count < 0 {
-            if errno == EINTR { continue }
-            return nil
+            if failure == EINTR { continue }
+            throw SystemCallError(errno: failure)
         }
         if count == 0 { break }
         contents += buffer[0..<count]

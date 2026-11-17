@@ -58,8 +58,11 @@ public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
         let directoryDescriptor = directory.withCString { open($0, Self.directoryOpen) }
         guard directoryDescriptor >= 0 else { return .directoryFailed(Self.openError(errno)) }
         defer { _ = close(directoryDescriptor) }
-        guard let directoryStatus = FileStatus.of(directoryDescriptor) else {
-            return .directoryFailed(.failed(errno: errno))
+        let directoryStatus: FileStatus
+        do throws(SystemCallError) {
+            directoryStatus = try FileStatus.of(directoryDescriptor)
+        } catch {
+            return .directoryFailed(.failed(errno: error.errno))
         }
 
         // O_NONBLOCK keeps a FIFO in the directory from blocking the open; it is refused below.
@@ -68,16 +71,16 @@ public struct POSIXAllowanceFileProbe: AllowanceFileProbe {
         }
         guard fileDescriptor >= 0 else { return .fileFailed(directory: directoryStatus, error: Self.openError(errno)) }
         defer { _ = close(fileDescriptor) }
-        guard let fileStatus = FileStatus.of(fileDescriptor) else {
-            return .fileFailed(directory: directoryStatus, error: .failed(errno: errno))
+        do throws(SystemCallError) {
+            let fileStatus = try FileStatus.of(fileDescriptor)
+            guard fileStatus.kind == .regular else {
+                return .opened(directory: directoryStatus, file: fileStatus, contents: [])
+            }
+            let contents = try readContents(of: fileDescriptor, limit: maxBytes + 1)
+            return .opened(directory: directoryStatus, file: fileStatus, contents: contents)
+        } catch {
+            return .fileFailed(directory: directoryStatus, error: .failed(errno: error.errno))
         }
-        guard fileStatus.kind == .regular else {
-            return .opened(directory: directoryStatus, file: fileStatus, contents: [])
-        }
-        guard let contents = readContents(of: fileDescriptor, limit: maxBytes + 1) else {
-            return .fileFailed(directory: directoryStatus, error: .failed(errno: errno))
-        }
-        return .opened(directory: directoryStatus, file: fileStatus, contents: contents)
     }
 
     private static func openError(_ code: Int32) -> AllowanceOpenError {

@@ -52,8 +52,11 @@ public struct DurableFile: Sendable {
         }
         defer { _ = close(descriptor) }
         try verify(descriptor)
-        guard let bytes = readContents(of: descriptor) else { throw .io(operation: "read", errno: errno) }
-        return bytes
+        do throws(SystemCallError) {
+            return try readContents(of: descriptor)
+        } catch {
+            throw .io(operation: "read", errno: error.errno)
+        }
     }
 
     /// Makes `bytes` the file's contents, atomically and durably: once this returns they survive
@@ -145,8 +148,10 @@ public struct DurableFile: Sendable {
     private func openDirectory() throws(StorageError) -> Int32 {
         let descriptor = directoryPath.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard descriptor >= 0 else { throw .io(operation: "open directory", errno: errno) }
-        let problem: StorageError? =
-            if let status = FileStatus.of(descriptor) {
+        let problem: StorageError?
+        do throws(SystemCallError) {
+            let status = try FileStatus.of(descriptor)
+            problem =
                 if status.owner != owner {
                     .directoryWrongOwner(owner: status.owner, expected: owner)
                 } else if status.isWritableByGroupOrOthers {
@@ -154,9 +159,9 @@ public struct DurableFile: Sendable {
                 } else {
                     nil
                 }
-            } else {
-                .io(operation: "fstat directory", errno: errno)
-            }
+        } catch {
+            problem = .io(operation: "fstat directory", errno: error.errno)
+        }
         if let problem {
             _ = close(descriptor)
             throw problem
@@ -169,7 +174,12 @@ public struct DurableFile: Sendable {
     private var name: String { splitPath(path).name }
 
     private func verify(_ descriptor: Int32) throws(StorageError) {
-        guard let status = FileStatus.of(descriptor) else { throw .io(operation: "fstat", errno: errno) }
+        let status: FileStatus
+        do throws(SystemCallError) {
+            status = try FileStatus.of(descriptor)
+        } catch {
+            throw .io(operation: "fstat", errno: error.errno)
+        }
         guard status.kind == .regular else { throw .notRegularFile }
         guard status.owner == owner else { throw .wrongOwner(owner: status.owner, expected: owner) }
         guard status.permissions & ~0o600 == 0 else { throw .permissionsTooWide(mode: status.permissions) }
