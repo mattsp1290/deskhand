@@ -103,36 +103,6 @@ import Testing
         #expect(later.effects == Self.leavingOK(.disarmed, at: armingEnds) + [.dropLease(.gated, at: F.at(5000))])
     }
 
-    @Test func aWallClockSetBackDoesNotUndoALapseReadersSaw() {
-        let armed = Self.armedUnderShortAllowance(F.gateIndependent)
-        #expect(armed.activeStates(at: F.at(10_500)).inPrecedenceOrder == [.gated])
-
-        let steppedBack = ClockReading(wall: F.at(9000).wall, monotonic: F.at(11_000).monotonic)
-        #expect(armed.activeStates(at: steppedBack).inPrecedenceOrder == [.gated])
-
-        let same = F.reduce(armed, Self.signals(allowanceUntil: 10_000), at: steppedBack)
-        #expect(same.effects == Self.leavingOK(.gated, at: F.at(10_000)))
-        #expect(same.report.activeStates(at: steppedBack).inPrecedenceOrder == [.gated])
-        let stillBehind = ClockReading(wall: F.at(9500).wall, monotonic: F.at(11_500).monotonic)
-        let again = F.reduce(same.report, Self.signals(allowanceUntil: 10_000), at: stillBehind)
-        #expect(again.effects.isEmpty)
-        #expect(again.report.activeStates(at: stillBehind).inPrecedenceOrder == [.gated])
-
-        let renewed = F.reduce(armed, Self.signals(allowanceUntil: 120_000), at: steppedBack)
-        #expect(renewed.effects == Self.leavingOK(.gated, at: F.at(10_000)))
-        #expect(renewed.report.state(at: steppedBack) == .ok)
-    }
-
-    @Test func aWallClockSetBackBeforeTheLapseDoesNotExtendTheAllowance() {
-        let armed = Self.armedUnderShortAllowance(F.gateIndependent)
-        let steppedBack = ClockReading(wall: F.at(3000).wall, monotonic: F.at(5000).monotonic)
-        let reduced = F.reduce(armed, Self.signals(allowanceUntil: 10_000), at: steppedBack).report
-        #expect(reduced.state(at: steppedBack) == .ok)
-        let atLapse = ClockReading(wall: F.at(8000).wall, monotonic: F.at(10_000).monotonic)
-        #expect(reduced.validUntil(at: steppedBack) == F.at(10_000).monotonic)
-        #expect(reduced.activeStates(at: atLapse).inPrecedenceOrder == [.gated])
-    }
-
     @Test func aLeaseThatOutlivedALapseSettledLateIsDropped() throws {
         let principal = Principal(certificateSubject: "CN=c")
         let holder = HolderID("h")!

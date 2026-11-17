@@ -26,14 +26,10 @@ public struct StateReport: Hashable, Sendable {
     let reducedStates: ActiveStates
     let signals: StateSignals
     let configuration: StateConfiguration
-    let allowanceLapse: AllowanceLapse?
 
-    init(
-        arming: Arming, signals: StateSignals, configuration: StateConfiguration, allowanceLapse: AllowanceLapse?,
-        now: ClockReading
-    ) {
+    init(arming: Arming, signals: StateSignals, configuration: StateConfiguration, now: ClockReading) {
         var states = Set(arming.blockingStates)
-        if !Self.allowanceIsValid(signals.allowance, lapse: allowanceLapse, at: now) { states.insert(.gated) }
+        if !signals.allowance.isValid(at: now.wall) { states.insert(.gated) }
         for signal in PlatformSignal.allCases where signals[signal].holds { states.insert(signal.feeds) }
         var conditions: Set<Condition> = []
         if signals.credentialsWarning { conditions.insert(.credentialsWarning) }
@@ -45,7 +41,6 @@ public struct StateReport: Hashable, Sendable {
         self.conditions = conditions
         self.signals = signals
         self.configuration = configuration
-        self.allowanceLapse = allowanceLapse
     }
 
     /// The states that hold at `now`: those of the reduction carried forward by the clock, so
@@ -82,7 +77,7 @@ public struct StateReport: Hashable, Sendable {
             }
         let allowance: ContinuousClock.Instant =
             switch signals.allowance {
-            case .valid(let expiresAt): Self.lapseInstant(of: expiresAt, lapse: allowanceLapse, seenFrom: now)
+            case .valid(let expiresAt): now.instant(atWallTime: expiresAt)
             case .invalid, .missing: now.monotonic
             }
         return min(leases.deadline(of: admitted) ?? now.monotonic, arming, allowance)
@@ -92,10 +87,15 @@ public struct StateReport: Hashable, Sendable {
     /// a missing reading makes hold. Seed the first ``StateReducer/reduce(previous:signals:command:configuration:now:)``
     /// with it.
     public static let startup = StateReport(
-        arming: .disarmed, signals: .unread, configuration: .standard, allowanceLapse: nil,
+        arming: .disarmed, signals: .unread, configuration: .standard,
         now: ClockReading(wall: Timestamp(millisecondsSinceEpoch: 0), monotonic: ContinuousClock.now))
 
-    func elapsed(until now: ClockReading) -> (report: StateReport, effects: [TransitionEffect]) {
+    /// The transitions the clock made by `now` with this report's signals (arming running out, the
+    /// allowance expiring), each reduced at the instant it happened, and their effects. What
+    /// ``activeStates(at:)`` reads. A reader that acts on a state these add commits them first, so
+    /// a later reduction cannot lose a transition that a reader saw (contract 10.3, 14.5): the
+    /// wall clock may step back before that reduction and make the allowance valid again.
+    public func elapsed(until now: ClockReading) -> (report: StateReport, effects: [TransitionEffect]) {
         var report = self
         var effects: [TransitionEffect] = []
         for instant in expiries(seenFrom: now) where instant.monotonic <= now.monotonic {
@@ -115,50 +115,11 @@ public struct StateReport: Hashable, Sendable {
                 ClockReading(wall: now.wall.adding(milliseconds: -Int64(millisecondsAgo)), monotonic: until))
         }
         if case .valid(let expiresAt) = signals.allowance, !reducedStates.states.contains(.gated) {
-            let lapse = Self.lapseInstant(of: expiresAt, lapse: allowanceLapse, seenFrom: now)
-            instants.append(ClockReading(wall: expiresAt, monotonic: lapse))
+            instants.append(ClockReading(wall: expiresAt, monotonic: now.instant(atWallTime: expiresAt)))
         }
         instants.sort { $0.monotonic < $1.monotonic }
         if instants.count == 2, instants[0].monotonic == instants[1].monotonic { instants.removeLast() }
         return instants
-    }
-
-    /// Contract 14.3 at `now`, and the lapse placed on the monotonic clock has not passed either.
-    static func allowanceIsValid(_ allowance: AllowanceVerdict, lapse: AllowanceLapse?, at now: ClockReading) -> Bool {
-        guard case .valid(let expiresAt) = allowance, now.wall < expiresAt else { return false }
-        return now.monotonic < lapseInstant(of: expiresAt, lapse: lapse, seenFrom: now)
-    }
-
-    private static func lapseInstant(of expiresAt: Timestamp, lapse: AllowanceLapse?, seenFrom now: ClockReading)
-        -> ContinuousClock.Instant
-    {
-        let seen = now.instant(atWallTime: expiresAt)
-        guard let lapse, lapse.expiresAt == expiresAt else { return seen }
-        return min(seen, lapse.instant)
-    }
-}
-
-/// The earliest monotonic instant at which any reduction placed one allowance's `expires_at`.
-///
-/// Contract 14.3 never extends `expires_at`, and readers act on a lapse before the owner reduces
-/// it. A wall clock set back across `expires_at` must not make an allowance valid again once it
-/// lapsed, nor leave a lapse that readers saw as `gated` without its effects. So the allowance
-/// lapses at whichever comes first: the wall clock reaching `expires_at`, or this instant.
-struct AllowanceLapse: Hashable, Sendable {
-    let expiresAt: Timestamp
-    let instant: ContinuousClock.Instant
-
-    /// The placement a reduction at `now` keeps. One for the same `expires_at` carries over, also
-    /// through readings in which the allowance was missing or invalid.
-    static func carried(from previous: AllowanceLapse?, allowance: AllowanceVerdict, now: ClockReading)
-        -> AllowanceLapse?
-    {
-        guard case .valid(let expiresAt) = allowance else { return previous }
-        let seen = now.instant(atWallTime: expiresAt)
-        guard let previous, previous.expiresAt == expiresAt else {
-            return AllowanceLapse(expiresAt: expiresAt, instant: seen)
-        }
-        return AllowanceLapse(expiresAt: expiresAt, instant: min(seen, previous.instant))
     }
 }
 
@@ -212,13 +173,9 @@ public enum StateReducer {
     ) -> (report: StateReport, effects: [TransitionEffect]) {
         let refusal = ArmingRefusal.of(command, activity: signals.ownInput, now: now)
         var arming = previous.arming.applying(command, refusal: refusal, now: now)
-        let lapse = AllowanceLapse.carried(from: previous.allowanceLapse, allowance: signals.allowance, now: now)
-        let gatedBegins =
-            !StateReport.allowanceIsValid(signals.allowance, lapse: lapse, at: now)
-            && !previous.reducedStates.states.contains(.gated)
+        let gatedBegins = !signals.allowance.isValid(at: now.wall) && !previous.reducedStates.states.contains(.gated)
         if gatedBegins, configuration.gatedEndsArming, case .armed = arming { arming = .disarmed }
-        let report = StateReport(
-            arming: arming, signals: signals, configuration: configuration, allowanceLapse: lapse, now: now)
+        let report = StateReport(arming: arming, signals: signals, configuration: configuration, now: now)
         return (report, effects(from: previous.reducedStates, to: report.reducedStates, at: now))
     }
 

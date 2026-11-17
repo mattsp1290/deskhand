@@ -17,6 +17,37 @@ public final class DeskOwner: StateSource, FrameSource {
         var frames: FrameStore
         var policy: AppPolicy
         var invalidatedBy: BlockingState?
+        /// Committed by a reader, not yet returned by a reduction for delivery to the executor.
+        var settledEffects: [TransitionEffect] = []
+        var settledEnds: [LeaseEnd] = []
+
+        /// Commits every transition the clock made by `reading` before anything reads the report
+        /// there. Readers act on those transitions (a refusal, an abort, `status`), and a wall clock
+        /// stepped back before the next reduction would otherwise make the allowance valid again
+        /// and lose them with their effects. The next reduction returns them.
+        mutating func settle(at reading: ClockReading) {
+            let elapsed = report.elapsed(until: reading)
+            guard !elapsed.effects.isEmpty else { return }
+            report = elapsed.report
+            settledEffects += elapsed.effects
+            settledEnds += carryOut(elapsed.effects)
+        }
+
+        /// Invalidates frames and drops the lease as `effects` require, and returns the leases
+        /// that ended.
+        mutating func carryOut(_ effects: [TransitionEffect]) -> [LeaseEnd] {
+            var ends: [LeaseEnd] = []
+            for effect in effects {
+                switch effect {
+                case .cancelInFlight(let state): invalidatedBy = state
+                case .invalidateFrames: frames.invalidateAll()
+                case .dropLease(let state, let lapse):
+                    if let end = lease.drop(because: state, now: lapse) { ends.append(end) }
+                case .releaseHeldInput: break
+                }
+            }
+            return ends
+        }
     }
 
     /// The Mac's displays: their generation is part of every frame check.
@@ -43,7 +74,9 @@ public final class DeskOwner: StateSource, FrameSource {
 
     public func snapshot() -> DeskSnapshot {
         world.withLock { world in
-            DeskSnapshot(reading: clock(), report: world.report, lease: world.lease, policy: world.policy)
+            let reading = clock()
+            world.settle(at: reading)
+            return DeskSnapshot(reading: reading, report: world.report, lease: world.lease, policy: world.policy)
         }
     }
 
@@ -57,8 +90,10 @@ public final class DeskOwner: StateSource, FrameSource {
     /// What one reduction changed, and what its caller still has to carry out against the executor.
     public struct Reduction: Sendable {
         public let report: StateReport
-        /// In order (``TransitionEffect``). ``TransitionEffect/invalidateFrames`` and
-        /// ``TransitionEffect/dropLease(_:at:)`` are already applied here.
+        /// In order (``TransitionEffect``): first those a reader committed since the last reduction,
+        /// when it read the report after the clock had made a transition, then this reduction's.
+        /// ``TransitionEffect/invalidateFrames`` and ``TransitionEffect/dropLease(_:at:)`` are
+        /// already applied here.
         public let effects: [TransitionEffect]
         /// Every live lease this reduction ended, by running out or by a state that drops it.
         public let leaseEnds: [LeaseEnd]
@@ -109,18 +144,12 @@ public final class DeskOwner: StateSource, FrameSource {
                 previous: world.report, signals: signals, command: command, configuration: stateConfiguration,
                 now: reading)
             world.report = report
-            var ends: [LeaseEnd] = []
-            for effect in effects {
-                switch effect {
-                case .cancelInFlight(let state): world.invalidatedBy = state
-                case .invalidateFrames: world.frames.invalidateAll()
-                case .dropLease(let state, let lapse):
-                    if let end = world.lease.drop(because: state, now: lapse) { ends.append(end) }
-                case .releaseHeldInput: break
-                }
-            }
+            var ends = world.settledEnds + world.carryOut(effects)
             if let end = world.lease.expire(now: reading) { ends.append(end) }
-            return Reduction(report: report, effects: effects, leaseEnds: ends, reading: reading)
+            let allEffects = world.settledEffects + effects
+            world.settledEffects = []
+            world.settledEnds = []
+            return Reduction(report: report, effects: allEffects, leaseEnds: ends, reading: reading)
         }
     }
 
@@ -130,6 +159,7 @@ public final class DeskOwner: StateSource, FrameSource {
     func statusView(for holder: LeaseHolder?) -> StatusView {
         world.withLock { world in
             let reading = clock()
+            world.settle(at: reading)
             let active = world.report.activeStates(at: reading)
             let lease: LeaseView? = holder.map { holder in
                 guard Self.droppingState(in: active) == nil else { return .notHeldByCaller }
@@ -144,13 +174,10 @@ public final class DeskOwner: StateSource, FrameSource {
     func applyLease(_ arguments: LeaseArguments, principal: Principal) -> (result: LeaseToolResult, ended: [LeaseEnd]) {
         world.withLock { world in
             let reading = clock()
+            let settledEnds = world.settledEnds.count
+            world.settle(at: reading)
+            var ended = Array(world.settledEnds[settledEnds...])
             let state = world.report.state(at: reading)
-            var ended: [LeaseEnd] = []
-            if let dropping = Self.droppingState(in: world.report.activeStates(at: reading)),
-                let end = world.lease.drop(because: dropping, now: reading)
-            {
-                ended.append(end)
-            }
             let application = world.lease.apply(arguments, principal: principal, state: state, now: reading)
             if let end = application.ended { ended.append(end) }
             return (application.result, ended)
@@ -160,6 +187,7 @@ public final class DeskOwner: StateSource, FrameSource {
     func beginRead() -> ReadStart {
         world.withLock { world in
             let reading = clock()
+            world.settle(at: reading)
             return ReadStart(
                 reading: reading, state: world.report.state(at: reading), policy: world.policy,
                 epoch: world.frames.epoch)
@@ -168,7 +196,9 @@ public final class DeskOwner: StateSource, FrameSource {
 
     func checkRead(since start: ReadStart) throws(FrameRefusal) {
         try world.withLock { world throws(FrameRefusal) in
-            try Self.checkRead(since: start, in: world, at: clock())
+            let reading = clock()
+            world.settle(at: reading)
+            try Self.checkRead(since: start, in: world, at: reading)
         }
     }
 
@@ -185,6 +215,7 @@ public final class DeskOwner: StateSource, FrameSource {
     {
         try world.withLock { world throws(FrameRefusal) in
             let reading = clock()
+            world.settle(at: reading)
             try Self.checkRead(since: start, in: world, at: reading)
             var leaseHolder: FrameScope?
             if case .held(let lease) = world.lease.state(at: reading) {

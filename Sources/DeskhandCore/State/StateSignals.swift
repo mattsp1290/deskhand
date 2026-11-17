@@ -88,3 +88,10 @@ public struct StateSignals: Hashable, Sendable {
         allowance: .missing, readings: [:], credentialsWarning: false, cleanupPending: false, logUnavailable: false,
         ownInput: .idle)
 }
+
+extension AllowanceVerdict {
+    func isValid(at now: Timestamp) -> Bool {
+        if case .valid(let expiresAt) = self { return now < expiresAt }
+        return false
+    }
+}
