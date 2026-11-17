@@ -3,6 +3,7 @@
   "$id": "https://deskhand.invalid/schemas/tools/status.output.json",
   "title": "status structuredContent",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/status_result" },
     { "$ref": "#/$defs/status_error" }
@@ -80,12 +81,8 @@
         "limits"
       ],
       "not": {
-        "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result. No result carries a holder_id.",
-        "anyOf": [
-          { "required": ["code"] },
-          { "required": ["lease_result"] },
-          { "required": ["holder_id"] }
-        ]
+        "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
+        "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
       },
       "allOf": [
         {
