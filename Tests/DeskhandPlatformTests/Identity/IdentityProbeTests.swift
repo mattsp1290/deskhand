@@ -35,6 +35,11 @@ private let desktop: [IdentityWindowEntry] = [
 
 private func probe(_ system: FakeIdentitySystem) -> IdentityProbe { IdentityProbe(system: system) }
 
+/// Start times for `pid` that name the original process for `afterReads` reads, then another process.
+private func reused(_ pid: pid_t, afterReads: Int = 1) -> [pid_t: [ProcessStartTime?]] {
+    [pid: Array(repeating: FakeIdentitySystem.started(pid), count: afterReads) + [FakeIdentitySystem.replaced(pid)]]
+}
+
 private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry]) -> WindowOwnerHit {
     probe(FakeIdentitySystem(windows: windows, signatures: signatures)).windowOwner(at: GlobalPoint(x: x, y: y))
 }
@@ -162,7 +167,7 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
     }
 
     @Test func ownerWhosePidIsReusedAfterTheWindowListIsGone() {
-        let system = FakeIdentitySystem(windows: desktop, signatures: signatures, reused: [editorPID])
+        let system = FakeIdentitySystem(windows: desktop, signatures: signatures, startTimes: reused(editorPID))
         let hits = probe(system).windowOwners(at: [GlobalPoint(x: -500, y: 300), GlobalPoint(x: 500, y: 700)])
         #expect(hits[0].owner.uncertainty == .processGone)
         #expect(hits[0].owner.identity == .unknown)
@@ -231,9 +236,11 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
 
     @Test func frontmostOrFocusPidReusedWhileMeasuredIsGone() {
         let system = FakeIdentitySystem(
-            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active], reused: [editorPID])
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
+            startTimes: reused(editorPID))
         #expect(probe(system).frontmostApp().uncertainty == .processGone)
-        let focused = FakeIdentitySystem(focus: .process(editorPID), signatures: signatures, reused: [editorPID])
+        let focused = FakeIdentitySystem(
+            focus: .process(editorPID), signatures: signatures, startTimes: reused(editorPID))
         let owner = probe(focused).focusOwner()
         #expect(owner.uncertainty == .processGone)
         #expect(owner.identity == .unknown)
@@ -244,7 +251,7 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
     @Test func pidReusedBeforeItsStartTimeIsReadIsGone() {
         let system = FakeIdentitySystem(
             windows: desktop, frontmost: editorPID, focus: .process(editorPID), signatures: signatures,
-            activation: [editorPID: .active], reusedBeforeFirstRead: [editorPID])
+            activation: [editorPID: .active], startTimes: [editorPID: [FakeIdentitySystem.startedAfterNow]])
         let probe = probe(system)
         #expect(probe.frontmostApp().uncertainty == .processGone)
         #expect(probe.focusOwner().uncertainty == .processGone)
@@ -257,16 +264,14 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
     /// Another app activated while the frontmost app's code was being read.
     @Test func frontmostAppDeactivatedWhileMeasuredIsUncertain() {
         let system = FakeIdentitySystem(
-            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
-            deactivatedAfterFirstRead: [editorPID])
+            frontmost: editorPID, signatures: signatures, activations: [editorPID: [.active, .inactive]])
         #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
     }
 
     /// The app became active only while its code was being read, so it was not frontmost when pinned.
     @Test func frontmostAppActivatedWhileMeasuredIsUncertain() {
         let system = FakeIdentitySystem(
-            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
-            activatedAfterFirstRead: [editorPID])
+            frontmost: editorPID, signatures: signatures, activations: [editorPID: [.inactive, .active]])
         #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
     }
 
@@ -275,7 +280,7 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
     @Test func frontmostPidReusedAfterTheMeasurementIsGone() {
         let system = FakeIdentitySystem(
             frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
-            reusedAfterReads: [editorPID: 2])
+            startTimes: reused(editorPID, afterReads: 2))
         #expect(probe(system).frontmostApp().uncertainty == .processGone)
     }
 

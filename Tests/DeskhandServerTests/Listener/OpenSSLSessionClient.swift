@@ -3,62 +3,6 @@ import NIOCore
 import NIOPosix
 import NIOSSL
 
-/// The `openssl` command line the listener tests run. TLS 1.3 session resumption needs OpenSSL 1.1.1
-/// or later: LibreSSL, macOS's `/usr/bin/openssl`, issues sessions but never resumes them.
-enum OpenSSLTool {
-    static let resumptionRequirement =
-        "needs OpenSSL 1.1.1 or later (not LibreSSL) on PATH or at /opt/homebrew/bin, /usr/local/bin or "
-        + "/opt/homebrew/opt/openssl@3/bin"
-
-    /// The first OpenSSL 1.1.1 or later found on PATH or in Homebrew's usual places, or `nil`.
-    static let resuming: URL? = {
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let candidates =
-            path.split(separator: ":").map { "\($0)/openssl" } + [
-                "/opt/homebrew/bin/openssl", "/usr/local/bin/openssl", "/opt/homebrew/opt/openssl@3/bin/openssl",
-            ]
-        return candidates.lazy.map { URL(fileURLWithPath: $0) }.first(where: isResumingOpenSSL)
-    }()
-
-    /// The binary every test invocation uses: the resuming OpenSSL when there is one, else whatever
-    /// `openssl` PATH names, which can still generate certificates.
-    static var executable: (url: URL, prefix: [String]) {
-        resuming.map { ($0, []) } ?? (URL(fileURLWithPath: "/usr/bin/env"), ["openssl"])
-    }
-
-    /// On Linux (CI) the resumption tests always run, so a missing OpenSSL fails them rather than
-    /// hiding them.
-    static var resumptionTestsEnabled: Bool {
-        #if os(Linux)
-            true
-        #else
-            resuming != nil
-        #endif
-    }
-
-    private static func isResumingOpenSSL(_ url: URL) -> Bool {
-        guard FileManager.default.isExecutableFile(atPath: url.path) else { return false }
-        let process = Process()
-        process.executableURL = url
-        process.arguments = ["version"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return false }
-        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: watchdog)
-        defer { watchdog.cancel() }
-        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        guard process.terminationReason == .exit, process.terminationStatus == 0, text.hasPrefix("OpenSSL ") else {
-            return false
-        }
-        let version = text.dropFirst("OpenSSL ".count).prefix { !$0.isWhitespace }
-        let numbers = version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
-        return numbers.lexicographicallyPrecedes([1, 1, 1]) == false
-    }
-}
-
 /// Tries TLS 1.3 session resumption through `openssl s_client`, the way a caller's stack would.
 /// NIOSSL's client can neither keep the session a server issues nor offer one back, and BoringSSL
 /// itself is not a product swift-nio-ssl exports.
@@ -91,7 +35,6 @@ struct OpenSSLSessionClient: Sendable {
 
     private func blockingExchange(port: Int, request: [UInt8], offering session: URL?) throws -> Exchange {
         let saved = pki.directory.appendingPathComponent("session-\(UUID().uuidString).pem")
-        let tool = OpenSSLTool.executable
         var arguments = [
             "s_client", "-connect", "127.0.0.1:\(port)", "-servername", TestPKI.serverName,
             "-CAfile", pki.caPath, "-verify_return_error", "-tls1_3", "-ign_eof", "-sess_out", saved.path,
@@ -102,40 +45,13 @@ struct OpenSSLSessionClient: Sendable {
         }
         if let session { arguments += ["-sess_in", session.path] }
 
-        let process = Process()
-        process.executableURL = tool.url
-        process.arguments = tool.prefix + arguments
-        let input = Pipe()
-        let output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = output
-        #if canImport(Darwin)
-            // An `s_client` that already exited must fail the write, not SIGPIPE the test runner. On Linux
-            // NIOPosix ignores SIGPIPE for the whole process.
-            _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        #endif
-        try process.run()
-        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: watchdog)
-        defer { watchdog.cancel() }
-        do {
-            try input.fileHandleForWriting.write(contentsOf: request)
-            try input.fileHandleForWriting.close()
-        } catch {
-            process.terminate()
-            process.waitUntilExit()
-            throw error
-        }
-        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        if process.terminationReason == .uncaughtSignal {
-            throw Failure(description: "s_client was killed after 10 seconds:\n\(text)")
-        }
+        let run = try OpenSSLTool.run(arguments, input: request, timeout: 10)
+        if run.killed { throw Failure(description: "s_client was killed after 10 seconds:\n\(run.output)") }
 
         let ticket = (try? Data(contentsOf: saved)).map { !$0.isEmpty } == true
         return Exchange(
-            status: Self.status(in: text), resumed: text.contains("\nReused, "), issued: ticket ? saved : nil)
+            status: Self.status(in: run.output), resumed: run.output.contains("\nReused, "),
+            issued: ticket ? saved : nil)
     }
 
     private static func status(in output: String) -> Int? {
