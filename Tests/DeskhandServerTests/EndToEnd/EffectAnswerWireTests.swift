@@ -27,8 +27,11 @@ struct EffectAnswerWireTests {
         let request = request.setting("Connection", to: "close")
         var head = "POST /mcp HTTP/1.1\r\n"
         for (name, value) in request.headers { head += "\(name): \(value)\r\n" }
-        return try await RawTLSClient(pki: pki).exchange(
+        let response = try await RawTLSClient(pki: pki).exchange(
             to: address, request: Array((head + "\r\n").utf8) + request.body)
+        // No bytes prove nothing unless the request reached the server and the server closed.
+        #expect(response.end == .peerClosed)
+        return response
     }
 
     static func request(_ tool: String, _ arguments: JSONObject) -> TestRequest {

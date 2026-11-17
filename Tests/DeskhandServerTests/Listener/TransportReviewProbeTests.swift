@@ -63,6 +63,7 @@ extension TransportReviewProbeTests {
             let response = try await client.exchange(to: address, request: first + Array(second.utf8) + request.body)
             if oversized {
                 #expect(response.status == nil)
+                #expect(response.end == .peerClosed)
                 #expect(await eventually { handler.cancellations == 1 })
             } else {
                 #expect(response.status == 200)

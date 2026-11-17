@@ -14,6 +14,8 @@ final class FakeIdentitySystem: IdentitySystem {
     let reused: Set<pid_t>
     let reusedBeforeFirstRead: Set<pid_t>
     let deactivatedAfterFirstRead: Set<pid_t>
+    /// The first activation read answers `.inactive`; later reads answer from `activation`.
+    let activatedAfterFirstRead: Set<pid_t>
     /// The pid is reused once its start time has been read this many times.
     let reusedAfterReads: [pid_t: Int]
     private let lookups = Mutex<[pid_t: Int]>([:])
@@ -25,7 +27,8 @@ final class FakeIdentitySystem: IdentitySystem {
         focus: FocusedApplicationLookup = .noFocus, signatures: [pid_t: CodeSignatureLookup] = [:],
         activation: [pid_t: ActivationLookup] = [:], names: [pid_t: String] = [:],
         focusedTitles: [pid_t: String] = [:], reused: Set<pid_t> = [], reusedBeforeFirstRead: Set<pid_t> = [],
-        deactivatedAfterFirstRead: Set<pid_t> = [], reusedAfterReads: [pid_t: Int] = [:]
+        deactivatedAfterFirstRead: Set<pid_t> = [], activatedAfterFirstRead: Set<pid_t> = [],
+        reusedAfterReads: [pid_t: Int] = [:]
     ) {
         self.windows = windows
         self.frontmost = frontmost
@@ -37,6 +40,7 @@ final class FakeIdentitySystem: IdentitySystem {
         self.reused = reused
         self.reusedBeforeFirstRead = reusedBeforeFirstRead
         self.deactivatedAfterFirstRead = deactivatedAfterFirstRead
+        self.activatedAfterFirstRead = activatedAfterFirstRead
         self.reusedAfterReads = reusedAfterReads
     }
 
@@ -51,6 +55,7 @@ final class FakeIdentitySystem: IdentitySystem {
             return reads[pid, default: 0]
         }
         if deactivatedAfterFirstRead.contains(pid), earlierReads > 0 { return .inactive }
+        if activatedAfterFirstRead.contains(pid), earlierReads == 0 { return .inactive }
         return activation[pid] ?? .inactive
     }
     func onScreenWindows() -> [IdentityWindowEntry]? { windows }

@@ -98,9 +98,7 @@ public struct IdentityProbe: Sendable {
         guard activeWhenPinned, system.activation(of: pid) == .active else {
             return .unidentified(.frontmostUnconfirmed)
         }
-        guard system.processStartTime(of: pid) == started else {
-            return MeasuredApp(pid: pid, signature: .processGone, name: nil)
-        }
+        guard system.processStartTime(of: pid) == started else { return Self.gone(pid, name: nil) }
         return app
     }
 
@@ -168,15 +166,21 @@ public struct IdentityProbe: Sendable {
     }
 
     /// `before` is a ``IdentitySystem/wallClock()`` reading taken before `pid` was obtained; a process
-    /// that started after it reused the pid. A clock stepped back fails closed the same way.
+    /// that started after it reused the pid. A clock stepped back before `before` was read fails closed
+    /// the same way; one stepped back after it can hide a pid reused before the first start-time read.
     private func measure(
         pid: pid_t, started: ProcessStartTime?, before: ProcessStartTime, fallbackName: String?
     ) -> MeasuredApp {
-        let gone = MeasuredApp(pid: pid, signature: .processGone, name: fallbackName)
+        let gone = Self.gone(pid, name: fallbackName)
         guard let started, started <= before else { return gone }
         let signature = system.codeSignature(of: pid)
         let name = system.localizedName(of: pid)
         guard system.processStartTime(of: pid) == started else { return gone }
         return MeasuredApp(pid: pid, signature: signature, name: name ?? fallbackName)
+    }
+
+    /// The pid no longer names the process it named when it was obtained.
+    private static func gone(_ pid: pid_t, name: String?) -> MeasuredApp {
+        MeasuredApp(pid: pid, signature: .processGone, name: name)
     }
 }

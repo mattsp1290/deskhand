@@ -79,7 +79,7 @@ struct OpenSSLSessionClient: Sendable {
 
     /// Connects to loopback `port`, offers the session saved at `session` if given, sends `request`
     /// and reads until the server closes. A new ticket is saved to a fresh file. `s_client` is killed
-    /// after 10 seconds.
+    /// after 10 seconds, which throws: a server that never closed must not pass as one that refused.
     func exchange(port: Int, request: [UInt8], offering session: URL? = nil) async throws -> Exchange {
         try await withCheckedThrowingContinuation { continuation in
             Thread {
@@ -110,6 +110,11 @@ struct OpenSSLSessionClient: Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = output
+        #if canImport(Darwin)
+            // An `s_client` that already exited must fail the write, not SIGPIPE the test runner. On Linux
+            // NIOPosix ignores SIGPIPE for the whole process.
+            _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        #endif
         try process.run()
         let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: watchdog)
@@ -124,6 +129,9 @@ struct OpenSSLSessionClient: Sendable {
         }
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
+        if process.terminationReason == .uncaughtSignal {
+            throw Failure(description: "s_client was killed after 10 seconds:\n\(text)")
+        }
 
         let ticket = (try? Data(contentsOf: saved)).map { !$0.isEmpty } == true
         return Exchange(

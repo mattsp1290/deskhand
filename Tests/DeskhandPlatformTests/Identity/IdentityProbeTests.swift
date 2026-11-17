@@ -262,6 +262,14 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
     }
 
+    /// The app became active only while its code was being read, so it was not frontmost when pinned.
+    @Test func frontmostAppActivatedWhileMeasuredIsUncertain() {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
+            activatedAfterFirstRead: [editorPID])
+        #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
+    }
+
     /// The pid is reused after the measurement's own start-time check, before the second activation
     /// answer could be tied to it.
     @Test func frontmostPidReusedAfterTheMeasurementIsGone() {

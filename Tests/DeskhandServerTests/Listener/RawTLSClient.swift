@@ -8,8 +8,18 @@ import Synchronization
 /// the server closes, so a test can put bytes on the wire that an HTTP client never would.
 struct RawTLSClient: Sendable {
     struct Exchange: Sendable {
+        /// How the connection ended. Only ``End/peerClosed`` shows what the server did: the other two
+        /// also give no bytes when nothing reached the server or it never closed.
+        enum End: Sendable {
+            case peerClosed
+            case handshakeFailed
+            /// The client gave up after the idle or total deadline.
+            case deadline
+        }
+
         let bytes: [UInt8]
         let status: Int?
+        let end: End
     }
 
     private struct Closed: Error {}
@@ -32,30 +42,44 @@ struct RawTLSClient: Sendable {
 
     /// Sends `request` after the handshake, in flushed writes of `fragmentSize` bytes when given, and
     /// collects what the server sends until it closes. A failed handshake gives no bytes. The
-    /// connection is abandoned after 10 seconds without a completed write or a read, or after 60 in all.
+    /// connection is abandoned after 10 seconds without a completed write or a read, or after 60 in all;
+    /// ``Exchange/end`` tells these apart from the server closing.
     func exchange(to address: SocketAddress, request: [UInt8], fragmentSize: Int? = nil) async throws -> Exchange {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let handshake = loop.makePromise(of: Void.self)
         let closed = loop.makePromise(of: [UInt8].self)
         let lastProgress = Progress()
         let context = self.context
-        let channel = try await ClientBootstrap(group: loop)
-            .channelInitializer { channel in
-                channel.eventLoop.makeCompletedFuture {
-                    let pipeline = channel.pipeline.syncOperations
-                    try pipeline.addHandler(NIOSSLClientHandler(context: context, serverHostname: TestPKI.serverName))
-                    try pipeline.addHandler(Collector(handshake: handshake, closed: closed, progress: lastProgress))
+        let channel: any Channel
+        do {
+            channel = try await ClientBootstrap(group: loop)
+                .channelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        let pipeline = channel.pipeline.syncOperations
+                        try pipeline.addHandler(
+                            NIOSSLClientHandler(context: context, serverHostname: TestPKI.serverName))
+                        try pipeline.addHandler(Collector(handshake: handshake, closed: closed, progress: lastProgress))
+                    }
                 }
-            }
-            .connect(to: address).get()
+                .connect(to: address).get()
+        } catch {
+            // A failed connect never fires channelInactive; a promise left unfulfilled aborts the test run.
+            handshake.fail(error)
+            closed.fail(error)
+            throw error
+        }
         let giveUp = NIODeadline.now() + .seconds(60)
         let watchdog = loop.scheduleRepeatedTask(initialDelay: .milliseconds(250), delay: .milliseconds(250)) { _ in
             let now = NIODeadline.now()
-            if now > giveUp || now - lastProgress.last > .seconds(10) { channel.close(promise: nil) }
+            if now > giveUp || now - lastProgress.last > .seconds(10) {
+                lastProgress.expire()
+                channel.close(promise: nil)
+            }
         }
         defer { watchdog.cancel() }
 
-        if (try? await handshake.futureResult.get()) != nil {
+        let shookHands = (try? await handshake.futureResult.get()) != nil
+        if shookHands {
             let width = fragmentSize ?? max(1, request.count)
             for offset in stride(from: 0, to: request.count, by: width) {
                 let fragment = ByteBuffer(bytes: request[offset..<min(offset + width, request.count)])
@@ -64,7 +88,8 @@ struct RawTLSClient: Sendable {
             }
         }
         let bytes = try await closed.futureResult.get()
-        return Exchange(bytes: bytes, status: Self.status(of: bytes))
+        let end: Exchange.End = !shookHands ? .handshakeFailed : lastProgress.expired ? .deadline : .peerClosed
+        return Exchange(bytes: bytes, status: Self.status(of: bytes), end: end)
     }
 
     private static func status(of response: [UInt8]) -> Int? {
@@ -75,10 +100,13 @@ struct RawTLSClient: Sendable {
 
     private final class Progress: Sendable {
         private let instant = Mutex(NIODeadline.now())
+        private let gaveUp = Mutex(false)
 
         var last: NIODeadline { instant.withLock { $0 } }
+        var expired: Bool { gaveUp.withLock { $0 } }
 
         func touch() { instant.withLock { $0 = .now() } }
+        func expire() { gaveUp.withLock { $0 = true } }
     }
 
     private final class Collector: ChannelInboundHandler {
