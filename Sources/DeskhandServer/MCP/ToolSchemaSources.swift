@@ -304,7 +304,11 @@ enum ToolSchemaSources {
                 "window_title",
                 "global_point",
                 "measured_at"
-              ]
+              ],
+              "not": {
+                "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
+                "required": ["holder_id"]
+              }
             },
             "operation_status": {
               "description": "Lifecycle state of an operation record. accepted and executing are transient; the rest are terminal.",
@@ -330,7 +334,11 @@ enum ToolSchemaSources {
                   "minimum": 0
                 }
               },
-              "required": ["status", "events_posted"]
+              "required": ["status", "events_posted"],
+              "not": {
+                "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
+                "required": ["holder_id"]
+              }
             },
             "stale_frame_reason": {
               "type": "string",
@@ -418,8 +426,8 @@ enum ToolSchemaSources {
                 "completed_at"
               ],
               "not": {
-                "$comment": "A success has no code, and gains no current_state on a replay (docs/contract.md section 12.5).",
-                "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }]
+                "$comment": "A success has no code, gains no current_state on a replay (docs/contract.md section 12.5), and carries no holder_id (section 5.4).",
+                "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }, { "required": ["holder_id"] }]
               }
             },
             "tool_error": {
@@ -797,7 +805,10 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["display_config_generation", "displays"],
-              "not": { "required": ["code"] }
+              "not": {
+                "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
+                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+              }
             },
             "display": {
               "type": "object",
@@ -1531,7 +1542,10 @@ enum ToolSchemaSources {
                 "pointer_position",
                 "frontmost_app"
               ],
-              "not": { "required": ["code"] },
+              "not": {
+                "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
+                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+              },
               "if": {
                 "properties": { "format": { "const": "jpeg" } },
                 "required": ["format"]

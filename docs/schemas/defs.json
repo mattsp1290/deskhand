@@ -286,7 +286,11 @@
         "window_title",
         "global_point",
         "measured_at"
-      ]
+      ],
+      "not": {
+        "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
+        "required": ["holder_id"]
+      }
     },
     "operation_status": {
       "description": "Lifecycle state of an operation record. accepted and executing are transient; the rest are terminal.",
@@ -312,7 +316,11 @@
           "minimum": 0
         }
       },
-      "required": ["status", "events_posted"]
+      "required": ["status", "events_posted"],
+      "not": {
+        "$comment": "No result carries a holder_id (docs/contract.md section 5.4).",
+        "required": ["holder_id"]
+      }
     },
     "stale_frame_reason": {
       "type": "string",
@@ -400,8 +408,8 @@
         "completed_at"
       ],
       "not": {
-        "$comment": "A success has no code, and gains no current_state on a replay (docs/contract.md section 12.5).",
-        "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }]
+        "$comment": "A success has no code, gains no current_state on a replay (docs/contract.md section 12.5), and carries no holder_id (section 5.4).",
+        "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }, { "required": ["holder_id"] }]
       }
     },
     "tool_error": {

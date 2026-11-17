@@ -126,7 +126,10 @@
         "pointer_position",
         "frontmost_app"
       ],
-      "not": { "required": ["code"] },
+      "not": {
+        "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
+        "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+      },
       "if": {
         "properties": { "format": { "const": "jpeg" } },
         "required": ["format"]

@@ -17,9 +17,10 @@ final class ConnectionSession {
 /// dropped and the connection closes after the running call's response.
 ///
 /// Every way the connection can end leads through `enterClosing()`, which cancels a running call:
-/// a clean close, a reset, a hang-up without TLS close_notify, the caller closing its sending side,
-/// a parse error and each timer. Once the connection is going away nobody can receive the
-/// response, so the call must not go on.
+/// a clean close, a reset, a hang-up without TLS close_notify, a parse error and each timer. Remote
+/// half-closure is not enabled, so a caller closing its sending side arrives as a full close in
+/// `channelInactive` and the `inputClosed` branch below does not run. Once the connection is going
+/// away nobody can receive the response, so the call must not go on.
 final class ConnectionHandler: ChannelInboundHandler {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart

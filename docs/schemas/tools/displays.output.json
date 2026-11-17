@@ -46,7 +46,10 @@
         }
       },
       "required": ["display_config_generation", "displays"],
-      "not": { "required": ["code"] }
+      "not": {
+        "$comment": "A success has no code, and no result carries a holder_id (docs/contract.md section 5.4).",
+        "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
+      }
     },
     "display": {
       "type": "object",
