@@ -1,8 +1,9 @@
-"""Shared helpers for the acceptance tests: module loading and throwaway certificates."""
+"""Shared helpers for the acceptance tests: module loading, a JPEG header stub and throwaway certificates."""
 
 import importlib.util
 import pathlib
 import shutil
+import struct
 import subprocess
 
 ACCEPTANCE = pathlib.Path(__file__).resolve().parent.parent
@@ -17,6 +18,12 @@ def load(filename, name):
 
 client = load("deskhand_acceptance.py", "deskhand_acceptance")
 render = load("render-job.py", "render_job")
+
+
+def jpeg(width, height):
+    """SOI, an APP0 stub and a baseline SOF0 header: enough for image_size, not a decodable image."""
+    return (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00"
+            + b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 3) + b"\x00" * 8 + b"\xff\xd9")
 
 
 def make_pki(directory):

@@ -55,6 +55,10 @@ OPERATOR_CHECKS = ("pointer_move", "type_text")  # need a permitted app set up a
 DEFAULT_CHECKS = [c for c in ALL_CHECKS if c not in OPERATOR_CHECKS]
 
 
+def new_operation_id(run_id):
+    return f"acc-{run_id}-{secrets.token_hex(6)}"
+
+
 class CheckFailed(Exception):
     pass
 
@@ -102,9 +106,7 @@ class Config:
         self.token_file = env.get("DESKHAND_TOKEN_FILE", f"{base}/token/token")
         self.run_id = env.get("DESKHAND_RUN_ID") or secrets.token_hex(4)
         self.holder_id = env.get("DESKHAND_HOLDER_ID") or f"acceptance-{self.run_id}-{secrets.token_hex(4)}"
-        # operation_id is "acc-<run_id>-<12 hex>": 17 characters around run_id, so it can be up to 111
-        # (108 with the default holder_id).
-        if not HANDLE_RE.fullmatch(self.holder_id) or not HANDLE_RE.fullmatch(f"acc-{self.run_id}-{'0' * 12}"):
+        if not HANDLE_RE.fullmatch(self.holder_id) or not HANDLE_RE.fullmatch(new_operation_id(self.run_id)):
             raise ValueError("DESKHAND_RUN_ID or DESKHAND_HOLDER_ID is outside the contract 4.1/4.3 alphabet")
         apps = env.get("DESKHAND_PERMITTED_APPS", "com.apple.TextEdit").split(",")
         self.permitted_apps = list(dict.fromkeys(a.strip() for a in apps if a.strip()))
@@ -154,12 +156,17 @@ class Response:
         except (ValueError, KeyError, TypeError):
             return None
 
-    def tool_result(self):
-        """Return (structuredContent, isError, content) or raise CheckFailed (contract 3.3)."""
+    def result(self):
+        """Return the JSON-RPC result of a complete reply or raise CheckFailed (contract 3)."""
         expect(self.status == 200, f"HTTP {self.status}, rpc error {self.rpc_error_code()}")
         result = (self.json() or {}).get("result")
         expect(isinstance(result, dict), "no JSON-RPC result")
         expect(result.get("resultType") == "complete", "resultType is not complete")
+        return result
+
+    def tool_result(self):
+        """Return (structuredContent, isError, content) or raise CheckFailed (contract 3.3)."""
+        result = self.result()
         expect(isinstance(result.get("isError"), bool), "isError missing")
         content = result.get("content") or []
         expect(content and content[-1].get("type") == "text", "content does not end with a text block")
@@ -231,6 +238,7 @@ class Run:
         self.cfg, self.client, self.out, self.redact = cfg, client, out, redact
         self.results = []
         self.terminated = False
+        self.releasing = False  # set when lease cleanup starts; a SIGTERM is then only recorded
 
     def emit(self, record):
         self.out.write(self.redact(json.dumps(record, sort_keys=True)) + "\n")
@@ -256,26 +264,20 @@ class Run:
 
     # --- reads -------------------------------------------------------------------------------
     def discover(self, facts):
-        resp = self.client.rpc("server/discover")
-        expect(resp.status == 200, f"HTTP {resp.status}")
-        result = resp.json()["result"]
+        result = self.client.rpc("server/discover").result()
         info = result.get("_meta", {}).get("io.modelcontextprotocol/serverInfo", {})
         facts.update(supported_versions=result.get("supportedVersions"), server=info)
         expect(result.get("supportedVersions") == [PROTOCOL_VERSION], "supportedVersions")
-        expect(result.get("resultType") == "complete", "resultType")
         expect(result.get("capabilities", {}).get("tools", {}).get("listChanged") is False, "tools capability")
         expect(info.get("name") == "deskhand", "serverInfo.name")
         expect(result.get("ttlMs") == 300000 and result.get("cacheScope") == "private", "caching hints")
 
     def tools_list(self, facts):
-        resp = self.client.rpc("tools/list")
-        expect(resp.status == 200, f"HTTP {resp.status}")
-        result = resp.json()["result"]
+        result = self.client.rpc("tools/list").result()
         tools = result.get("tools", [])
         facts["tools"] = [t.get("name") for t in tools]
         expect(facts["tools"] == [t[0] for t in TOOLS], "tool names or order differ from section 3.2")
         expect("nextCursor" not in result, "nextCursor present")
-        expect(result.get("resultType") == "complete", "resultType")
         expect(result.get("ttlMs") == 300000 and result.get("cacheScope") == "private", "caching hints")
         for tool, (name, title, hints) in zip(tools, TOOLS):
             expect(tool.get("title") == title, f"{name}: title")
@@ -353,14 +355,13 @@ class Run:
         expect((view.get("lease") or {}).get("held_by_caller") is False, "status still shows the lease")
 
     # --- effects (section 6.4, 6.5, 6.7) ---------------------------------------------------
-    def effect(self, tool, action, frame_id, extra=None):
-        args = {"holder_id": self.cfg.holder_id, "frame_id": frame_id,
-                "operation_id": f"acc-{self.cfg.run_id}-{secrets.token_hex(6)}", "action": action}
-        args.update(extra or {})
-        sc, is_error, _ = self.client.call(tool, args)
-        return args, sc, is_error
+    def effect_args(self, frame_id, action):
+        return {"holder_id": self.cfg.holder_id, "frame_id": frame_id,
+                "operation_id": new_operation_id(self.cfg.run_id), "action": action}
 
-    def check_effect(self, args, sc, is_error, facts):
+    def effect(self, tool, action, frame_id, facts):
+        args = {**self.effect_args(frame_id, action), "permitted_apps": self.cfg.permitted_apps}
+        sc, is_error, _ = self.client.call(tool, args)
         measured = sc.get("measured") or {}
         facts.update(events_posted=sc.get("events_posted"), target_app=measured.get("target_app"),
                      frontmost_app=measured.get("frontmost_app"), global_point=measured.get("global_point"))
@@ -375,18 +376,14 @@ class Run:
         frame = self.screenshot({})
         size = frame["output_pixel_size"]
         target = frame.get("pointer_position") or {"x": size["width"] // 2, "y": size["height"] // 2}
-        args, sc, is_error = self.effect("pointer", {"type": "move", "x": target["x"], "y": target["y"]},
-                                         frame["frame_id"], {"permitted_apps": self.cfg.permitted_apps})
-        self.check_effect(args, sc, is_error, facts)
+        self.effect("pointer", {"type": "move", "x": target["x"], "y": target["y"]}, frame["frame_id"], facts)
         expect(facts["global_point"] is not None, "measured.global_point is null")
 
     def type_text(self, facts):
         before = self.screenshot({})
         nonce = f"deskhand-acceptance-{secrets.token_hex(6)}"
-        args, sc, is_error = self.effect("keyboard", {"type": "type", "text": nonce}, before["frame_id"],
-                                         {"permitted_apps": self.cfg.permitted_apps})
         facts["nonce"] = nonce
-        self.check_effect(args, sc, is_error, facts)
+        self.effect("keyboard", {"type": "type", "text": nonce}, before["frame_id"], facts)
         expect((facts["target_app"] or {}).get("bundle_id") in self.cfg.permitted_apps, "target_app")
         after = self.screenshot({})
         facts["screen_changed"] = after["sha256"] != before["sha256"]
@@ -449,10 +446,8 @@ class Run:
         expect(is_error and sc.get("code") == code, f"{refusal(sc)}, want {code}")
         return sc
 
-    def bogus_effect_args(self):
-        return {"holder_id": self.cfg.holder_id, "frame_id": "frm_" + secrets.token_urlsafe(16)[:22],
-                "operation_id": f"acc-{self.cfg.run_id}-{secrets.token_hex(6)}",
-                "action": {"type": "move", "x": 0, "y": 0}}
+    def bogus_effect_args(self):  # a well-formed frame_id deskhand never issued
+        return self.effect_args("frm_" + secrets.token_urlsafe(16)[:22], {"type": "move", "x": 0, "y": 0})
 
     def neg_no_lease(self, facts):
         # Order of refusals (9.5): lease (step 6) comes before the frame (step 9).
@@ -481,8 +476,7 @@ class Run:
             if held:
                 self.run_check("lease_renew", self.lease_renew)
         finally:
-            # A SIGTERM from here on must not skip the release; it is only recorded.
-            signal.signal(signal.SIGTERM, lambda signum, frame: setattr(self, "terminated", True))
+            self.releasing = True
             # Release even when acquire looked wrong (e.g. "renewed"): release is safe to repeat (5.1).
             if not (held and self.run_check("lease_release", self.lease_release)):
                 try:  # best effort; the TTL ends the lease anyway
@@ -527,24 +521,24 @@ def main(argv=None, env=None, out=None):
         return 2
     run = Run(cfg, client, out, redact)
     started = time.time()
-    terminated = False
 
     def on_sigterm(signum, frame):
-        raise Terminated()
+        run.terminated = True
+        if not run.releasing:
+            raise Terminated()
 
     previous = signal.signal(signal.SIGTERM, on_sigterm)
     try:
         run.execute(selected)
     except Terminated:  # the lease was released by the finally in execute
-        terminated = True
+        pass
     finally:
         signal.signal(signal.SIGTERM, previous)
     failed = [r["check"] for r in run.results if not r["ok"]]
-    terminated = terminated or run.terminated
-    ok = not failed and not terminated and bool(run.results)
+    ok = not failed and not run.terminated and bool(run.results)
     run.emit({"summary": {"mac": cfg.mac, "host": cfg.host, "port": cfg.port, "node": cfg.node,
                           "run_id": cfg.run_id, "holder_id": cfg.holder_id, "checks": len(run.results),
-                          "failed": failed, "terminated": terminated, "ok": ok,
+                          "failed": failed, "terminated": run.terminated, "ok": ok,
                           "client_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
                           "seconds": round(time.time() - started, 2)}})
     return 0 if ok else 1

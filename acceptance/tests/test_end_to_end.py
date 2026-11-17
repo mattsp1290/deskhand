@@ -19,8 +19,7 @@ import tempfile
 import threading
 import unittest
 
-from support import ACCEPTANCE, client as dh, make_pki
-from test_client import jpeg
+from support import ACCEPTANCE, client as dh, jpeg, make_pki
 
 TOKEN = "e2e-token-value-never-printed"
 
@@ -128,7 +127,7 @@ class FakeDeskhand(http.server.BaseHTTPRequestHandler):
             return {**err, "code": "lease_not_held"}, []
         if args["frame_id"] not in st["live"]:
             return {**err, "code": "stale_frame", "details": {"reason": "unknown"}}, []
-        if name in st.get("hang_tools", ()):
+        if name in st["hang_tools"]:
             st["hanging"].set()
             st["unhang"].wait(10)
         if name in st["fail_tools"]:
@@ -180,8 +179,12 @@ class EndToEndTests(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
+    def reset_state(self, fail_tools=(), hang_tools=()):
+        self.handler.state = {"holder": None, "frames": 0, "live": set(), "fail_tools": set(fail_tools),
+                              "hang_tools": set(hang_tools), "hanging": threading.Event(), "unhang": threading.Event()}
+
     def run_client(self, checks, fail_tools=()):
-        self.handler.state = {"holder": None, "frames": 0, "live": set(), "fail_tools": set(fail_tools)}
+        self.reset_state(fail_tools)
         out = io.StringIO()
         code = dh.main(["--checks", checks], env=self.env, out=out)
         self.assertNotIn(TOKEN, out.getvalue())
@@ -207,8 +210,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertIsNone(self.handler.state["holder"])
 
     def test_sigterm_releases_the_lease(self):
-        self.handler.state = {"holder": None, "frames": 0, "live": set(), "fail_tools": set(),
-                              "hang_tools": {"keyboard"}, "hanging": threading.Event(), "unhang": threading.Event()}
+        self.reset_state(hang_tools={"keyboard"})
         proc = subprocess.Popen([sys.executable, "-I", str(ACCEPTANCE / "deskhand_acceptance.py"),
                                  "--checks", "type_text"], env=self.env, stdout=subprocess.PIPE, text=True)
         try:

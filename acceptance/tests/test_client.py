@@ -1,19 +1,12 @@
 import io
 import json
 import os
-import struct
 import tempfile
 import unittest
 
-from support import client as dh
+from support import client as dh, jpeg
 
 TOKEN = "s3cret-token-value"
-
-
-def jpeg(width, height):
-    """SOI, an APP0 stub and a baseline SOF0 header: enough for image_size, not a decodable image."""
-    return (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00"
-            + b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 3) + b"\x00" * 8 + b"\xff\xd9")
 
 
 class BuildRequestTests(unittest.TestCase):
