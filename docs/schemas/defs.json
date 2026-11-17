@@ -399,7 +399,10 @@
         "measured",
         "completed_at"
       ],
-      "not": { "required": ["code"] }
+      "not": {
+        "$comment": "A success has no code, and gains no current_state on a replay (docs/contract.md section 12.5).",
+        "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }]
+      }
     },
     "tool_error": {
       "description": "structuredContent of every isError tool result.",
@@ -420,7 +423,7 @@
         },
         "operation_id": { "$ref": "#/$defs/operation_id" },
         "operation": {
-          "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists, and on operation_in_progress or operation_id_conflict for a call that is still being admitted (status accepted, events_posted 0). Absent means no input was ever posted for this operation_id.",
+          "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists, and on operation_in_progress or operation_id_conflict for a call that is still being admitted (status accepted, events_posted 0). Absent means no input has been posted for this operation_id so far; docs/contract.md section 12.5 says when that is final.",
           "$ref": "#/$defs/operation_view"
         },
         "replayed": {
@@ -454,10 +457,18 @@
             "denied_by": { "enum": ["policy", "permitted_apps"] },
             "shortcut": { "type": "string" },
             "expires_in_ms": { "type": "integer", "minimum": 0 }
+          },
+          "not": {
+            "$comment": "No result carries a holder_id, not even the other holder's beside lease_held_by_other.",
+            "required": ["holder_id"]
           }
         }
       },
       "required": ["code", "message", "state"],
+      "not": {
+        "$comment": "No result carries a holder_id.",
+        "required": ["holder_id"]
+      },
       "allOf": [
         {
           "if": {

@@ -636,8 +636,8 @@ The `lease` member of a `lease` result has the same shape and is never
 - No result carries a `holder_id`. deskhand never tells one caller the label
   of another. Crew shares one principal, and the label is the only thing
   that separates its internal callers. The schemas forbid a `holder_id`
-  member in the lease view, in the `status` result and in the `lease`
-  result.
+  member in the lease view, in the `status` result, in the `lease` result
+  and its `lease_result`, and in a tool error and its `details`.
 - `{held_by_caller: false}` does not say whether the lease is free. A holder
   finds that out by calling `lease` with `acquire`, which answers
   `lease_held_by_other` and `expires_in_ms` when it is not.
@@ -3031,6 +3031,7 @@ items 37, 46, 50 and 53 by the re-review.
 71. For every event the order is ledger write, checks, post. A ledger entry
     whose down event was never posted is cleared without a release.
 72. The schemas forbid a `holder_id` member in the lease view, the `status`
-    result and the `lease` result.
+    result, the `lease` result and its `lease_result`, and a tool error and
+    its `details`. They forbid `current_state` on a success.
 73. Whether `pointer` can reach the menu bar depends on which process owns
     it, which the spike records.

@@ -67,6 +67,10 @@
         }
       },
       "required": ["op", "outcome"],
+      "not": {
+        "$comment": "No result carries a holder_id, not even the other holder's beside lease_held_by_other.",
+        "required": ["holder_id"]
+      },
       "allOf": [
         {
           "if": {
