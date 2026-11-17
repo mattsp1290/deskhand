@@ -2735,9 +2735,10 @@ no approval note, and they are listed so that nobody finds them by surprise.
    uncertain and never retried". `status` with `operation` lets Crew resolve
    the uncertainty without sending the call again
    ([section 12.5](#125-repeats-and-stored-results)). Crew closes the
-   connection of the lost call before it asks. Until that close has reached
-   the Mac, a `null` answer is "no record now" and the outcome stays
-   uncertain.
+   connection of the lost call before it asks. Until deskhand has observed
+   that close, a `null` answer is "no record now" and the outcome stays
+   uncertain. Crew has no signal for that moment
+   ([section 12.5](#125-repeats-and-stored-results)).
 
 ## 18. Verified against the specification on 2026-11-14
 
