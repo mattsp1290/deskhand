@@ -93,7 +93,7 @@ public struct PollingFileChangeSource: FileChangeSource {
         scheduler: any WatchdogScheduler = ContinuousClockScheduler()
     ) {
         self.init(
-            paths: [AllowanceReader.split(reader.path).directory, reader.path], interval: interval,
+            paths: [splitPath(reader.path).directory, reader.path], interval: interval,
             scheduler: scheduler)
     }
 

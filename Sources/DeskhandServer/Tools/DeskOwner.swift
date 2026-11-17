@@ -58,7 +58,7 @@ public final class DeskOwner: StateSource, FrameSource {
     public struct Reduction: Sendable {
         public let report: StateReport
         /// In order (``TransitionEffect``). ``TransitionEffect/invalidateFrames`` and
-        /// ``TransitionEffect/dropLease(_:)`` are already applied here.
+        /// ``TransitionEffect/dropLease(_:at:)`` are already applied here.
         public let effects: [TransitionEffect]
         /// Every live lease this reduction ended, by running out or by a state that drops it.
         public let leaseEnds: [LeaseEnd]
@@ -110,16 +110,16 @@ public final class DeskOwner: StateSource, FrameSource {
                 now: reading)
             world.report = report
             var ends: [LeaseEnd] = []
-            if let end = world.lease.expire(now: reading) { ends.append(end) }
             for effect in effects {
                 switch effect {
                 case .cancelInFlight(let state): world.invalidatedBy = state
                 case .invalidateFrames: world.frames.invalidateAll()
-                case .dropLease(let state):
-                    if let end = world.lease.drop(because: state, now: reading) { ends.append(end) }
+                case .dropLease(let state, let lapse):
+                    if let end = world.lease.drop(because: state, now: lapse) { ends.append(end) }
                 case .releaseHeldInput: break
                 }
             }
+            if let end = world.lease.expire(now: reading) { ends.append(end) }
             return Reduction(report: report, effects: effects, leaseEnds: ends, reading: reading)
         }
     }

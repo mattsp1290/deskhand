@@ -4,8 +4,8 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct ClockTransitionTests {
     private typealias F = StateFixture
 
-    private static func leavingOK(_ state: BlockingState) -> [TransitionEffect] {
-        [.cancelInFlight(state), .releaseHeldInput, .invalidateFrames, .dropLease(state.leaseDropping!)]
+    private static func leavingOK(_ state: BlockingState, at lapse: ClockReading) -> [TransitionEffect] {
+        [.cancelInFlight(state), .releaseHeldInput, .invalidateFrames, .dropLease(state.leaseDropping!, at: lapse)]
     }
 
     private static func signals(allowanceUntil offsetMs: Int64) -> StateSignals {
@@ -26,7 +26,7 @@ import Testing
         #expect(armed.armedUntil(at: seen) == nil)
 
         let renewed = F.reduce(armed, Self.signals(allowanceUntil: 120_000), at: seen, configuration: .standard)
-        #expect(renewed.effects == Self.leavingOK(.gated))
+        #expect(renewed.effects == Self.leavingOK(.gated, at: F.at(10_000)))
         #expect(renewed.report.arming == .disarmed)
         #expect(renewed.report.activeStates(at: seen).inPrecedenceOrder == [.disarmed])
         #expect(renewed.report.armedUntil(at: seen) == nil)
@@ -39,7 +39,7 @@ import Testing
         #expect(armed.activeStates(at: seen).inPrecedenceOrder == [.gated])
 
         let renewed = F.reduce(armed, Self.signals(allowanceUntil: 120_000), at: seen, configuration: configuration)
-        #expect(renewed.effects == Self.leavingOK(.gated))
+        #expect(renewed.effects == Self.leavingOK(.gated, at: F.at(10_000)))
         #expect(renewed.report.state(at: seen) == .ok)
         #expect(renewed.report.arming == .armed(until: F.armedUntil))
     }
@@ -50,7 +50,7 @@ import Testing
         #expect(armed.activeStates(at: seen).inPrecedenceOrder == [.disarmed])
 
         let rearmed = F.reduce(armed, F.signals(), .arm(for: F.armingPeriod), at: seen)
-        #expect(rearmed.effects == Self.leavingOK(.disarmed))
+        #expect(rearmed.effects == Self.leavingOK(.disarmed, at: F.at(10_000)))
         #expect(rearmed.report.state(at: seen) == .ok)
     }
 
@@ -58,7 +58,7 @@ import Testing
         let armed = F.report(arming: .armed(until: F.armedUntil), signals: F.signals())
         let atExpiry = F.at(3_600_000)
         let rearmed = F.reduce(armed, F.signals(), .arm(for: F.armingPeriod), at: atExpiry)
-        #expect(rearmed.effects == Self.leavingOK(.disarmed))
+        #expect(rearmed.effects == Self.leavingOK(.disarmed, at: atExpiry))
         #expect(rearmed.report.arming == .armed(until: F.at(7_200_000).monotonic))
     }
 
@@ -68,14 +68,14 @@ import Testing
             .report
         let late = F.at(9000)
         let first = F.reduce(armingFirst, Self.signals(allowanceUntil: 60_000), .arm(for: .seconds(60)), at: late)
-        #expect(first.effects == Self.leavingOK(.disarmed) + [.dropLease(.gated)])
+        #expect(first.effects == Self.leavingOK(.disarmed, at: F.at(5000)) + [.dropLease(.gated, at: F.at(8000))])
         #expect(first.report.state(at: late) == .ok)
 
         let allowanceFirst = F.reduce(
             .startup, Self.signals(allowanceUntil: 5000), .arm(for: .seconds(8)), configuration: standard
         ).report
         let second = F.reduce(allowanceFirst, Self.signals(allowanceUntil: 60_000), at: late, configuration: standard)
-        #expect(second.effects == Self.leavingOK(.gated))
+        #expect(second.effects == Self.leavingOK(.gated, at: F.at(5000)))
         #expect(second.report.activeStates(at: late).inPrecedenceOrder == [.disarmed])
 
         let independent = StateConfiguration(gatedEndsArming: false)
@@ -83,7 +83,7 @@ import Testing
             .startup, Self.signals(allowanceUntil: 5000), .arm(for: .seconds(8)), configuration: independent
         ).report
         let third = F.reduce(bothLapse, Self.signals(allowanceUntil: 60_000), at: late, configuration: independent)
-        #expect(third.effects == Self.leavingOK(.gated) + [.dropLease(.disarmed)])
+        #expect(third.effects == Self.leavingOK(.gated, at: F.at(5000)) + [.dropLease(.disarmed, at: F.at(8000))])
         #expect(third.report.activeStates(at: late).inPrecedenceOrder == [.disarmed])
     }
 
@@ -91,14 +91,69 @@ import Testing
         let report = F.reduce(.startup, Self.signals(allowanceUntil: 5000), .arm(for: .seconds(5))).report
         #expect(report.validUntil(at: F.t0) == F.at(5000).monotonic)
         let later = F.reduce(report, Self.signals(allowanceUntil: 60_000), at: F.at(7000))
-        #expect(later.effects == Self.leavingOK(.gated))
+        #expect(later.effects == Self.leavingOK(.gated, at: F.at(5000)))
     }
 
     @Test func anAllowanceExpiringJustAfterArmingIsStillValidWhenArmingEnds() {
         let report = F.reduce(.startup, Self.signals(allowanceUntil: 5000), .arm(for: .microseconds(4_999_600)))
             .report
         let later = F.reduce(report, Self.signals(allowanceUntil: 60_000), at: F.at(7000))
-        #expect(later.effects == Self.leavingOK(.disarmed) + [.dropLease(.gated)])
+        let armingEnds = ClockReading(
+            wall: F.at(4999).wall, monotonic: F.t0.monotonic.advanced(by: .microseconds(4_999_600)))
+        #expect(later.effects == Self.leavingOK(.disarmed, at: armingEnds) + [.dropLease(.gated, at: F.at(5000))])
+    }
+
+    @Test func aWallClockSetBackDoesNotUndoALapseReadersSaw() {
+        let armed = Self.armedUnderShortAllowance(F.gateIndependent)
+        #expect(armed.activeStates(at: F.at(10_500)).inPrecedenceOrder == [.gated])
+
+        let steppedBack = ClockReading(wall: F.at(9000).wall, monotonic: F.at(11_000).monotonic)
+        #expect(armed.activeStates(at: steppedBack).inPrecedenceOrder == [.gated])
+
+        let same = F.reduce(armed, Self.signals(allowanceUntil: 10_000), at: steppedBack)
+        #expect(same.effects == Self.leavingOK(.gated, at: F.at(10_000)))
+        #expect(same.report.activeStates(at: steppedBack).inPrecedenceOrder == [.gated])
+        let stillBehind = ClockReading(wall: F.at(9500).wall, monotonic: F.at(11_500).monotonic)
+        let again = F.reduce(same.report, Self.signals(allowanceUntil: 10_000), at: stillBehind)
+        #expect(again.effects.isEmpty)
+        #expect(again.report.activeStates(at: stillBehind).inPrecedenceOrder == [.gated])
+
+        let renewed = F.reduce(armed, Self.signals(allowanceUntil: 120_000), at: steppedBack)
+        #expect(renewed.effects == Self.leavingOK(.gated, at: F.at(10_000)))
+        #expect(renewed.report.state(at: steppedBack) == .ok)
+    }
+
+    @Test func aWallClockSetBackBeforeTheLapseDoesNotExtendTheAllowance() {
+        let armed = Self.armedUnderShortAllowance(F.gateIndependent)
+        let steppedBack = ClockReading(wall: F.at(3000).wall, monotonic: F.at(5000).monotonic)
+        let reduced = F.reduce(armed, Self.signals(allowanceUntil: 10_000), at: steppedBack).report
+        #expect(reduced.state(at: steppedBack) == .ok)
+        let atLapse = ClockReading(wall: F.at(8000).wall, monotonic: F.at(10_000).monotonic)
+        #expect(reduced.validUntil(at: steppedBack) == F.at(10_000).monotonic)
+        #expect(reduced.activeStates(at: atLapse).inPrecedenceOrder == [.gated])
+    }
+
+    @Test func aLeaseThatOutlivedALapseSettledLateIsDropped() throws {
+        let principal = Principal(certificateSubject: "CN=c")
+        let holder = HolderID("h")!
+        let armed = Self.armedUnderShortAllowance(F.gateIndependent)
+        var leases = LeaseManager()
+        _ = leases.apply(
+            LeaseArguments(holderID: holder, command: .acquire(ttlMs: 12_000)), principal: principal, state: .ok,
+            now: F.t0)
+        let admitted = try leases.check(principal: principal, holderID: holder, now: F.t0)
+
+        let late = F.at(13_000)
+        let reduction = F.reduce(armed, Self.signals(allowanceUntil: 120_000), at: late)
+        var ends: [LeaseEnd] = []
+        for case .dropLease(let state, let lapse) in reduction.effects {
+            if let end = leases.drop(because: state, now: lapse) { ends.append(end) }
+        }
+        if let end = leases.expire(now: late) { ends.append(end) }
+
+        #expect(ends.map(\.cause) == [.dropped(.gated)])
+        #expect(leases.endCause(of: admitted, now: late) == .dropped(.gated))
+        #expect(throws: LeaseDenial.notHeld) { try leases.check(principal: principal, holderID: holder, now: late) }
     }
 
     @Test func aRenewalMovesTheEffectDeadline() throws {

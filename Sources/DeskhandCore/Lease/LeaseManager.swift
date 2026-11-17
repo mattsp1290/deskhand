@@ -113,9 +113,10 @@ public struct LeaseManager: Hashable, Sendable {
         return .released
     }
 
-    /// Drops the lease because `gated`, `paused` or `disarmed` began (contract 10.4). A lease that
-    /// had already run out by `now` is not dropped: it stays expired, so its holder still gets
-    /// `lease_expired`, and that expiry is what is returned.
+    /// Drops the lease because `gated`, `paused` or `disarmed` began (contract 10.4) at `now`: for a
+    /// ``TransitionEffect/dropLease(_:at:)``, its instant, even when that is before the latest
+    /// reading. A lease that had already run out by `now` is not dropped: it stays expired, so its
+    /// holder still gets `lease_expired`, and that expiry is what is returned.
     public mutating func drop(because state: LeaseDroppingState, now: ClockReading) -> LeaseEnd? {
         if let expiry = expire(now: now) { return expiry }
         guard case .held(let held) = lease else { return nil }

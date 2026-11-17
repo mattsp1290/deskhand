@@ -31,19 +31,21 @@ import Testing
         Row("permission revoked", [], [.permissionMissing], leavingOK(.permissionMissing)),
         Row("capture goes blank", [], [.permissionStale], leavingOK(.permissionStale)),
         Row("secure input on", [], [.secureInput], leavingOK(.secureInput)),
-        Row("allowance withdrawn", [], [.gated], leavingOK(.gated) + [.dropLease(.gated)]),
-        Row("arming runs out", [], [.disarmed], leavingOK(.disarmed) + [.dropLease(.disarmed)]),
-        Row("kill switch", [], [.paused, .disarmed], leavingOK(.paused) + [.dropLease(.paused)]),
+        Row("allowance withdrawn", [], [.gated], leavingOK(.gated) + [.dropLease(.gated, at: F.t0)]),
+        Row("arming runs out", [], [.disarmed], leavingOK(.disarmed) + [.dropLease(.disarmed, at: F.t0)]),
+        Row("kill switch", [], [.paused, .disarmed], leavingOK(.paused) + [.dropLease(.paused, at: F.t0)]),
         Row("two states at once name the higher", [], [.secureInput, .locked], leavingOK(.locked)),
-        Row("gate and lock at once", [], [.locked, .gated], leavingOK(.gated) + [.dropLease(.gated)]),
+        Row("gate and lock at once", [], [.locked, .gated], leavingOK(.gated) + [.dropLease(.gated, at: F.t0)]),
         Row("unlock restores nothing", [.locked], [], []),
         Row("allowance returns restores nothing", [.gated], [], []),
         Row("re-armed after kill switch", [.paused, .disarmed], [], []),
-        Row("locked then gated", [.locked], [.locked, .gated], [.dropLease(.gated)]),
-        Row("lock gives way to gate", [.locked], [.gated], [.dropLease(.gated)]),
-        Row("arming runs out while gated", [.gated], [.gated, .disarmed], [.dropLease(.disarmed)]),
-        Row("kill switch while disarmed", [.disarmed], [.paused, .disarmed], [.dropLease(.paused)]),
-        Row("gate withdrawn while paused", [.paused, .disarmed], [.gated, .paused, .disarmed], [.dropLease(.gated)]),
+        Row("locked then gated", [.locked], [.locked, .gated], [.dropLease(.gated, at: F.t0)]),
+        Row("lock gives way to gate", [.locked], [.gated], [.dropLease(.gated, at: F.t0)]),
+        Row("arming runs out while gated", [.gated], [.gated, .disarmed], [.dropLease(.disarmed, at: F.t0)]),
+        Row("kill switch while disarmed", [.disarmed], [.paused, .disarmed], [.dropLease(.paused, at: F.t0)]),
+        Row(
+            "gate withdrawn while paused", [.paused, .disarmed], [.gated, .paused, .disarmed],
+            [.dropLease(.gated, at: F.t0)]),
         Row("gate returns while disarmed", [.gated, .disarmed], [.disarmed], []),
         Row("lock while disarmed", [.disarmed], [.disarmed, .locked], []),
         Row("lock gives way to display sleep", [.locked], [.displayAsleep], []),
@@ -84,7 +86,7 @@ import Testing
                 if let dropping = contractPrecedence.first(where: {
                     leaseDroppingStates.contains($0) && to.states.contains($0) && !from.states.contains($0)
                 }) {
-                    expected.append(.dropLease(dropping.leaseDropping!))
+                    expected.append(.dropLease(dropping.leaseDropping!, at: F.t0))
                 }
                 if report.activeStates(at: F.t0).states != to.states || effects != expected {
                     mismatches += 1
