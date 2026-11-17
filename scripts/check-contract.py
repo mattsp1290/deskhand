@@ -510,8 +510,11 @@ class Checker:
             else:
                 if s.get("type") != "object":
                     self.fail(f"{rel}: output schema root type must be object")
-                # Section 5.4: no result carries a holder_id, at any depth.
-                if {"$ref": "../defs.json#/$defs/no_holder_id"} not in s.get("allOf", []):
+                # Section 5.4: no result carries a holder_id, at any depth. The rule's additionalProperties
+                # marks every member as evaluated, so a schema applying it cannot rely on
+                # unevaluatedProperties: false.
+                if not any(isinstance(sub, dict) and sub.get("$ref") == "../defs.json#/$defs/no_holder_id"
+                           for sub in s.get("allOf", [])):
                     self.fail(f"{rel}: output schema must apply $defs/no_holder_id in its root allOf")
 
     # Examples
