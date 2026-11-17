@@ -1127,9 +1127,13 @@ class Checker:
                         continue
                     if number(group) != bound:
                         self.fail(f"contract.md {prefix.strip()}: says {group} where {rel}#{ptr}/{kw} is {bound}")
-        for name, value in re.findall(rf"`([A-Z][A-Z_]+)` = ({NUM})", self.md):
-            if name in consts and number(value) != want(name, "value"):
-                self.fail(f"contract.md: `{name}` = {value}, section 16 gives {want(name, 'value')}")
+        # "`NAME` = 1" and "`NAME` is 1" anywhere, also when the line wraps after "=" (section 7) or
+        # the figure is a default ("`NAME` is 0 by default").
+        flat = re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", self.md)
+        for name, verb, value, by_default in re.findall(rf"`([A-Z][A-Z_]+)` (=|is) ({NUM})( by default)?", flat):
+            part = "default" if by_default else "value"
+            if name in consts and number(value) != want(name, part):
+                self.fail(f"contract.md: `{name}` {verb} {value}, section 16 gives {want(name, part)}")
 
         limits_schema = pointer_get(self.schemas.get(f"{TOOLS_DIR}/status.output.json", {}),
                                     "/$defs/limits/properties") if f"{TOOLS_DIR}/status.output.json" in self.schemas else {}
