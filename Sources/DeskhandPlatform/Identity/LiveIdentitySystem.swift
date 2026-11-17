@@ -12,6 +12,7 @@ import Security
 /// - Frontmost app: `NSWorkspace.frontmostApplication`. Neither CoreGraphics nor Accessibility reports
 ///   the active app without a grant (the frontmost window's owner is not always the active app), so
 ///   this one read uses AppKit, and is only as fresh as the main run loop.
+/// - Activation: the app's own `kAXFrontmostAttribute`. Needs the grant.
 /// - Focus owner: Accessibility's system-wide `kAXFocusedApplicationAttribute`. Needs the grant.
 /// - Signer: `SecCodeCopyGuestWithAttributes` by process, validated with `SecCodeCheckValidity` against
 ///   the code's own designated requirement, then against `anchor apple`, then against an Apple-issued
@@ -19,12 +20,19 @@ import Security
 ///   requirement, so only the last check ties the team to Apple's certificate authority.
 /// - Start time: `sysctl` `KERN_PROC_PID`, which answers for other users' processes where
 ///   `proc_pidinfo` is refused.
+/// - Wall clock: `gettimeofday`, the clock the kernel records `p_starttime` on.
 public struct LiveIdentitySystem: IdentitySystem {
     /// How long one Accessibility request to an app may block before it is abandoned.
     public var accessibilityTimeout: Float
 
     public init(accessibilityTimeout: Float = 0.2) {
         self.accessibilityTimeout = accessibilityTimeout
+    }
+
+    public func wallClock() -> ProcessStartTime {
+        var now = timeval()
+        gettimeofday(&now, nil)
+        return ProcessStartTime(seconds: Int64(now.tv_sec), microseconds: Int32(now.tv_usec))
     }
 
     public func onScreenWindows() -> [IdentityWindowEntry]? {
@@ -37,6 +45,21 @@ public struct LiveIdentitySystem: IdentitySystem {
 
     public func frontmostProcess() -> pid_t? {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
+
+    public func activation(of pid: pid_t) -> ActivationLookup {
+        guard AXIsProcessTrusted() else { return .accessibilityUntrusted }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, accessibilityTimeout)
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(app, kAXFrontmostAttribute as CFString, &value)
+        switch error {
+        case .success: break
+        case .apiDisabled: return .accessibilityUntrusted
+        default: return .failed(error.rawValue)
+        }
+        guard let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return .failed(AXError.failure.rawValue) }
+        return CFBooleanGetValue((value as! CFBoolean)) ? .active : .inactive
     }
 
     public func focusedApplication() -> FocusedApplicationLookup {
