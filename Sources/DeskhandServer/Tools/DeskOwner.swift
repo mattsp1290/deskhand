@@ -27,6 +27,7 @@ public final class DeskOwner: StateSource, FrameSource {
         /// and lose them with their effects. The next reduction returns them.
         mutating func settle(at reading: ClockReading) {
             let elapsed = report.elapsed(until: reading)
+            // Every clock transition adds `gated` or `disarmed`, so it always yields a `dropLease`.
             guard !elapsed.effects.isEmpty else { return }
             report = elapsed.report
             settledEffects += elapsed.effects
@@ -177,6 +178,8 @@ public final class DeskOwner: StateSource, FrameSource {
             let settledEnds = world.settledEnds.count
             world.settle(at: reading)
             var ended = Array(world.settledEnds[settledEnds...])
+            // This call hands them to the executor, so the next reduction must not again.
+            world.settledEnds.removeSubrange(settledEnds...)
             let state = world.report.state(at: reading)
             let application = world.lease.apply(arguments, principal: principal, state: state, now: reading)
             if let end = application.ended { ended.append(end) }

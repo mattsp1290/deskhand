@@ -109,6 +109,10 @@ private func at(_ offsetMs: Int64) -> ClockReading { ToolFixture.t0.advanced(byM
             LeaseArguments(holderID: ToolFixture.holder, command: .renew(ttlMs: 12_000)),
             principal: ToolFixture.principal)
         #expect(renewal.ended.map(\.cause) == [.dropped(.gated)])
+
+        let next = owner.reduce(signals: Self.signals(allowanceUntil: 120_000))
+        #expect(next.effects == Self.gated(at: at(10_000)))
+        #expect(renewal.ended.count + next.leaseEnds.count == 1)
     }
 
     @Test func theExecutorSeesALeaseThatOutlivedAnUnreducedLapseAsDropped() throws {
