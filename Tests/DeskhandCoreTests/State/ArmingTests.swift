@@ -82,7 +82,8 @@ import Testing
         #expect(report.state(at: F.t0) == .paused)
         #expect(report.activeStates(at: F.t0).inPrecedenceOrder == [.paused, .disarmed])
         #expect(report.armedUntil(at: F.t0) == nil)
-        #expect(effects == [.cancelInFlight(.paused), .releaseHeldInput, .invalidateFrames, .dropLease(.paused)])
+        #expect(
+            effects == [.cancelInFlight(.paused), .releaseHeldInput, .invalidateFrames, .dropLease(.paused, at: F.t0)])
     }
 
     @Test func gatedEndsArmingByDefault() {
@@ -90,7 +91,10 @@ import Testing
         let gated = F.reduce(armed, F.signals(holding: [.gated]), configuration: .standard)
         #expect(gated.report.activeStates(at: F.t0).inPrecedenceOrder == [.gated, .disarmed])
         #expect(gated.report.armedUntil(at: F.t0) == nil)
-        #expect(gated.effects == [.cancelInFlight(.gated), .releaseHeldInput, .invalidateFrames, .dropLease(.gated)])
+        #expect(
+            gated.effects == [
+                .cancelInFlight(.gated), .releaseHeldInput, .invalidateFrames, .dropLease(.gated, at: F.t0),
+            ])
 
         let back = F.reduce(gated.report, F.signals(), at: F.at(1), configuration: .standard)
         #expect(back.report.state(at: F.at(1)) == .disarmed)
@@ -117,7 +121,10 @@ import Testing
         let gated = F.reduce(armed, F.signals(holding: [.gated]))
         #expect(gated.report.state(at: F.t0) == .gated)
         #expect(gated.report.armedUntil(at: F.t0) == F.t0.wallTime(at: F.armedUntil))
-        #expect(gated.effects == [.cancelInFlight(.gated), .releaseHeldInput, .invalidateFrames, .dropLease(.gated)])
+        #expect(
+            gated.effects == [
+                .cancelInFlight(.gated), .releaseHeldInput, .invalidateFrames, .dropLease(.gated, at: F.t0),
+            ])
 
         let back = F.reduce(gated.report, F.signals(), at: F.at(1))
         #expect(back.report.state(at: F.at(1)) == .ok)
@@ -125,7 +132,7 @@ import Testing
 
         let ranOut = F.reduce(gated.report, F.signals(holding: [.gated]), at: F.at(3_600_000))
         #expect(ranOut.report.activeStates(at: F.at(3_600_000)).inPrecedenceOrder == [.gated, .disarmed])
-        #expect(ranOut.effects == [.dropLease(.disarmed)])
+        #expect(ranOut.effects == [.dropLease(.disarmed, at: F.at(3_600_000))])
     }
 
     @Test func onlyAPersonArms() {

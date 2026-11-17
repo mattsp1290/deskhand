@@ -140,7 +140,9 @@ final class FakeDesk: WatchdogStateOwner {
             }
             let step = StateReducer.reduce(previous: world.report, signals: world.signals, now: now)
             world.report = step.report
-            for case .dropLease(let state) in step.effects { _ = world.leases.drop(because: state, now: now) }
+            for case .dropLease(let state, let lapse) in step.effects {
+                _ = world.leases.drop(because: state, now: lapse)
+            }
             _ = world.leases.expire(now: now)
             world.reductions.append((now.monotonic, allowanceChanged))
         }
@@ -424,7 +426,9 @@ final class CacheDesk: WatchdogStateOwner {
             world.signals.allowance = world.cache.verdict(now: now.wall, at: now.monotonic)
             let step = StateReducer.reduce(previous: world.report, signals: world.signals, now: now)
             world.report = step.report
-            for case .dropLease(let state) in step.effects { _ = world.leases.drop(because: state, now: now) }
+            for case .dropLease(let state, let lapse) in step.effects {
+                _ = world.leases.drop(because: state, now: lapse)
+            }
             _ = world.leases.expire(now: now)
             world.reductions.append(clock.elapsedMs)
         }

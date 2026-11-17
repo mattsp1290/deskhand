@@ -28,9 +28,23 @@ import Testing
             #expect(
                 result
                     == .opened(
-                        directory: AllowanceFileStatus(kind: .directory, owner: UInt32(geteuid()), permissions: 0o755),
-                        file: AllowanceFileStatus(kind: .regular, owner: UInt32(geteuid()), permissions: 0o644),
+                        directory: FileStatus(kind: .directory, owner: UInt32(geteuid()), permissions: 0o755),
+                        file: FileStatus(kind: .regular, owner: UInt32(geteuid()), permissions: 0o644),
                         contents: Array(contents.utf8)))
+        }
+    }
+
+    @Test func readsOneByteBeyondTheLimitFromALargerFile() throws {
+        try Self.withDirectory { directory in
+            try Self.write(String(repeating: "x", count: 200), to: directory + "/allowance.json")
+            guard
+                case .opened(_, _, let contents) = probe.probe(
+                    directory: directory, name: "allowance.json", maxBytes: 64)
+            else {
+                Issue.record("expected the file to open")
+                return
+            }
+            #expect(contents.count == 65)
         }
     }
 
