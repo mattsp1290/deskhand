@@ -10,14 +10,17 @@ final class FakeIdentitySystem: IdentitySystem {
     let signatures: [pid_t: CodeSignatureLookup]
     let names: [pid_t: String]
     let focusedTitles: [pid_t: String]
+    let activation: [pid_t: ActivationLookup]
     let reused: Set<pid_t>
+    let reusedBeforeFirstRead: Set<pid_t>
     private let lookups = Mutex<[pid_t: Int]>([:])
     private let startTimeReads = Mutex<[pid_t: Int]>([:])
 
     init(
         windows: [IdentityWindowEntry]? = [], frontmost: pid_t? = nil,
         focus: FocusedApplicationLookup = .noFocus, signatures: [pid_t: CodeSignatureLookup] = [:],
-        names: [pid_t: String] = [:], focusedTitles: [pid_t: String] = [:], reused: Set<pid_t> = []
+        activation: [pid_t: ActivationLookup] = [:], names: [pid_t: String] = [:],
+        focusedTitles: [pid_t: String] = [:], reused: Set<pid_t> = [], reusedBeforeFirstRead: Set<pid_t> = []
     ) {
         self.windows = windows
         self.frontmost = frontmost
@@ -25,11 +28,17 @@ final class FakeIdentitySystem: IdentitySystem {
         self.signatures = signatures
         self.names = names
         self.focusedTitles = focusedTitles
+        self.activation = activation
         self.reused = reused
+        self.reusedBeforeFirstRead = reusedBeforeFirstRead
     }
+
+    static let now = ProcessStartTime(seconds: 1_000_000, microseconds: 0)
 
     func signatureLookups(of pid: pid_t) -> Int { lookups.withLock { $0[pid, default: 0] } }
 
+    func wallClock() -> ProcessStartTime { Self.now }
+    func activation(of pid: pid_t) -> ActivationLookup { activation[pid] ?? .inactive }
     func onScreenWindows() -> [IdentityWindowEntry]? { windows }
     func frontmostProcess() -> pid_t? { frontmost }
     func focusedApplication() -> FocusedApplicationLookup { focus }
@@ -44,6 +53,9 @@ final class FakeIdentitySystem: IdentitySystem {
 
     func processStartTime(of pid: pid_t) -> ProcessStartTime? {
         guard signatures[pid] != nil else { return nil }
+        if reusedBeforeFirstRead.contains(pid) {
+            return ProcessStartTime(seconds: Self.now.seconds + 1, microseconds: 0)
+        }
         let earlierReads = startTimeReads.withLock { reads in
             defer { reads[pid, default: 0] += 1 }
             return reads[pid, default: 0]

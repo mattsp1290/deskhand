@@ -208,20 +208,21 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
 @Suite struct FrontmostAndFocusTests {
     @Test func frontmostAppIsIdentified() {
         let system = FakeIdentitySystem(
-            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, names: [editorPID: "Editor"])
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active], names: [editorPID: "Editor"]
+        )
         let app = probe(system).frontmostApp()
         #expect(app.isCertain)
         #expect(app.pid == editorPID)
         #expect(app.appRef == AppRef(bundleID: "com.example.Editor", teamID: "ABCDE12345", name: "Editor"))
     }
 
-    /// AppKit's frontmost value can be stale, so it stands only when Accessibility's focused application,
-    /// read after the measurement, is the same process.
-    @Test(arguments: [
-        FocusedApplicationLookup.process(viewerPID), .noFocus, .accessibilityUntrusted, .failed(-25_204),
-    ])
-    func frontmostAppNotConfirmedByFocusIsUncertain(focus: FocusedApplicationLookup) {
-        let system = FakeIdentitySystem(frontmost: editorPID, focus: focus, signatures: signatures)
+    /// AppKit's frontmost value can be stale, so it stands only when the app itself reports through
+    /// Accessibility that it is active.
+    @Test(arguments: [ActivationLookup.inactive, .accessibilityUntrusted, .failed(-25_204)])
+    func frontmostAppNotConfirmedAsActiveIsUncertain(activation: ActivationLookup) {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, focus: .process(editorPID), signatures: signatures,
+            activation: [editorPID: activation])
         let app = probe(system).frontmostApp()
         #expect(app.uncertainty == .frontmostUnconfirmed)
         #expect(app.identity == .unknown)
@@ -230,12 +231,27 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
 
     @Test func frontmostOrFocusPidReusedWhileMeasuredIsGone() {
         let system = FakeIdentitySystem(
-            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, reused: [editorPID])
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active], reused: [editorPID])
         #expect(probe(system).frontmostApp().uncertainty == .processGone)
         let focused = FakeIdentitySystem(focus: .process(editorPID), signatures: signatures, reused: [editorPID])
         let owner = probe(focused).focusOwner()
         #expect(owner.uncertainty == .processGone)
         #expect(owner.identity == .unknown)
+    }
+
+    /// The pid is reused between being obtained and the first start-time read, so the start time already
+    /// names the new process; it started after the clock reading taken before the pid was obtained.
+    @Test func pidReusedBeforeItsStartTimeIsReadIsGone() {
+        let system = FakeIdentitySystem(
+            windows: desktop, frontmost: editorPID, focus: .process(editorPID), signatures: signatures,
+            activation: [editorPID: .active], reusedBeforeFirstRead: [editorPID])
+        let probe = probe(system)
+        #expect(probe.frontmostApp().uncertainty == .processGone)
+        #expect(probe.focusOwner().uncertainty == .processGone)
+        let hit = probe.windowOwner(at: GlobalPoint(x: -500, y: 300))
+        #expect(hit.owner.uncertainty == .processGone)
+        #expect(hit.owner.identity == .unknown)
+        #expect(system.signatureLookups(of: editorPID) == 0)
     }
 
     @Test func noFrontmostAppIsUncertain() {
@@ -263,22 +279,31 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(owner.identity == .unknown)
     }
 
-    /// A panel of another process can hold focus while the frontmost app stays the same. The focus
-    /// owner is still identified; the frontmost app is then unconfirmed, so the call fails closed.
-    @Test func focusOwnerIsIdentifiedSeparatelyFromFrontmost() {
-        let system = FakeIdentitySystem(frontmost: editorPID, focus: .process(viewerPID), signatures: signatures)
-        #expect(probe(system).focusOwner().identity.bundleID?.rawValue == "com.apple.Preview")
-        #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
+    /// A non-activating panel of another process can hold focus while the frontmost app stays the same
+    /// (contract 6.9). Each is identified on its own.
+    @Test(arguments: [FocusedApplicationLookup.process(viewerPID), .process(windowServerPID), .noFocus])
+    func focusPanelLeavesTheFrontmostAppConfirmed(focus: FocusedApplicationLookup) {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, focus: focus, signatures: signatures, activation: [editorPID: .active])
+        let frontmost = probe(system).frontmostApp()
+        #expect(frontmost.isCertain)
+        #expect(frontmost.identity.bundleID?.rawValue == "com.example.Editor")
+        if case .process(let pid) = focus {
+            #expect(probe(system).focusOwner().pid == pid)
+            #expect(probe(system).focusOwner().isCertain)
+        }
     }
 
     @Test func focusedWindowTitleIsReadAndCut() {
         let long = String(repeating: "a", count: 600)
         let system = FakeIdentitySystem(
-            frontmost: editorPID, focus: .process(editorPID), signatures: signatures, focusedTitles: [editorPID: long])
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
+            focusedTitles: [editorPID: long])
         let probe = probe(system)
         #expect(probe.focusedWindowTitle(of: probe.frontmostApp())?.unicodeScalars.count == 512)
         #expect(probe.focusedWindowTitle(of: .unidentified(.noFrontmostApp)) == nil)
-        let untitled = FakeIdentitySystem(frontmost: editorPID, focus: .process(editorPID), signatures: signatures)
+        let untitled = FakeIdentitySystem(
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active])
         #expect(IdentityProbe(system: untitled).focusedWindowTitle(of: probe.frontmostApp()) == nil)
     }
 }

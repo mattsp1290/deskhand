@@ -70,6 +70,8 @@ public enum WindowHitTest {
 ///
 /// A process is identified only if it is the same process from when its pid was obtained until its
 /// code and name have been read: a pid reused in between measures as ``IdentityUncertainty/processGone``.
+/// The start time pins the process, not its image: a process that `exec`s keeps its start time, and
+/// its code is read after the `exec`.
 public struct IdentityProbe: Sendable {
     /// The window server, the only owner whose pointer and drag-image windows are looked through.
     public static let windowServer = AppIdentity(bundleID: BundleID("com.apple.WindowServer"), signer: .apple)
@@ -80,24 +82,29 @@ public struct IdentityProbe: Sendable {
         self.system = system
     }
 
-    /// The frontmost app. AppKit's reading is confirmed against Accessibility's focused application
-    /// after the app is measured; when they differ (a stale reading, or a non-activating panel of
-    /// another app holding focus) or focus cannot be read, the frontmost app is uncertain.
+    /// The frontmost app. AppKit's reading is confirmed by asking that app through Accessibility whether
+    /// it is active; when it is not (a stale reading) or cannot be asked, the frontmost app is uncertain.
+    /// A non-activating panel of another process holding keyboard focus leaves it confirmed.
     public func frontmostApp() -> MeasuredApp {
+        let before = system.wallClock()
         guard let pid = system.frontmostProcess() else { return .unidentified(.noFrontmostApp) }
-        let app = measure(pid: pid, started: system.processStartTime(of: pid), fallbackName: nil)
+        let started = system.processStartTime(of: pid)
+        let activation = system.activation(of: pid)
+        let app = measure(pid: pid, started: started, before: before, fallbackName: nil)
         guard app.isCertain else { return app }
-        guard system.focusedApplication() == .process(pid) else { return .unidentified(.frontmostUnconfirmed) }
+        guard activation == .active else { return .unidentified(.frontmostUnconfirmed) }
         return app
     }
 
     /// The app owning keyboard focus. Needs Accessibility; without it the owner is uncertain.
     public func focusOwner() -> MeasuredApp {
+        let before = system.wallClock()
         switch system.focusedApplication() {
-        case .process(let pid): measure(pid: pid, started: system.processStartTime(of: pid), fallbackName: nil)
-        case .noFocus: .unidentified(.noFocusedApp)
-        case .accessibilityUntrusted: .unidentified(.accessibilityUntrusted)
-        case .failed(let error): .unidentified(.focusUnreadable(error))
+        case .process(let pid):
+            return measure(pid: pid, started: system.processStartTime(of: pid), before: before, fallbackName: nil)
+        case .noFocus: return .unidentified(.noFocusedApp)
+        case .accessibilityUntrusted: return .unidentified(.accessibilityUntrusted)
+        case .failed(let error): return .unidentified(.focusUnreadable(error))
         }
     }
 
@@ -116,18 +123,18 @@ public struct IdentityProbe: Sendable {
     /// identified once, so a sampled drag path costs one signature check per distinct owner.
     public func windowOwners(at points: [GlobalPoint]) -> [WindowOwnerHit] {
         guard !points.isEmpty else { return [] }
+        let before = system.wallClock()
         guard let windows = system.onScreenWindows() else {
             return points.map {
                 WindowOwnerHit(point: $0, owner: .unidentified(.windowListUnavailable), layer: nil, title: nil)
             }
         }
-        // Read with the list, so an owner whose pid is reused before it is measured measures as gone.
         var started: [pid_t: ProcessStartTime] = [:]
         for pid in Set(windows.compactMap(\.ownerPID)) { started[pid] = system.processStartTime(of: pid) }
         var owners: [pid_t: MeasuredApp] = [:]
         func owner(of pid: pid_t, fallbackName: String?) -> MeasuredApp {
             if let known = owners[pid] { return known }
-            let app = measure(pid: pid, started: started[pid], fallbackName: fallbackName)
+            let app = measure(pid: pid, started: started[pid], before: before, fallbackName: fallbackName)
             owners[pid] = app
             return app
         }
@@ -152,9 +159,13 @@ public struct IdentityProbe: Sendable {
         }
     }
 
-    private func measure(pid: pid_t, started: ProcessStartTime?, fallbackName: String?) -> MeasuredApp {
+    /// `before` is a ``IdentitySystem/wallClock()`` reading taken before `pid` was obtained; a process
+    /// that started after it reused the pid. A clock stepped back fails closed the same way.
+    private func measure(
+        pid: pid_t, started: ProcessStartTime?, before: ProcessStartTime, fallbackName: String?
+    ) -> MeasuredApp {
         let gone = MeasuredApp(pid: pid, signature: .processGone, name: fallbackName)
-        guard let started else { return gone }
+        guard let started, started <= before else { return gone }
         let signature = system.codeSignature(of: pid)
         let name = system.localizedName(of: pid)
         guard system.processStartTime(of: pid) == started else { return gone }
