@@ -34,13 +34,15 @@ enum OpenSSLTool {
         let output: String
         /// The timeout fired and terminated the process.
         let timedOut: Bool
+        /// The process ended on a signal, the timeout's or another (a crash).
+        let signaled: Bool
     }
 
     private final class Flag: Sendable {
         let value = Mutex(false)
     }
 
-    #if os(Linux)
+    #if !canImport(Darwin)
         /// A write to an openssl that already exited must fail, not SIGPIPE the test runner. Darwin
         /// sets `F_SETNOSIGPIPE` on the pipe instead.
         private static let ignoreSIGPIPE: Void = { _ = signal(SIGPIPE, SIG_IGN) }()
@@ -89,7 +91,10 @@ enum OpenSSLTool {
         try? stdin.fileHandleForWriting.close()
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
-        return Run(status: process.terminationStatus, output: text, timedOut: timedOut.value.withLock { $0 })
+        let signaled = process.terminationReason == .uncaughtSignal
+        return Run(
+            status: process.terminationStatus, output: text, timedOut: signaled && timedOut.value.withLock { $0 },
+            signaled: signaled)
     }
 
     /// Always passes `at:`: running the default executable would read ``resuming`` inside its own

@@ -47,6 +47,8 @@ struct OpenSSLSessionClient: Sendable {
 
         let run = try OpenSSLTool.run(arguments, input: request, timeout: 10)
         if run.timedOut { throw Failure(description: "s_client was killed after 10 seconds:\n\(run.output)") }
+        // A crash must not pass for a refused handshake.
+        if run.signaled { throw Failure(description: "s_client ended on signal \(run.status):\n\(run.output)") }
 
         let ticket = (try? Data(contentsOf: saved)).map { !$0.isEmpty } == true
         return Exchange(
