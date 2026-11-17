@@ -3,6 +3,57 @@ import NIOCore
 import NIOPosix
 import NIOSSL
 
+/// The `openssl` command line the listener tests run. TLS 1.3 session resumption needs OpenSSL 1.1.1
+/// or later: LibreSSL, macOS's `/usr/bin/openssl`, issues sessions but never resumes them.
+enum OpenSSLTool {
+    static let resumptionRequirement =
+        "needs OpenSSL 1.1.1 or later (not LibreSSL) on PATH or at /opt/homebrew/bin, /usr/local/bin or "
+        + "/opt/homebrew/opt/openssl@3/bin"
+
+    /// The first OpenSSL 1.1.1 or later found on PATH or in Homebrew's usual places, or `nil`.
+    static let resuming: URL? = {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let candidates =
+            path.split(separator: ":").map { "\($0)/openssl" } + [
+                "/opt/homebrew/bin/openssl", "/usr/local/bin/openssl", "/opt/homebrew/opt/openssl@3/bin/openssl",
+            ]
+        return candidates.lazy.map { URL(fileURLWithPath: $0) }.first(where: isResumingOpenSSL)
+    }()
+
+    /// The binary every test invocation uses: the resuming OpenSSL when there is one, else whatever
+    /// `openssl` PATH names, which can still generate certificates.
+    static var executable: (url: URL, prefix: [String]) {
+        resuming.map { ($0, []) } ?? (URL(fileURLWithPath: "/usr/bin/env"), ["openssl"])
+    }
+
+    /// On Linux (CI) the resumption tests always run, so a missing OpenSSL fails them rather than
+    /// hiding them.
+    static var resumptionTestsEnabled: Bool {
+        #if os(Linux)
+            true
+        #else
+            resuming != nil
+        #endif
+    }
+
+    private static func isResumingOpenSSL(_ url: URL) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: url.path) else { return false }
+        let process = Process()
+        process.executableURL = url
+        process.arguments = ["version"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        guard process.terminationStatus == 0, text.hasPrefix("OpenSSL ") else { return false }
+        let version = text.dropFirst("OpenSSL ".count).prefix { !$0.isWhitespace }
+        let numbers = version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+        return numbers.lexicographicallyPrecedes([1, 1, 1]) == false
+    }
+}
+
 /// Tries TLS 1.3 session resumption through `openssl s_client`, the way a caller's stack would.
 /// NIOSSL's client can neither keep the session a server issues nor offer one back, and BoringSSL
 /// itself is not a product swift-nio-ssl exports.
@@ -35,8 +86,9 @@ struct OpenSSLSessionClient: Sendable {
 
     private func blockingExchange(port: Int, request: [UInt8], offering session: URL?) throws -> Exchange {
         let saved = pki.directory.appendingPathComponent("session-\(UUID().uuidString).pem")
+        let tool = OpenSSLTool.executable
         var arguments = [
-            "openssl", "s_client", "-connect", "127.0.0.1:\(port)", "-servername", TestPKI.serverName,
+            "s_client", "-connect", "127.0.0.1:\(port)", "-servername", TestPKI.serverName,
             "-CAfile", pki.caPath, "-verify_return_error", "-tls1_3", "-ign_eof", "-sess_out", saved.path,
         ]
         if let client {
@@ -46,8 +98,8 @@ struct OpenSSLSessionClient: Sendable {
         if let session { arguments += ["-sess_in", session.path] }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
+        process.executableURL = tool.url
+        process.arguments = tool.prefix + arguments
         let input = Pipe()
         let output = Pipe()
         process.standardInput = input

@@ -2,8 +2,9 @@ import Foundation
 import NIOSSL
 
 /// A throwaway private CA, server and client certificates, generated once per test process with the
-/// `openssl` command line (present on macOS and in the swift:6.2-noble image). Nothing here is a real
-/// credential; every key lives in a fresh temporary directory.
+/// `openssl` command line (present on macOS and in the swift:6.2-noble image), the one
+/// ``OpenSSLTool/executable`` names. LibreSSL can generate it; the resumption tests need OpenSSL 1.1.1
+/// or later. Nothing here is a real credential; every key lives in a fresh temporary directory.
 struct TestPKI: Sendable {
     enum Client: CaseIterable, Sendable {
         case valid
@@ -125,8 +126,9 @@ struct TestPKI: Sendable {
     @discardableResult
     private static func openssl(_ arguments: [String], in directory: URL) throws -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["openssl"] + arguments
+        let tool = OpenSSLTool.executable
+        process.executableURL = tool.url
+        process.arguments = tool.prefix + arguments
         process.currentDirectoryURL = directory
         let output = Pipe()
         process.standardOutput = output

@@ -8,7 +8,11 @@ import Testing
 /// Contract 2.2 accepts a client certificate only while it is in date. A resumed TLS 1.3 session
 /// skips BoringSSL's certificate checks, so the listener must never resume one: a saved session is
 /// worth nothing, with the certificate expired, absent or valid.
-@Suite(.timeLimit(.minutes(1))) struct SessionResumptionTests {
+@Suite(
+    .timeLimit(.minutes(1)),
+    .enabled(if: OpenSSLTool.resumptionTestsEnabled, Comment(rawValue: OpenSSLTool.resumptionRequirement))
+)
+struct SessionResumptionTests {
     private static let request: [UInt8] = {
         let request = TestRequest.valid().setting("Connection", to: "close")
         var head = "POST \(request.uri) HTTP/1.1\r\n"
@@ -33,10 +37,10 @@ import Testing
         try await ResumingTestServer.withServer(pki: pki) { server in
             let client = Self.client(pki, .valid)
             let first = try await client.exchange(port: server.port, request: Self.request)
-            #expect(first.status == 200)
+            #expect(first.status == 200, Comment(rawValue: OpenSSLTool.resumptionRequirement))
             let session = try #require(first.issued, "s_client saved no session")
             let second = try await client.exchange(port: server.port, request: Self.request, offering: session)
-            #expect(second.resumed, "`openssl` on PATH must be OpenSSL 1.1.1 or later for these tests")
+            #expect(second.resumed, Comment(rawValue: OpenSSLTool.resumptionRequirement))
             #expect(second.status == 200)
         }
     }
@@ -74,6 +78,8 @@ import Testing
     /// one; the date check the callback makes on every handshake refuses it.
     @Test func aSavedSessionDoesNotOutliveTheCertificate() async throws {
         let handler = RecordingHandler()
+        // The certificates are generated on first use; the frozen clock must not predate them.
+        _ = try TestPKI.get()
         let clock = ManualClock(ClockReading.now().wall)
         let wallClock: @Sendable () -> Timestamp = { clock.now }
         try await ListenerHarness.withListener(handler: handler, wallClock: wallClock) { address, pki, log in
