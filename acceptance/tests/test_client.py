@@ -4,19 +4,10 @@ import os
 import struct
 import tempfile
 import unittest
-import zlib
 
 from support import client as dh
 
 TOKEN = "s3cret-token-value"
-
-
-def png(width, height):
-    def chunk(kind, data):
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-    raw = b"".join(b"\x00" + b"\x00\x00\x00" * width for _ in range(height))
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def jpeg(width, height):
@@ -82,9 +73,8 @@ class ResponseTests(unittest.TestCase):
             dh.Response(400, {}, b'{"error":{"code":-32020}}').tool_result()
 
     def test_image_size(self):
-        self.assertEqual(dh.image_size(png(5, 3), "image/png"), (5, 3))
-        self.assertEqual(dh.image_size(jpeg(9, 7), "image/jpeg"), (9, 7))
-        self.assertIsNone(dh.image_size(b"junk", "image/jpeg"))
+        self.assertEqual(dh.image_size(jpeg(9, 7)), (9, 7))
+        self.assertIsNone(dh.image_size(b"junk"))
 
 
 class SelectionTests(unittest.TestCase):

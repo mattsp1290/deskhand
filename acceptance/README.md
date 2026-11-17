@@ -7,7 +7,7 @@ describes, and writes machine-readable evidence to stdout.
 | File | What it is |
 | --- | --- |
 | `deskhand_acceptance.py` | The client. Python 3 standard library only, so it runs on an unmodified `python` image. |
-| `render-job.py` | Prints a ConfigMap (holding the client) and a Job for one run: one node, one Mac, one run ID. |
+| `render-job.py` | Prints a ConfigMap (holding the client) and a Job, as one JSON `List`, for one run: one node, one Mac, one run ID. |
 | `tests/` | `unittest` tests, including an end-to-end run against a local fake server that requires mTLS. |
 
 ## Checks

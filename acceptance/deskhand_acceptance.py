@@ -211,11 +211,9 @@ def refusal(sc):
     return f"got {code}"
 
 
-def image_size(data, mime_type):
-    """Pixel size read from the PNG IHDR or the JPEG SOFn marker, or None."""
-    if mime_type == "image/png" and data[:8] == b"\x89PNG\r\n\x1a\n":
-        return struct.unpack(">II", data[16:24])
-    if mime_type == "image/jpeg" and data[:2] == b"\xff\xd8":
+def image_size(data):
+    """Pixel size read from the JPEG SOFn marker, or None."""
+    if data[:2] == b"\xff\xd8":
         i = 2
         while i + 9 < len(data):
             if data[i] != 0xFF:
@@ -232,7 +230,6 @@ class Run:
     def __init__(self, cfg, client, out, redact):
         self.cfg, self.client, self.out, self.redact = cfg, client, out, redact
         self.results = []
-        self.frame = None
         self.terminated = False
 
     def emit(self, record):
@@ -305,7 +302,7 @@ class Run:
                              for d in sc.get("displays", [])]
         expect(facts["displays"], "no displays")
 
-    def take_screenshot(self, facts):
+    def screenshot(self, facts):
         sc, is_error, content = self.client.call("screenshot", {"holder_id": self.cfg.holder_id})
         expect(not is_error, refusal(sc))
         expect(len(content) == 2 and content[0].get("type") == "image", "want an image block then a text block")
@@ -320,12 +317,8 @@ class Run:
         expect(hashlib.sha256(data).hexdigest() == sc["sha256"], "sha256 does not match image")
         expect(max(w, h) <= MAX_LONG_EDGE and w * h <= MAX_PIXELS, "size over contract limits")
         expect(content[0].get("mimeType") == sc.get("mime_type"), "mimeType")
-        expect(image_size(data, sc.get("mime_type")) == (w, h), "decoded size differs from output_pixel_size")
-        self.frame = sc
+        expect(image_size(data) == (w, h), "decoded size differs from output_pixel_size")
         return sc
-
-    def screenshot(self, facts):
-        self.take_screenshot(facts)
 
     # --- lease (section 5) -----------------------------------------------------------------
     def lease(self, op, facts, ttl_ms=None):
@@ -341,9 +334,10 @@ class Run:
     def lease_acquire(self, facts):
         sc = self.lease("acquire", facts, ttl_ms=120000)  # the longest TTL (5.1); renewed after the checks
         result = sc["lease_result"]
-        if result.get("code") == "lease_held_by_other":
-            raise CheckFailed("precondition: another holder holds the lease (5.1)")
-        expect(result.get("outcome") == "acquired", f"outcome {result.get('outcome')}, code {result.get('code')}")
+        # acquire is refused only for another holder or a gated, paused or disarmed state (5.1, 5.2)
+        outcome, code = result.get("outcome"), result.get("code")
+        tag = "precondition: " if outcome == "refused" else ""
+        expect(outcome == "acquired", f"{tag}outcome {outcome}, code {code}")
         expect(sc["lease"].get("held_by_caller") is True, "held_by_caller")
 
     def lease_renew(self, facts):
@@ -354,7 +348,8 @@ class Run:
     def lease_release(self, facts):
         sc = self.lease("release", facts)
         expect(sc["lease_result"].get("outcome") == "released", "outcome is not released")
-        view, _, _ = self.client.call("status", {"holder_id": self.cfg.holder_id})
+        view, is_error, _ = self.client.call("status", {"holder_id": self.cfg.holder_id})
+        expect(not is_error, refusal(view))
         expect((view.get("lease") or {}).get("held_by_caller") is False, "status still shows the lease")
 
     # --- effects (section 6.4, 6.5, 6.7) ---------------------------------------------------
@@ -377,7 +372,7 @@ class Run:
         expect(sc.get("events_posted", 0) >= 1, "no events posted")
 
     def pointer_move(self, facts):
-        frame = self.take_screenshot({})
+        frame = self.screenshot({})
         size = frame["output_pixel_size"]
         target = frame.get("pointer_position") or {"x": size["width"] // 2, "y": size["height"] // 2}
         args, sc, is_error = self.effect("pointer", {"type": "move", "x": target["x"], "y": target["y"]},
@@ -386,14 +381,14 @@ class Run:
         expect(facts["global_point"] is not None, "measured.global_point is null")
 
     def type_text(self, facts):
-        before = self.take_screenshot({})
+        before = self.screenshot({})
         nonce = f"deskhand-acceptance-{secrets.token_hex(6)}"
         args, sc, is_error = self.effect("keyboard", {"type": "type", "text": nonce}, before["frame_id"],
                                          {"permitted_apps": self.cfg.permitted_apps})
         facts["nonce"] = nonce
         self.check_effect(args, sc, is_error, facts)
         expect((facts["target_app"] or {}).get("bundle_id") in self.cfg.permitted_apps, "target_app")
-        after = self.take_screenshot({})
+        after = self.screenshot({})
         facts["screen_changed"] = after["sha256"] != before["sha256"]
 
     # --- negative cases (sections 2.3, 2.4, 9.4, 9.5, 8.3) -----------------------------------

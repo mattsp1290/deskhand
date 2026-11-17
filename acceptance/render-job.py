@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a ConfigMap and a Job (YAML) that run the deskhand acceptance client once.
+"""Print a ConfigMap and a Job (as one JSON List) that run the deskhand acceptance client once.
 
 One invocation renders one run: one node, one target Mac, one run ID. Pipe the output to
 `kubectl apply -f -`. See acceptance/README.md for the placeholders that still depend on
@@ -20,8 +20,8 @@ NAMESPACE = "forge"
 MACS = ("lunus-macbook-pro", "m1max2021")  # contract section 2.1
 DEFAULT_IMAGE = "python:3.13.5-slim"  # pin a digest at deploy time: python:3.13.5-slim@sha256:...
 MOUNT = "/etc/deskhand-acceptance"
-RUN_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$")
-NODE_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
+RUN_ID_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?")  # used with fullmatch
+NODE_RE = re.compile(r"[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?")  # a nodeSelector value is a label value: at most 63
 
 
 def load_client():
@@ -103,40 +103,6 @@ def build(args):
     return [configmap, job]
 
 
-def scalar(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    return json.dumps(value)  # a JSON string is a valid YAML double-quoted scalar
-
-
-def to_yaml(value, indent=0):
-    """Minimal YAML emitter for dicts, lists, strings, ints and bools. Multi-line strings use |."""
-    pad = " " * indent
-    lines = []
-    items = value.items() if isinstance(value, dict) else ((None, v) for v in value)
-    for key, item in items:
-        prefix = f"{pad}{key}:" if key is not None else f"{pad}-"
-        if isinstance(item, (dict, list)) and item:
-            if key is None:
-                nested = to_yaml(item, indent + 2).split("\n")
-                lines.append(f"{pad}- {nested[0].lstrip()}")
-                lines.extend(nested[1:])
-            else:
-                lines.append(prefix)
-                lines.append(to_yaml(item, indent + 2))
-        elif isinstance(item, str) and "\n" in item and all(c == "\n" or " " <= c <= "~" for c in item):
-            # Explicit indentation indicator, so a first line that starts with spaces stays literal.
-            lines.append(f"{prefix} |2{'' if item.endswith(chr(10)) else '-'}")
-            lines.extend(f"{pad}  {line}" if line else "" for line in item.rstrip("\n").split("\n"))
-        elif isinstance(item, (dict, list)):
-            lines.append(f"{prefix} {'{}' if isinstance(item, dict) else '[]'}")
-        else:
-            lines.append(f"{prefix} {scalar(item)}")
-    return "\n".join(lines)
-
-
 def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--node", required=True, help="kubernetes.io/hostname of the node to run on")
@@ -153,9 +119,9 @@ def parse_args(argv):
     p.add_argument("--token-key", default="token")
     p.add_argument("--deadline", type=int, default=600, help="activeDeadlineSeconds (at least 60)")
     args = p.parse_args(argv)
-    if not RUN_ID_RE.match(args.run_id):
+    if not RUN_ID_RE.fullmatch(args.run_id):
         p.error("--run-id must match " + RUN_ID_RE.pattern)
-    if not NODE_RE.match(args.node):
+    if not NODE_RE.fullmatch(args.node):
         p.error("--node is not a valid node name")
     if args.deadline < 60:
         p.error("--deadline must be at least 60")
@@ -170,8 +136,9 @@ def parse_args(argv):
 
 
 def main(argv=None):
-    docs = build(parse_args(argv))
-    sys.stdout.write("\n".join("---\n" + to_yaml(d) for d in docs) + "\n")
+    items = build(parse_args(argv))
+    json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
     return 0
 
 

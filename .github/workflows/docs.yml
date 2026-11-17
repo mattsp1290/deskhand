@@ -46,8 +46,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      # Standard library only. The end-to-end test makes certificates with the runner's openssl, and a
-      # rendering test parses the Job with Ruby's YAML library; both are on the runner, so neither may skip.
+      # Standard library only. The end-to-end test makes certificates with the runner's openssl,
+      # so it may not skip.
       - run: python -m unittest discover -s acceptance/tests -v
         env:
           DESKHAND_REQUIRE_E2E: '1'
