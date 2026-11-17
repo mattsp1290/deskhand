@@ -153,6 +153,62 @@ struct WatchdogReentrancyTests {
         running.cancel()
         _ = await finished(running)
     }
+
+    @Test("an owner that refreshes inside its reduction and leaves a passed deadline unsettled reduces once per retry")
+    func noSpinOnAnUnsettledDeadline() async {
+        let clock = ManualScheduler()
+        let owner = UnsettlingOwner(desk: FakeDesk(clock: clock, leaseTTLMs: 100))
+        let watchdog = Watchdog(
+            owner: owner, executor: FakeExecutor(clock: clock), activity: StaticActivity(), scheduler: clock)
+        owner.watchdog.withLock { $0 = watchdog }
+        clock.advance(to: WatchdogFixture.at(200).monotonic)
+        let running = Task { await watchdog.run() }
+
+        for retry in 1...3 {
+            let wakeup = WatchdogFixture.at(200 + Int64(retry) * 100).monotonic
+            await Self.firstOf(
+                { await clock.waitUntil { $0 == [wakeup, wakeup] } },
+                { await owner.waitForReductions(retry + 50) })
+            #expect(owner.reductions == retry, "\(owner.reductions) reductions before the clock reached \(wakeup)")
+            clock.advance(to: wakeup)
+        }
+        running.cancel()
+        _ = await finished(running)
+    }
+
+    private static func firstOf(
+        _ first: @escaping @Sendable () async -> Void, _ second: @escaping @Sendable () async -> Void
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await first() }
+            group.addTask { await second() }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+}
+
+/// Never settles the lease that ran out, as an owner that fails to would, and tells the watchdog
+/// of a change from inside every reduction.
+final class UnsettlingOwner: WatchdogStateOwner {
+    let desk: FakeDesk
+    let watchdog = Mutex<Watchdog?>(nil)
+    private let count = Mutex(0)
+    private let reduced = Waiters()
+
+    init(desk: FakeDesk) { self.desk = desk }
+
+    var reductions: Int { count.withLock { $0 } }
+
+    func waitForReductions(_ count: Int) async { await reduced.wait { self.reductions >= count } }
+
+    func snapshot() -> DeskSnapshot { desk.snapshot() }
+
+    func reduceNow(allowanceChanged: Bool) async {
+        count.withLock { $0 += 1 }
+        reduced.changed()
+        await watchdog.withLock { $0 }?.refreshState()
+    }
 }
 
 final class RefreshingOwner: WatchdogStateOwner {

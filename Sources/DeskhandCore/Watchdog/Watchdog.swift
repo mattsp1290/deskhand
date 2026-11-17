@@ -75,6 +75,7 @@ public actor Watchdog {
     private var nextAllowanceRead: ContinuousClock.Instant?
     private var reducing = false
     private var allowanceChangePending = false
+    private var ownerRangDuringReduction = false
     private var alarms: [Loop: Alarm] = [.owner: Alarm(), .executor: Alarm()]
 
     /// `activity` is the same source the executor was built with, normally a
@@ -135,11 +136,16 @@ public actor Watchdog {
     /// The signals changed: a reduction, a `lease` call or a read of the allowance. Evaluates at
     /// once, so the executor and the cleanup retry see the change now (contract 11.2), and moves
     /// both loops' wakeups. An owner may call it from inside its reduction: while a reduction runs
-    /// it only wakes both loops, so it starts no other reduction, and the reduction never waits
-    /// for the executor through it. The executor's loop then evaluates.
+    /// it only wakes the executor's loop, so it starts no other reduction, and the reduction never
+    /// waits for the executor through it. The executor's loop then evaluates, and the owner's loop
+    /// looks again once the reduction ends.
     public func refreshState() async {
-        if !reducing { _ = await evaluate() }
-        ring(.owner)
+        if reducing {
+            ownerRangDuringReduction = true
+        } else {
+            _ = await evaluate()
+            ring(.owner)
+        }
         ring(.executor)
     }
 
@@ -157,7 +163,7 @@ public actor Watchdog {
     /// for a deadline the file moved (contract 13.1, 14.4). Waits for the owner, never for the
     /// executor; returns at once while another reduction runs, which then reads the file again.
     public func allowanceFileDidChange() async {
-        await reduce(allowanceChanged: true)
+        await reduce(allowanceChanged: true, ownerLoopLooksAfter: true)
         ring(.owner)
         ring(.executor)
     }
@@ -175,7 +181,7 @@ public actor Watchdog {
 
     private func ownerLoop() async {
         while !Task.isCancelled {
-            let wakeup = await readIfDue()
+            let wakeup = await readIfDue(ownerLoopLooksAfter: true)
             await sleep(.owner, until: wakeup)
         }
     }
@@ -187,13 +193,13 @@ public actor Watchdog {
         }
     }
 
-    private func readIfDue() async -> ContinuousClock.Instant? {
+    private func readIfDue(ownerLoopLooksAfter: Bool = false) async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
         let readDue = nextAllowanceRead.map { $0 <= now } ?? true
         let deadlinePassed = Self.deadline(of: snapshot).map { $0 <= now } ?? false
         if readDue || deadlinePassed {
-            await reduce(allowanceChanged: readDue)
+            await reduce(allowanceChanged: readDue, ownerLoopLooksAfter: ownerLoopLooksAfter)
             ring(.executor)
         }
         let after = owner.snapshot()
@@ -227,7 +233,11 @@ public actor Watchdog {
         return idle < ContractConstants.userActivityLookbackMs ? .userActive(idleMs: max(0, idle)) : nil
     }
 
-    private func reduce(allowanceChanged: Bool) async {
+    /// A refresh from inside the reduction rings the owner's loop once the reduction ends, unless
+    /// the caller has that loop look again anyway: ringing the loop that runs the reduction would
+    /// end its next sleep at once, and a passed deadline the owner does not settle would then be
+    /// reduced again without pause instead of after ``Configuration/deadlineRetryInterval``.
+    private func reduce(allowanceChanged: Bool, ownerLoopLooksAfter: Bool) async {
         allowanceChangePending = allowanceChangePending || allowanceChanged
         guard !reducing else { return }
         reducing = true
@@ -240,6 +250,10 @@ public actor Watchdog {
             await owner.reduceNow(allowanceChanged: reads)
         } while allowanceChangePending
         reducing = false
+        if ownerRangDuringReduction {
+            ownerRangDuringReduction = false
+            if !ownerLoopLooksAfter { ring(.owner) }
+        }
     }
 
     private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?) async {
