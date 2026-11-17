@@ -11,7 +11,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.105.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.37.0"),
+        // Patch releases only: the listener tests pin BoringSSL's TLS behaviour (session resumption,
+        // certificate checks), so take a new minor version deliberately.
+        .package(url: "https://github.com/apple/swift-nio-ssl.git", .upToNextMinor(from: "2.37.6")),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
     ],
     targets: [
@@ -54,6 +56,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOTLS", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
             ]
         ),

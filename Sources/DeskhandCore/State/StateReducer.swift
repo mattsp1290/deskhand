@@ -90,7 +90,12 @@ public struct StateReport: Hashable, Sendable {
         arming: .disarmed, signals: .unread, configuration: .standard,
         now: ClockReading(wall: Timestamp(millisecondsSinceEpoch: 0), monotonic: ContinuousClock.now))
 
-    func elapsed(until now: ClockReading) -> (report: StateReport, effects: [TransitionEffect]) {
+    /// The transitions the clock made by `now` with this report's signals (arming running out, the
+    /// allowance expiring), each reduced at the instant it happened, and their effects. What
+    /// ``activeStates(at:)`` reads. A reader that acts on a state these add commits them first, so
+    /// a later reduction cannot lose a transition that a reader saw (contract 10.3, 14.5): the
+    /// wall clock may step back before that reduction and make the allowance valid again.
+    public func elapsed(until now: ClockReading) -> (report: StateReport, effects: [TransitionEffect]) {
         var report = self
         var effects: [TransitionEffect] = []
         for instant in expiries(seenFrom: now) where instant.monotonic <= now.monotonic {
@@ -128,10 +133,12 @@ public enum TransitionEffect: Hashable, Sendable {
     case releaseHeldInput
     /// Invalidate every frame of every holder (contract 10.3 step 3).
     case invalidateFrames
-    /// `gated`, `paused` or `disarmed` began (contract 10.4): pass it to
-    /// ``LeaseManager/drop(because:now:)``. It is the highest of those that began at one instant. A
-    /// reduction that settles several lapses carries one per lapse; the later ones find no lease.
-    case dropLease(LeaseDroppingState)
+    /// `gated`, `paused` or `disarmed` began (contract 10.4) at the reading `at`: pass both to
+    /// ``LeaseManager/drop(because:now:)``, before settling expiries at the reduction's own reading.
+    /// It is the highest of those that began at one instant. A reduction that settles several
+    /// lapses carries one per lapse, each with its own instant, so a lease that was live when a
+    /// lapse settled late began is dropped, not expired; the later ones find no lease.
+    case dropLease(LeaseDroppingState, at: ClockReading)
 }
 
 /// One owner keeps the latest ``StateReport``, feeds it back as `previous` and serializes the
@@ -169,16 +176,18 @@ public enum StateReducer {
         let gatedBegins = !signals.allowance.isValid(at: now.wall) && !previous.reducedStates.states.contains(.gated)
         if gatedBegins, configuration.gatedEndsArming, case .armed = arming { arming = .disarmed }
         let report = StateReport(arming: arming, signals: signals, configuration: configuration, now: now)
-        return (report, effects(from: previous.reducedStates, to: report.reducedStates))
+        return (report, effects(from: previous.reducedStates, to: report.reducedStates, at: now))
     }
 
-    private static func effects(from previous: ActiveStates, to next: ActiveStates) -> [TransitionEffect] {
+    private static func effects(from previous: ActiveStates, to next: ActiveStates, at now: ClockReading)
+        -> [TransitionEffect]
+    {
         var effects: [TransitionEffect] = []
         if previous.current == .ok, let state = next.current.blocking {
             effects += [.cancelInFlight(state), .releaseHeldInput, .invalidateFrames]
         }
         if let dropping = next.states.subtracting(previous.states).compactMap(\.leaseDropping).min() {
-            effects.append(.dropLease(dropping))
+            effects.append(.dropLease(dropping, at: now))
         }
         return effects
     }

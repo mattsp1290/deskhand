@@ -270,6 +270,11 @@ SCHEMA_KEYWORDS = SUBSCHEMA_KEYWORDS | SUBSCHEMA_LIST_KEYWORDS | SUBSCHEMA_MAP_K
     "deprecated", "readOnly", "writeOnly", "examples", "format", "contentEncoding", "contentMediaType"}
 
 
+def unwrap(text: str) -> str:
+    """Joins hard-wrapped prose lines; a blank line, heading or table row is never joined onto the line before."""
+    return re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", text)
+
+
 def number(text: str):
     text = text.replace(",", "")
     return float(text) if "." in text else int(text)
@@ -502,8 +507,15 @@ class Checker:
                         self.fail(f"{rel}: top-level {kw} (input schemas stay flat)")
                 if s.get("type") != "object" or s.get("additionalProperties") is not False:
                     self.fail(f"{rel}: input schema must be a closed object")
-            elif s.get("type") != "object":
-                self.fail(f"{rel}: output schema root type must be object")
+            else:
+                if s.get("type") != "object":
+                    self.fail(f"{rel}: output schema root type must be object")
+                # Section 5.4: no result carries a holder_id, at any depth. The rule's additionalProperties
+                # marks every member as evaluated, so a schema applying it cannot rely on
+                # unevaluatedProperties: false.
+                if not any(isinstance(sub, dict) and sub.get("$ref") == "../defs.json#/$defs/no_holder_id"
+                           for sub in s.get("allOf", [])):
+                    self.fail(f"{rel}: output schema must apply $defs/no_holder_id in its root allOf")
 
     # Examples
 
@@ -1100,7 +1112,7 @@ class Checker:
                     self.fail(f"{rel}#{ptr}/{kw} is {got}, contract.md 16 says {name} {part} is {expected}")
 
         for prefix, pattern, parts in PROSE_SITES:
-            text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
+            text = unwrap(self.section(prefix))
             found = list(re.finditer(pattern, text))
             if not found:
                 self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update PROSE_SITES)")
@@ -1111,7 +1123,7 @@ class Checker:
                                   f"{part[0]} {part[1]} {want(*part)}")
         self.check_figures(want)
         for prefix, pattern, sites in SCHEMA_PROSE_SITES:
-            text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
+            text = unwrap(self.section(prefix))
             found = list(re.finditer(pattern, text))
             if not found:
                 self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update SCHEMA_PROSE_SITES)")
@@ -1127,9 +1139,14 @@ class Checker:
                         continue
                     if number(group) != bound:
                         self.fail(f"contract.md {prefix.strip()}: says {group} where {rel}#{ptr}/{kw} is {bound}")
-        for name, value in re.findall(rf"`([A-Z][A-Z_]+)` = ({NUM})", self.md):
-            if name in consts and number(value) != want(name, "value"):
-                self.fail(f"contract.md: `{name}` = {value}, section 16 gives {want(name, 'value')}")
+        # "`NAME` = 1" and "`NAME` is 1" anywhere, also when the line wraps after "=" (section 7) or
+        # the figure is a default ("`NAME` is 0 by default", also with a unit: "is 5 ms by default").
+        flat = unwrap(self.md)
+        for name, verb, value, by_default in re.findall(
+                rf"`([A-Z][A-Z_]+)` (=|is) ({NUM})(?: (?!by\b)[a-z()]+){{0,3}}( by default\b)?", flat):
+            part = "default" if by_default else "value"
+            if name in consts and number(value) != want(name, part):
+                self.fail(f"contract.md: `{name}` {verb} {value}, section 16 gives {want(name, part)}")
 
         limits_schema = pointer_get(self.schemas.get(f"{TOOLS_DIR}/status.output.json", {}),
                                     "/$defs/limits/properties") if f"{TOOLS_DIR}/status.output.json" in self.schemas else {}
@@ -1167,7 +1184,7 @@ class Checker:
             "pixels": {pixels: "MAX_PIXELS"},
             "characters": {image * 4 // 3: "MAX_IMAGE_BYTES in base64"},
         }
-        flat = re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", self.md)  # joins wrapped lines, keeps headings apart
+        flat = unwrap(self.md)
         left = dict(OTHER_FIGURES)
         for m in re.finditer(r"(?<![\d,.])(\d{1,3}(?:,\d{3}){2,}) (?:base64 )?(bytes|pixels|characters)\b", flat):
             value, unit = number(m.group(1)), m.group(2)

@@ -39,7 +39,9 @@ public actor Watchdog {
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
         /// not settle it, and how soon the owner's loop looks again while a reduction that another
-        /// task started is still running.
+        /// task started is still running. A refresh that leaves a passed deadline while the owner's
+        /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
+        /// loop is woken at once either way.
         public var deadlineRetryInterval: Duration
 
         public init(
@@ -75,6 +77,7 @@ public actor Watchdog {
     private var nextAllowanceRead: ContinuousClock.Instant?
     private var reducing = false
     private var allowanceChangePending = false
+    private var ownerRangDuringReduction = false
     private var alarms: [Loop: Alarm] = [.owner: Alarm(), .executor: Alarm()]
 
     /// `activity` is the same source the executor was built with, normally a
@@ -135,11 +138,18 @@ public actor Watchdog {
     /// The signals changed: a reduction, a `lease` call or a read of the allowance. Evaluates at
     /// once, so the executor and the cleanup retry see the change now (contract 11.2), and moves
     /// both loops' wakeups. An owner may call it from inside its reduction: while a reduction runs
-    /// it only wakes both loops, so it starts no other reduction, and the reduction never waits
-    /// for the executor through it. The executor's loop then evaluates.
+    /// it only wakes the executor's loop, so it starts no other reduction, and the reduction never
+    /// waits for the executor through it. The executor's loop then evaluates, and the owner's loop
+    /// looks again once the reduction ends. Call it only once the change is in the owner's
+    /// ``StateSource/snapshot()``: the owner's loop drops a ring that arrives while it is awake and
+    /// relies on the snapshot it reads next.
     public func refreshState() async {
-        if !reducing { _ = await evaluate() }
-        ring(.owner)
+        if reducing {
+            ownerRangDuringReduction = true
+        } else {
+            _ = await evaluate()
+            ring(.owner)
+        }
         ring(.executor)
     }
 
@@ -175,15 +185,21 @@ public actor Watchdog {
 
     private func ownerLoop() async {
         while !Task.isCancelled {
+            // `wakeup` comes from the snapshot readIfDue takes after the loop's last suspension, so
+            // a ring that reached this loop while it was awake, its own reduction's deferred ring
+            // among them, is already in it. Keeping that ring would end the sleep at once and
+            // reduce a passed deadline the owner does not settle again without the pause of
+            // ``Configuration/deadlineRetryInterval``. Do not add an `await` between that snapshot
+            // and this sleep: a ring that arrived there would be dropped.
             let wakeup = await readIfDue()
-            await sleep(.owner, until: wakeup)
+            await sleep(.owner, until: wakeup, keepingRingsWhileAwake: false)
         }
     }
 
     private func executorLoop() async {
         while !Task.isCancelled {
             let wakeup = await act(on: owner.snapshot())
-            await sleep(.executor, until: wakeup)
+            await sleep(.executor, until: wakeup, keepingRingsWhileAwake: true)
         }
     }
 
@@ -227,6 +243,9 @@ public actor Watchdog {
         return idle < ContractConstants.userActivityLookbackMs ? .userActive(idleMs: max(0, idle)) : nil
     }
 
+    /// A refresh from inside the reduction rings the owner's loop once the reduction ends, so a
+    /// loop that slept through a reduction another task ran looks again at once. When the owner's
+    /// loop ran the reduction itself, the loop drops that ring before it sleeps.
     private func reduce(allowanceChanged: Bool) async {
         allowanceChangePending = allowanceChangePending || allowanceChanged
         guard !reducing else { return }
@@ -240,13 +259,20 @@ public actor Watchdog {
             await owner.reduceNow(allowanceChanged: reads)
         } while allowanceChangePending
         reducing = false
+        if ownerRangDuringReduction {
+            ownerRangDuringReduction = false
+            ring(.owner)
+        }
     }
 
-    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?) async {
-        if alarms[loop, default: Alarm()].rangWhileAwake {
-            alarms[loop, default: Alarm()].rangWhileAwake = false
-            return
-        }
+    /// Without `keepingRingsWhileAwake`, a ring that arrived while the loop was awake is dropped
+    /// rather than ending this sleep at once: the caller computed `wakeup` from state read after
+    /// that ring. Nothing here suspends before the continuation is installed, so with a caller that
+    /// does not suspend between that read and this call either, no ring is lost.
+    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?, keepingRingsWhileAwake: Bool) async {
+        let rang = alarms[loop, default: Alarm()].rangWhileAwake
+        alarms[loop, default: Alarm()].rangWhileAwake = false
+        if rang && keepingRingsWhileAwake { return }
         alarms[loop, default: Alarm()].generation &+= 1
         let generation = alarms[loop, default: Alarm()].generation
         let timer = wakeup.map { wakeup in

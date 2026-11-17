@@ -36,7 +36,7 @@ public struct AllowanceReader: Sendable {
 
     /// Reads the file and runs every check except the clock.
     public func read() -> AllowanceSnapshot {
-        let (directory, name) = Self.split(path)
+        let (directory, name) = splitPath(path)
         switch probe.probe(directory: directory, name: name, maxBytes: Self.maxFileBytes) {
         case .directoryFailed(.notFound):
             return .missing
@@ -84,26 +84,22 @@ public struct AllowanceReader: Sendable {
     /// Reads the file now and judges it at `now`, with no cache.
     public func verdict(now: Timestamp) -> AllowanceVerdict { verdict(for: read(), now: now) }
 
-    private static func directoryProblem(_ status: AllowanceFileStatus) -> AllowanceInvalidReason? {
+    private static func directoryProblem(_ status: FileStatus) -> AllowanceInvalidReason? {
         guard status.kind == .directory else { return .directoryNotADirectory }
         guard status.owner == 0 else { return .directoryNotRootOwned(owner: status.owner) }
-        guard status.permissions & 0o022 == 0 else {
+        guard !status.isWritableByGroupOrOthers else {
             return .directoryWritableByGroupOrOthers(permissions: status.permissions)
         }
         return nil
     }
 
-    private static func fileProblem(_ status: AllowanceFileStatus) -> AllowanceInvalidReason? {
+    private static func fileProblem(_ status: FileStatus) -> AllowanceInvalidReason? {
         guard status.kind == .regular else { return .notRegularFile }
         guard status.owner == 0 else { return .notRootOwned(owner: status.owner) }
-        guard status.permissions & 0o022 == 0 else { return .writableByGroupOrOthers(permissions: status.permissions) }
+        guard !status.isWritableByGroupOrOthers else {
+            return .writableByGroupOrOthers(permissions: status.permissions)
+        }
         return nil
-    }
-
-    static func split(_ path: String) -> (directory: String, name: String) {
-        guard let slash = path.lastIndex(of: "/") else { return (".", path) }
-        let directory = slash == path.startIndex ? "/" : String(path[..<slash])
-        return (directory, String(path[path.index(after: slash)...]))
     }
 }
 

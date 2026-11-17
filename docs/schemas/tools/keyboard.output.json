@@ -3,6 +3,7 @@
   "$id": "https://deskhand.invalid/schemas/tools/keyboard.output.json",
   "title": "keyboard structuredContent",
   "type": "object",
+  "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
   "oneOf": [
     { "$ref": "#/$defs/keyboard_result" },
     { "$ref": "#/$defs/keyboard_error" }

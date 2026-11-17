@@ -73,7 +73,7 @@ public protocol UserActivitySource: Sendable {
 
 /// The connection that carried one effect call (contract 9.5, 12.3).
 public protocol ConnectionLiveness: Sendable {
-    /// `false` once the close has reached the Mac.
+    /// `false` once deskhand has observed the connection closed (contract 12.5).
     var isOpen: Bool { get }
 }
 

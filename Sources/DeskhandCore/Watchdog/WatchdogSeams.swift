@@ -64,5 +64,10 @@ public protocol WatchdogStateOwner: StateSource {
     /// again before the watchdog looks leaves nothing in the snapshot. Otherwise it should not wait
     /// for the executor: the watchdog passes what the new snapshot stops and retries the cleanup
     /// itself, and the time this takes counts against the bound of contract 13.1.
+    ///
+    /// It may call ``Watchdog/refreshState()`` from inside, and then awaits it here rather than on
+    /// another task: a refresh that lands after the reduction ends evaluates and wakes the owner's
+    /// loop at once, so a passed deadline it leaves unsettled would be reduced, and refreshed,
+    /// again without the pause of ``Watchdog/Configuration/deadlineRetryInterval``.
     func reduceNow(allowanceChanged: Bool) async
 }

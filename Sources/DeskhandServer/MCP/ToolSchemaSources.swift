@@ -108,6 +108,12 @@ enum ToolSchemaSources {
               "pattern": "^[A-Za-z0-9._:-]+$",
               "not": { "pattern": "[^A-Za-z0-9._:-]" }
             },
+            "no_holder_id": {
+              "description": "No object anywhere in a tool result or tool error has a holder_id member (docs/contract.md section 5.4): not the caller's own label, and not the other holder's beside lease_held_by_other. Every output schema applies this at its root.",
+              "not": { "type": "object", "required": ["holder_id"] },
+              "additionalProperties": { "$ref": "#/$defs/no_holder_id" },
+              "items": { "$ref": "#/$defs/no_holder_id" }
+            },
             "operation_id": {
               "description": "Caller-supplied idempotency key for one effect call (Crew sends its call ID): 1 to 128 characters from A-Z a-z 0-9 . _ : -. Unique per (principal, holder_id) for the retention window.",
               "type": "string",
@@ -269,7 +275,7 @@ enum ToolSchemaSources {
               ]
             },
             "measured": {
-              "description": "Facts deskhand measured at an app-policy check. On the result of an admitted call other than denied_app: at the last look, the check immediately before the first event (docs/contract.md section 12.3 step 5). On log_unavailable: at the check before admission (section 9.5 step 14). On denied_app: at the check that failed.",
+              "description": "Facts deskhand measured at an app-policy check. On the result of an admitted call other than denied_app and interrupted (which has no measured): at the last look, the check immediately before the first event (docs/contract.md section 12.3 step 5), or, on an internal_error that ended the call before the last look ran, at the check before admission (section 9.5 step 14). On log_unavailable: at the check before admission (section 9.5 step 14). On denied_app: at the check that failed.",
               "type": "object",
               "properties": {
                 "frontmost_app": { "$ref": "#/$defs/app_ref" },
@@ -361,7 +367,6 @@ enum ToolSchemaSources {
                 }
               },
               "required": ["held_by_caller"],
-              "not": { "required": ["holder_id"] },
               "if": {
                 "properties": { "held_by_caller": { "const": true } },
                 "required": ["held_by_caller"]
@@ -417,7 +422,10 @@ enum ToolSchemaSources {
                 "measured",
                 "completed_at"
               ],
-              "not": { "required": ["code"] }
+              "not": {
+                "$comment": "A success has no code, and gains no current_state on a replay (docs/contract.md section 12.5).",
+                "anyOf": [{ "required": ["code"] }, { "required": ["current_state"] }]
+              }
             },
             "tool_error": {
               "description": "structuredContent of every isError tool result.",
@@ -438,7 +446,7 @@ enum ToolSchemaSources {
                 },
                 "operation_id": { "$ref": "#/$defs/operation_id" },
                 "operation": {
-                  "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists, and on operation_in_progress or operation_id_conflict for a call that is still being admitted (status accepted, events_posted 0). Absent means no input was ever posted for this operation_id.",
+                  "description": "The record for this operation_id, whichever call created it. Present exactly when such a record exists, and on operation_in_progress or operation_id_conflict for a call that is still being admitted (status accepted, events_posted 0). Absent means no input has been posted for this operation_id so far; docs/contract.md section 12.5 says when that is final.",
                   "$ref": "#/$defs/operation_view"
                 },
                 "replayed": {
@@ -743,6 +751,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/displays.output.json",
           "title": "displays structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/displays_result" },
             { "$ref": "#/$defs/displays_error" }
@@ -906,6 +915,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/keyboard.output.json",
           "title": "keyboard structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/keyboard_result" },
             { "$ref": "#/$defs/keyboard_error" }
@@ -1004,6 +1014,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/lease.output.json",
           "title": "lease structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/lease_tool_result" },
             { "$ref": "#/$defs/lease_error" }
@@ -1017,10 +1028,7 @@ enum ToolSchemaSources {
                 "lease": { "$ref": "../defs.json#/$defs/lease_view" }
               },
               "required": ["lease_result", "lease"],
-              "not": {
-                "$comment": "No result carries a holder_id.",
-                "anyOf": [{ "required": ["code"] }, { "required": ["holder_id"] }]
-              },
+              "not": { "required": ["code"] },
               "if": {
                 "properties": {
                   "lease_result": {
@@ -1282,6 +1290,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/pointer.output.json",
           "title": "pointer structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/pointer_result" },
             { "$ref": "#/$defs/pointer_error" }
@@ -1394,6 +1403,7 @@ enum ToolSchemaSources {
           "title": "screenshot structuredContent",
           "description": "Frame metadata. The image itself is the image content block of the same result.",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/screenshot_result" },
             { "$ref": "#/$defs/screenshot_error" }
@@ -1569,6 +1579,7 @@ enum ToolSchemaSources {
           "$id": "https://deskhand.invalid/schemas/tools/status.output.json",
           "title": "status structuredContent",
           "type": "object",
+          "allOf": [{ "$ref": "../defs.json#/$defs/no_holder_id" }],
           "oneOf": [
             { "$ref": "#/$defs/status_result" },
             { "$ref": "#/$defs/status_error" }
@@ -1646,12 +1657,8 @@ enum ToolSchemaSources {
                 "limits"
               ],
               "not": {
-                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result. No result carries a holder_id.",
-                "anyOf": [
-                  { "required": ["code"] },
-                  { "required": ["lease_result"] },
-                  { "required": ["holder_id"] }
-                ]
+                "$comment": "status no longer performs lease operations (amendment 4), so it never carries lease_result.",
+                "anyOf": [{ "required": ["code"] }, { "required": ["lease_result"] }]
               },
               "allOf": [
                 {

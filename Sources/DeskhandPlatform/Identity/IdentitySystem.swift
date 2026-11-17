@@ -6,12 +6,19 @@ import Foundation
 /// under plain `swift test`. Every query is a fresh read: nothing is cached between calls. The one
 /// exception is ``frontmostProcess()``, which is only as fresh as the main run loop.
 public protocol IdentitySystem: Sendable {
+    /// The current time on the clock the kernel records process start times on. A process whose start
+    /// time is later than a reading taken before its pid was obtained is not the process the pid named.
+    func wallClock() -> ProcessStartTime
     /// The on-screen windows, front to back, or `nil` when the window server gave no list.
     func onScreenWindows() -> [IdentityWindowEntry]?
     /// The process of the frontmost app, or `nil` when there is none. AppKit updates this as the main
     /// run loop turns, so it can be stale while the main thread is busy and never changes in a process
-    /// without one; ``IdentityProbe/frontmostApp()`` therefore confirms it against Accessibility.
+    /// without one; ``IdentityProbe/frontmostApp()`` therefore confirms it with ``activation(of:)``.
     func frontmostProcess() -> pid_t?
+    /// Whether the process reports itself as the active app, as Accessibility reads it from that app.
+    /// Unlike ``focusedApplication()``, this stays true while a non-activating panel of another process
+    /// holds keyboard focus.
+    func activation(of pid: pid_t) -> ActivationLookup
     /// The process that owns keyboard focus, as Accessibility reports it.
     func focusedApplication() -> FocusedApplicationLookup
     /// The code signature of a running process.
@@ -27,13 +34,17 @@ public protocol IdentitySystem: Sendable {
 
 /// A process's start time as the kernel records it. With the pid, it names one process: a pid is reused
 /// only by a process that starts later.
-public struct ProcessStartTime: Hashable, Sendable {
+public struct ProcessStartTime: Hashable, Comparable, Sendable {
     public var seconds: Int64
     public var microseconds: Int32
 
     public init(seconds: Int64, microseconds: Int32) {
         self.seconds = seconds
         self.microseconds = microseconds
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.seconds, lhs.microseconds) < (rhs.seconds, rhs.microseconds)
     }
 }
 
@@ -67,6 +78,15 @@ public enum FocusedApplicationLookup: Hashable, Sendable {
     /// Accessibility answered that no app has keyboard focus.
     case noFocus
     /// deskhand is not trusted for Accessibility, so focus cannot be read.
+    case accessibilityUntrusted
+    /// Accessibility returned this `AXError` raw value.
+    case failed(Int32)
+}
+
+public enum ActivationLookup: Hashable, Sendable {
+    case active
+    case inactive
+    /// deskhand is not trusted for Accessibility, so activation cannot be read.
     case accessibilityUntrusted
     /// Accessibility returned this `AXError` raw value.
     case failed(Int32)

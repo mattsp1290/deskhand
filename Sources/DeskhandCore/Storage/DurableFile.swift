@@ -45,23 +45,19 @@ public struct DurableFile: Sendable {
     public func read() throws(StorageError) -> [UInt8]? {
         let directory = try openDirectory()
         defer { _ = close(directory) }
-        let descriptor = name.withCString { openat(directory, $0, O_RDONLY | Self.checkedOpen) }
+        let (descriptor, openErrno) = name.withCString {
+            (openat(directory, $0, O_RDONLY | Self.checkedOpen), errno)
+        }
         if descriptor < 0 {
-            if errno == ENOENT { return nil }
-            throw .io(operation: "open", errno: errno)
+            if openErrno == ENOENT { return nil }
+            throw .io(operation: "open", errno: openErrno)
         }
         defer { _ = close(descriptor) }
         try verify(descriptor)
-        var bytes: [UInt8] = []
-        var buffer = [UInt8](repeating: 0, count: 65_536)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { systemRead(descriptor, $0.baseAddress, $0.count) }
-            if count < 0 {
-                if errno == EINTR { continue }
-                throw .io(operation: "read", errno: errno)
-            }
-            if count == 0 { return bytes }
-            bytes += buffer[0..<count]
+        do throws(SystemCallError) {
+            return try readContents(of: descriptor)
+        } catch {
+            throw .io(operation: "read", errno: error.errno)
         }
     }
 
@@ -73,13 +69,14 @@ public struct DurableFile: Sendable {
         defer { _ = close(directory) }
         let temporary = name + ".tmp"
         // A leftover from a crash may have any owner or mode; O_EXCL then guarantees a new file.
-        if temporary.withCString({ unlinkat(directory, $0, 0) }) != 0, errno != ENOENT {
-            throw .io(operation: "unlink", errno: errno)
+        let (unlinked, unlinkErrno) = temporary.withCString { (unlinkat(directory, $0, 0), errno) }
+        if unlinked != 0, unlinkErrno != ENOENT {
+            throw .io(operation: "unlink", errno: unlinkErrno)
         }
-        let descriptor = temporary.withCString {
-            openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let (descriptor, openErrno) = temporary.withCString {
+            (openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600), errno)
         }
-        guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
+        guard descriptor >= 0 else { throw .io(operation: "open", errno: openErrno) }
         do throws(StorageError) {
             // A strict umask can take away owner write, which every later append needs.
             guard fchmod(descriptor, 0o600) == 0 else { throw .io(operation: "fchmod", errno: errno) }
@@ -90,9 +87,10 @@ public struct DurableFile: Sendable {
             throw error
         }
         _ = close(descriptor)
-        guard renameat(directory, temporary, directory, name) == 0 else {
-            throw .io(operation: "rename", errno: errno)
+        let (renamed, renameErrno) = temporary.withCString { from in
+            name.withCString { to in (renameat(directory, from, directory, to), errno) }
         }
+        guard renamed == 0 else { throw .io(operation: "rename", errno: renameErrno) }
         // Makes the rename itself durable.
         try flush(directory)
     }
@@ -101,8 +99,10 @@ public struct DurableFile: Sendable {
     public func openForAppending() throws(StorageError) -> Appender {
         let directory = try openDirectory()
         defer { _ = close(directory) }
-        let descriptor = name.withCString { openat(directory, $0, O_WRONLY | O_APPEND | Self.checkedOpen) }
-        guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
+        let (descriptor, openErrno) = name.withCString {
+            (openat(directory, $0, O_WRONLY | O_APPEND | Self.checkedOpen), errno)
+        }
+        guard descriptor >= 0 else { throw .io(operation: "open", errno: openErrno) }
         do throws(StorageError) {
             try verify(descriptor)
         } catch {
@@ -152,19 +152,24 @@ public struct DurableFile: Sendable {
     }
 
     private func openDirectory() throws(StorageError) -> Int32 {
-        let descriptor = directoryPath.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard descriptor >= 0 else { throw .io(operation: "open directory", errno: errno) }
-        var status = stat()
-        let problem: StorageError? =
-            if fstat(descriptor, &status) != 0 {
-                .io(operation: "fstat directory", errno: errno)
-            } else if UInt32(status.st_uid) != owner {
-                .directoryWrongOwner(owner: UInt32(status.st_uid), expected: owner)
-            } else if UInt32(status.st_mode) & 0o022 != 0 {
-                .directoryWritableByOthers(mode: UInt32(status.st_mode) & 0o7777)
-            } else {
-                nil
-            }
+        let (descriptor, openErrno) = directoryPath.withCString {
+            (open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), errno)
+        }
+        guard descriptor >= 0 else { throw .io(operation: "open directory", errno: openErrno) }
+        let problem: StorageError?
+        do throws(SystemCallError) {
+            let status = try FileStatus.of(descriptor)
+            problem =
+                if status.owner != owner {
+                    .directoryWrongOwner(owner: status.owner, expected: owner)
+                } else if status.isWritableByGroupOrOthers {
+                    .directoryWritableByOthers(mode: status.permissions)
+                } else {
+                    nil
+                }
+        } catch {
+            problem = .io(operation: "fstat directory", errno: error.errno)
+        }
         if let problem {
             _ = close(descriptor)
             throw problem
@@ -172,40 +177,33 @@ public struct DurableFile: Sendable {
         return descriptor
     }
 
-    private var directoryPath: String {
-        guard let slash = path.lastIndex(of: "/") else { return "." }
-        return slash == path.startIndex ? "/" : String(path[..<slash])
-    }
+    private var directoryPath: String { splitPath(path).directory }
 
-    private var name: String {
-        guard let slash = path.lastIndex(of: "/") else { return path }
-        return String(path[path.index(after: slash)...])
-    }
+    private var name: String { splitPath(path).name }
 
     private func verify(_ descriptor: Int32) throws(StorageError) {
-        var status = stat()
-        guard fstat(descriptor, &status) == 0 else { throw .io(operation: "fstat", errno: errno) }
-        let mode = UInt32(status.st_mode)
-        guard mode & 0o170000 == 0o100000 else { throw .notRegularFile }
-        guard UInt32(status.st_uid) == owner else { throw .wrongOwner(owner: UInt32(status.st_uid), expected: owner) }
-        guard mode & 0o7777 & ~0o600 == 0 else { throw .permissionsTooWide(mode: mode & 0o7777) }
+        let status: FileStatus
+        do throws(SystemCallError) {
+            status = try FileStatus.of(descriptor)
+        } catch {
+            throw .io(operation: "fstat", errno: error.errno)
+        }
+        guard status.kind == .regular else { throw .notRegularFile }
+        guard status.owner == owner else { throw .wrongOwner(owner: status.owner, expected: owner) }
+        guard status.permissions & ~0o600 == 0 else { throw .permissionsTooWide(mode: status.permissions) }
     }
 }
 
 private func writeAll(_ bytes: [UInt8], to descriptor: Int32) throws(StorageError) {
     var offset = 0
     while offset < bytes.count {
-        let count = bytes.withUnsafeBytes { buffer in
-            write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
+        let (count, failure) = bytes.withUnsafeBytes { buffer in
+            (write(descriptor, buffer.baseAddress! + offset, buffer.count - offset), errno)
         }
         if count < 0 {
-            if errno == EINTR { continue }
-            throw .io(operation: "write", errno: errno)
+            if failure == EINTR { continue }
+            throw .io(operation: "write", errno: failure)
         }
         offset += count
     }
-}
-
-private func systemRead(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
-    read(descriptor, buffer, count)
 }
