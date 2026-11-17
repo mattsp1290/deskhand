@@ -52,7 +52,7 @@ struct SystemCallError: Error, Hashable {
 /// Up to `limit` bytes from `descriptor`, fewer at end of file.
 func readContents(of descriptor: Int32, limit: Int = .max) throws(SystemCallError) -> [UInt8] {
     var contents: [UInt8] = []
-    var buffer = [UInt8](repeating: 0, count: min(limit, 65_536))
+    var buffer = [UInt8](repeating: 0, count: max(0, min(limit, 65_536)))
     while contents.count < limit {
         let wanted = min(buffer.count, limit - contents.count)
         var failure: Int32 = 0

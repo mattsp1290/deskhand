@@ -108,11 +108,65 @@ private func at(_ offsetMs: Int64) -> ClockReading { ToolFixture.t0.advanced(byM
         let renewal = owner.applyLease(
             LeaseArguments(holderID: ToolFixture.holder, command: .renew(ttlMs: 12_000)),
             principal: ToolFixture.principal)
+        #expect(renewal.result.result.outcome == .refused(.state(.gated)))
         #expect(renewal.ended.map(\.cause) == [.dropped(.gated)])
 
         let next = owner.reduce(signals: Self.signals(allowanceUntil: 120_000))
         #expect(next.effects == Self.gated(at: at(10_000)))
-        #expect(renewal.ended.count + next.leaseEnds.count == 1)
+        #expect(next.leaseEnds.isEmpty)
+    }
+
+    @Test func anEndAReaderCommittedReachesTheNextReductionOnceAfterALeaseCall() throws {
+        _ = try armedWithLease(ttlMs: 60_000)
+        clock.set(10_500)
+        #expect(owner.statusView(for: holder).state == .gated)
+        let renewal = owner.applyLease(
+            LeaseArguments(holderID: ToolFixture.holder, command: .renew(ttlMs: 12_000)),
+            principal: ToolFixture.principal)
+        #expect(renewal.ended.isEmpty)
+
+        let next = owner.reduce(signals: Self.signals(allowanceUntil: 10_000))
+        #expect(next.effects == Self.gated(at: at(10_000)))
+        #expect(next.leaseEnds.map(\.cause) == [.dropped(.gated)])
+        #expect(owner.reduce(signals: Self.signals(allowanceUntil: 10_000)).leaseEnds.isEmpty)
+    }
+
+    @Test func anArmingExpiryAReaderCommittedDropsTheLeaseAtItsInstant() throws {
+        owner.reduce(signals: Self.signals(allowanceUntil: 120_000), command: .arm(for: .seconds(5)))
+        _ = owner.applyLease(
+            LeaseArguments(holderID: ToolFixture.holder, command: .acquire(ttlMs: 60_000)),
+            principal: ToolFixture.principal)
+        clock.set(6000)
+        #expect(owner.snapshot().state == .disarmed)
+
+        let next = owner.reduce(signals: Self.signals(allowanceUntil: 120_000))
+        #expect(next.effects.last == .dropLease(.disarmed, at: at(5000)))
+        #expect(next.leaseEnds.map(\.cause) == [.dropped(.disarmed)])
+    }
+
+    @Test func aReadCheckRefusesALapseOnlyItSaw() throws {
+        _ = try armedWithLease(ttlMs: 60_000)
+        let start = owner.beginRead()
+        clock.set(wall: 10_500, monotonic: 5000)
+        #expect(throws: FrameRefusal.blocked(.gated)) { try owner.checkRead(since: start) }
+
+        clock.set(5100)
+        #expect(throws: FrameRefusal.blocked(.gated)) { try owner.checkRead(since: start) }
+    }
+
+    @Test func aForwardStepAcrossTheLapseKeepsALeaseThatHadRunOutExpired() throws {
+        let admitted = try armedWithLease(ttlMs: 7000)
+        clock.set(7500)
+        #expect(owner.snapshot().lease.endCause(of: admitted, now: at(7500)) == .expired)
+
+        clock.set(wall: 20_000, monotonic: 8000)
+        let seen = owner.snapshot()
+        #expect(seen.state == .gated)
+        #expect(seen.lease.endCause(of: admitted, now: seen.reading) == .expired)
+        #expect(throws: LeaseDenial.expired) {
+            try seen.lease.check(
+                principal: ToolFixture.principal, holderID: ToolFixture.holder, now: seen.reading)
+        }
     }
 
     @Test func theExecutorSeesALeaseThatOutlivedAnUnreducedLapseAsDropped() throws {

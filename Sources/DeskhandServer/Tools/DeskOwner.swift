@@ -20,15 +20,18 @@ public final class DeskOwner: StateSource, FrameSource {
         /// Committed by a reader, not yet returned by a reduction for delivery to the executor.
         var settledEffects: [TransitionEffect] = []
         var settledEnds: [LeaseEnd] = []
+        /// The latest reading anything read or reduced the world at. Readings are taken under the
+        /// lock, so they never go back.
+        var lastReading: ClockReading?
 
         /// Commits every transition the clock made by `reading` before anything reads the report
         /// there. Readers act on those transitions (a refusal, an abort, `status`), and a wall clock
         /// stepped back before the next reduction would otherwise make the allowance valid again
         /// and lose them with their effects. The next reduction returns them.
         mutating func settle(at reading: ClockReading) {
+            defer { lastReading = reading }
             let elapsed = report.elapsed(until: reading)
-            // Every clock transition adds `gated` or `disarmed`, so it always yields a `dropLease`.
-            guard !elapsed.effects.isEmpty else { return }
+            guard elapsed.report != report else { return }
             report = elapsed.report
             settledEffects += elapsed.effects
             settledEnds += carryOut(elapsed.effects)
@@ -43,7 +46,11 @@ public final class DeskOwner: StateSource, FrameSource {
                 case .cancelInFlight(let state): invalidatedBy = state
                 case .invalidateFrames: frames.invalidateAll()
                 case .dropLease(let state, let lapse):
-                    if let end = lease.drop(because: state, now: lapse) { ends.append(end) }
+                    // A wall clock stepped forward across `expires_at` can place the lapse before a
+                    // reading that saw the allowance valid. It began no earlier than that reading, so
+                    // a lease that had run out by then stays expired (contract 5.3, 10.4).
+                    let began = lastReading.map { lapse.monotonic < $0.monotonic ? $0 : lapse } ?? lapse
+                    if let end = lease.drop(because: state, now: began) { ends.append(end) }
                 case .releaseHeldInput: break
                 }
             }
@@ -83,8 +90,9 @@ public final class DeskOwner: StateSource, FrameSource {
 
     public func check(_ id: FrameID, in scope: FrameScope, for use: FrameUse, now: Timestamp) async -> FrameCheck {
         let generation = displays.generation
-        return world.withLock {
-            $0.frames.check(id, in: scope, for: use, displayConfigGeneration: generation, now: now)
+        return world.withLock { world in
+            world.settle(at: clock())
+            return world.frames.check(id, in: scope, for: use, displayConfigGeneration: generation, now: now)
         }
     }
 
@@ -96,7 +104,9 @@ public final class DeskOwner: StateSource, FrameSource {
         /// ``TransitionEffect/invalidateFrames`` and ``TransitionEffect/dropLease(_:at:)`` are
         /// already applied here.
         public let effects: [TransitionEffect]
-        /// Every live lease this reduction ended, by running out or by a state that drops it.
+        /// Every live lease that ended since the last reduction, by running out or by a state that
+        /// drops it: first those a reader's commit ended (less any a `lease` call already handed
+        /// out), then this reduction's.
         public let leaseEnds: [LeaseEnd]
         public let reading: ClockReading
 
@@ -146,6 +156,7 @@ public final class DeskOwner: StateSource, FrameSource {
                 now: reading)
             world.report = report
             var ends = world.settledEnds + world.carryOut(effects)
+            world.lastReading = reading
             if let end = world.lease.expire(now: reading) { ends.append(end) }
             let allEffects = world.settledEffects + effects
             world.settledEffects = []
@@ -175,11 +186,12 @@ public final class DeskOwner: StateSource, FrameSource {
     func applyLease(_ arguments: LeaseArguments, principal: Principal) -> (result: LeaseToolResult, ended: [LeaseEnd]) {
         world.withLock { world in
             let reading = clock()
-            let settledEnds = world.settledEnds.count
+            // Ends an earlier reader committed stay queued for the next reduction.
+            let queuedBefore = world.settledEnds.count
             world.settle(at: reading)
-            var ended = Array(world.settledEnds[settledEnds...])
+            var ended = Array(world.settledEnds[queuedBefore...])
             // This call hands them to the executor, so the next reduction must not again.
-            world.settledEnds.removeSubrange(settledEnds...)
+            world.settledEnds.removeSubrange(queuedBefore...)
             let state = world.report.state(at: reading)
             let application = world.lease.apply(arguments, principal: principal, state: state, now: reading)
             if let end = application.ended { ended.append(end) }

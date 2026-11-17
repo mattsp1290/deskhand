@@ -45,10 +45,12 @@ public struct DurableFile: Sendable {
     public func read() throws(StorageError) -> [UInt8]? {
         let directory = try openDirectory()
         defer { _ = close(directory) }
-        let descriptor = name.withCString { openat(directory, $0, O_RDONLY | Self.checkedOpen) }
+        let (descriptor, openErrno) = name.withCString {
+            (openat(directory, $0, O_RDONLY | Self.checkedOpen), errno)
+        }
         if descriptor < 0 {
-            if errno == ENOENT { return nil }
-            throw .io(operation: "open", errno: errno)
+            if openErrno == ENOENT { return nil }
+            throw .io(operation: "open", errno: openErrno)
         }
         defer { _ = close(descriptor) }
         try verify(descriptor)
@@ -67,13 +69,14 @@ public struct DurableFile: Sendable {
         defer { _ = close(directory) }
         let temporary = name + ".tmp"
         // A leftover from a crash may have any owner or mode; O_EXCL then guarantees a new file.
-        if temporary.withCString({ unlinkat(directory, $0, 0) }) != 0, errno != ENOENT {
-            throw .io(operation: "unlink", errno: errno)
+        let (unlinked, unlinkErrno) = temporary.withCString { (unlinkat(directory, $0, 0), errno) }
+        if unlinked != 0, unlinkErrno != ENOENT {
+            throw .io(operation: "unlink", errno: unlinkErrno)
         }
-        let descriptor = temporary.withCString {
-            openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let (descriptor, openErrno) = temporary.withCString {
+            (openat(directory, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600), errno)
         }
-        guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
+        guard descriptor >= 0 else { throw .io(operation: "open", errno: openErrno) }
         do throws(StorageError) {
             // A strict umask can take away owner write, which every later append needs.
             guard fchmod(descriptor, 0o600) == 0 else { throw .io(operation: "fchmod", errno: errno) }
@@ -84,9 +87,10 @@ public struct DurableFile: Sendable {
             throw error
         }
         _ = close(descriptor)
-        guard renameat(directory, temporary, directory, name) == 0 else {
-            throw .io(operation: "rename", errno: errno)
+        let (renamed, renameErrno) = temporary.withCString { from in
+            name.withCString { to in (renameat(directory, from, directory, to), errno) }
         }
+        guard renamed == 0 else { throw .io(operation: "rename", errno: renameErrno) }
         // Makes the rename itself durable.
         try flush(directory)
     }
@@ -95,8 +99,10 @@ public struct DurableFile: Sendable {
     public func openForAppending() throws(StorageError) -> Appender {
         let directory = try openDirectory()
         defer { _ = close(directory) }
-        let descriptor = name.withCString { openat(directory, $0, O_WRONLY | O_APPEND | Self.checkedOpen) }
-        guard descriptor >= 0 else { throw .io(operation: "open", errno: errno) }
+        let (descriptor, openErrno) = name.withCString {
+            (openat(directory, $0, O_WRONLY | O_APPEND | Self.checkedOpen), errno)
+        }
+        guard descriptor >= 0 else { throw .io(operation: "open", errno: openErrno) }
         do throws(StorageError) {
             try verify(descriptor)
         } catch {
@@ -146,8 +152,10 @@ public struct DurableFile: Sendable {
     }
 
     private func openDirectory() throws(StorageError) -> Int32 {
-        let descriptor = directoryPath.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard descriptor >= 0 else { throw .io(operation: "open directory", errno: errno) }
+        let (descriptor, openErrno) = directoryPath.withCString {
+            (open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), errno)
+        }
+        guard descriptor >= 0 else { throw .io(operation: "open directory", errno: openErrno) }
         let problem: StorageError?
         do throws(SystemCallError) {
             let status = try FileStatus.of(descriptor)
@@ -189,12 +197,12 @@ public struct DurableFile: Sendable {
 private func writeAll(_ bytes: [UInt8], to descriptor: Int32) throws(StorageError) {
     var offset = 0
     while offset < bytes.count {
-        let count = bytes.withUnsafeBytes { buffer in
-            write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
+        let (count, failure) = bytes.withUnsafeBytes { buffer in
+            (write(descriptor, buffer.baseAddress! + offset, buffer.count - offset), errno)
         }
         if count < 0 {
-            if errno == EINTR { continue }
-            throw .io(operation: "write", errno: errno)
+            if failure == EINTR { continue }
+            throw .io(operation: "write", errno: failure)
         }
         offset += count
     }

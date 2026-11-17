@@ -34,6 +34,20 @@ import Testing
         }
     }
 
+    @Test func readsOneByteBeyondTheLimitFromALargerFile() throws {
+        try Self.withDirectory { directory in
+            try Self.write(String(repeating: "x", count: 200), to: directory + "/allowance.json")
+            guard
+                case .opened(_, _, let contents) = probe.probe(
+                    directory: directory, name: "allowance.json", maxBytes: 64)
+            else {
+                Issue.record("expected the file to open")
+                return
+            }
+            #expect(contents.count == 65)
+        }
+    }
+
     @Test func reportsWritableModes() throws {
         try Self.withDirectory { directory in
             try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: directory)
