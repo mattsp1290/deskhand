@@ -225,27 +225,39 @@ struct WatchdogReentrancyTests {
         clock.advance(to: read)
         await owner.waitUntilHeld()
         desk.renewLease(ttlMs: 200)
+        let deadline = WatchdogFixture.at(700).monotonic
+        #expect(Watchdog.deadline(of: desk.snapshot()) == deadline, "the renewal did not move the deadline")
         await watchdog.refreshState()
         owner.release()
 
-        let deadline = WatchdogFixture.at(700).monotonic
+        // Which wait ended, not the sleepers read again: the executor's loop, woken once more as
+        // the reduction ends, briefly leaves only one sleeper.
         let nextRead = WatchdogFixture.at(1000).monotonic
-        await Self.firstOf(
+        let first = await Self.firstOf(
             { await clock.waitUntil { $0 == [deadline, deadline] } },
             { await clock.waitUntil { $0.sorted() == [deadline, nextRead] } })
-        #expect(clock.sleeperDeadlines == [deadline, deadline], "the owner's loop slept past the moved deadline")
+        #expect(first == 0, "the owner's loop slept past the moved deadline")
         running.cancel()
         _ = await finished(running)
     }
 
+    /// Which of the two ended first: 0 or 1.
+    @discardableResult
     private static func firstOf(
         _ first: @escaping @Sendable () async -> Void, _ second: @escaping @Sendable () async -> Void
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await first() }
-            group.addTask { await second() }
-            await group.next()
+    ) async -> Int {
+        await withTaskGroup(of: Int.self) { group in
+            group.addTask {
+                await first()
+                return 0
+            }
+            group.addTask {
+                await second()
+                return 1
+            }
+            let ended = await group.next() ?? 1
             group.cancelAll()
+            return ended
         }
     }
 }

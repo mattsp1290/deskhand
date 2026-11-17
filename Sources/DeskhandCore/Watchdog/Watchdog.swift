@@ -199,7 +199,7 @@ public actor Watchdog {
     private func executorLoop() async {
         while !Task.isCancelled {
             let wakeup = await act(on: owner.snapshot())
-            await sleep(.executor, until: wakeup)
+            await sleep(.executor, until: wakeup, keepingRingsWhileAwake: true)
         }
     }
 
@@ -267,11 +267,9 @@ public actor Watchdog {
 
     /// Without `keepingRingsWhileAwake`, a ring that arrived while the loop was awake is dropped
     /// rather than ending this sleep at once: the caller computed `wakeup` from state read after
-    /// that ring. Nothing here suspends before the continuation is installed, so no ring is lost
-    /// between that read and the sleep.
-    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?, keepingRingsWhileAwake: Bool = true)
-        async
-    {
+    /// that ring. Nothing here suspends before the continuation is installed, so with a caller that
+    /// does not suspend between that read and this call either, no ring is lost.
+    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?, keepingRingsWhileAwake: Bool) async {
         let rang = alarms[loop, default: Alarm()].rangWhileAwake
         alarms[loop, default: Alarm()].rangWhileAwake = false
         if rang && keepingRingsWhileAwake { return }
