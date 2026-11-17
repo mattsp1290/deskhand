@@ -22,17 +22,13 @@ actor StackActionLog: ActionLogClient {
 @Suite("Effect answers close without HTTP bytes", .timeLimit(.minutes(2)))
 struct EffectAnswerWireTests {
     static func exchange(_ request: TestRequest, address: SocketAddress, pki: TestPKI) async throws
-        -> ResumingTLSClient.Exchange
+        -> RawTLSClient.Exchange
     {
-        let identity = pki.identity(.valid)
-        let client = try ResumingTLSClient(
-            caPath: pki.caPath, certificatePath: identity.certificatePath, keyPath: identity.keyPath)
         let request = request.setting("Connection", to: "close")
         var head = "POST /mcp HTTP/1.1\r\n"
         for (name, value) in request.headers { head += "\(name): \(value)\r\n" }
-        return try await client.exchange(
-            port: try #require(address.port), serverName: TestPKI.serverName,
-            request: Array((head + "\r\n").utf8) + request.body, offering: nil)
+        return try await RawTLSClient(pki: pki).exchange(
+            to: address, request: Array((head + "\r\n").utf8) + request.body)
     }
 
     static func request(_ tool: String, _ arguments: JSONObject) -> TestRequest {
@@ -64,7 +60,7 @@ struct EffectAnswerWireTests {
             let pending = Task { try await Self.exchange(request, address: stack.address, pki: stack.pki) }
             await entered.wait()
             await stack.executor.beginStop()
-            let response: ResumingTLSClient.Exchange
+            let response: RawTLSClient.Exchange
             if timeout {
                 response = try await limits.passing { try await pending.value }
             } else {
@@ -168,7 +164,7 @@ struct EffectAnswerWireTests {
             }
             await entered.wait()
             await stack.executor.beginStop()
-            let response: ResumingTLSClient.Exchange
+            let response: RawTLSClient.Exchange
             if timeout {
                 response = try await limits.passing { try await pending.value }
             } else {
