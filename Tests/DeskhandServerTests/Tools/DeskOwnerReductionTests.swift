@@ -6,17 +6,14 @@ import Testing
 
 @testable import DeskhandServer
 
+/// Pins the serialization ``DeskOwner/reduce(signals:command:)`` already has; it does not drive the
+/// watchdog.
 @Suite("DeskOwner: reductions apply one at a time, in the order their signals were read", .timeLimit(.minutes(1)))
 struct DeskOwnerReductionTests {
     @Test("a reduction started during a slow signal read reads its signals only after that one applied")
-    func reductionsAreSerialized() async throws {
+    func reductionsAreSerializedInSignalOrder() async throws {
         let race = try await ReductionRace.run()
         #expect(race.seenBySecondRead == .secureInput, "the second reduction read its signals during the first")
-    }
-
-    @Test("an older signal reading never applies after a newer one and reopens the state it closed")
-    func reductionsApplyInSignalOrder() async throws {
-        let race = try await ReductionRace.run()
         #expect(race.final == .ok, "the first reading, secure_input, applied after the second, ok")
     }
 }
@@ -24,7 +21,7 @@ struct DeskOwnerReductionTests {
 /// Two reductions on two threads. The first reads `secure_input` and then holds its read until
 /// the second reads its signals, `ok`, or until 200 ms pass. With the reductions serialized the
 /// second cannot read before the first applies, so the hold always runs out; without, the second
-/// reads at once and applies first.
+/// reads at once and usually applies first.
 private struct ReductionRace {
     let seenBySecondRead: DeskhandState?
     let final: DeskhandState
@@ -63,14 +60,20 @@ private struct ReductionRace {
 /// A body run on its own thread, so a reduction that blocks does not hold a thread of the
 /// cooperative pool.
 private final class OnThread<T: Sendable>: Sendable {
-    private let result = Mutex<(value: T?, waiter: CheckedContinuation<T, Never>?)>((nil, nil))
+    private enum Progress {
+        case running(waiter: CheckedContinuation<T, Never>?)
+        case finished(T)
+    }
+
+    private let progress = Mutex(Progress.running(waiter: nil))
 
     init(_ body: @escaping @Sendable () -> T) {
         let thread = Thread { [self] in
             let value = body()
-            let waiter = self.result.withLock { result in
-                result.value = value
-                return result.waiter
+            let waiter = self.progress.withLock { progress -> CheckedContinuation<T, Never>? in
+                defer { progress = .finished(value) }
+                if case .running(let waiter) = progress { return waiter }
+                return nil
             }
             waiter?.resume(returning: value)
         }
@@ -80,11 +83,12 @@ private final class OnThread<T: Sendable>: Sendable {
     var value: T {
         get async {
             await withCheckedContinuation { continuation in
-                let value = result.withLock { result -> T? in
-                    if result.value == nil { result.waiter = continuation }
-                    return result.value
+                let finished = progress.withLock { progress -> T? in
+                    if case .finished(let value) = progress { return value }
+                    progress = .running(waiter: continuation)
+                    return nil
                 }
-                if let value { continuation.resume(returning: value) }
+                if let finished { continuation.resume(returning: finished) }
             }
         }
     }

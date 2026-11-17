@@ -174,7 +174,7 @@ public actor Watchdog {
     /// executes, retries cleanup, and returns when it next needs to run: `nil` when nothing is due
     /// until something changes.
     public func evaluate() async -> ContinuousClock.Instant? {
-        let ownerWakeup = await readIfDue()
+        let ownerWakeup = await readIfDue(ownerLoopLooksAfter: false)
         let executorWakeup = await act(on: owner.snapshot())
         return [ownerWakeup, executorWakeup].compactMap { $0 }.min()
     }
@@ -193,7 +193,7 @@ public actor Watchdog {
         }
     }
 
-    private func readIfDue(ownerLoopLooksAfter: Bool = false) async -> ContinuousClock.Instant? {
+    private func readIfDue(ownerLoopLooksAfter: Bool) async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
         let readDue = nextAllowanceRead.map { $0 <= now } ?? true
