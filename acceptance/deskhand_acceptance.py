@@ -102,7 +102,8 @@ class Config:
         self.token_file = env.get("DESKHAND_TOKEN_FILE", f"{base}/token/token")
         self.run_id = env.get("DESKHAND_RUN_ID") or secrets.token_hex(4)
         self.holder_id = env.get("DESKHAND_HOLDER_ID") or f"acceptance-{self.run_id}-{secrets.token_hex(4)}"
-        # operation_id is "acc-<run_id>-<12 hex>": 17 characters around run_id, so it can be up to 111.
+        # operation_id is "acc-<run_id>-<12 hex>": 17 characters around run_id, so it can be up to 111
+        # (108 with the default holder_id).
         if not HANDLE_RE.fullmatch(self.holder_id) or not HANDLE_RE.fullmatch(f"acc-{self.run_id}-{'0' * 12}"):
             raise ValueError("DESKHAND_RUN_ID or DESKHAND_HOLDER_ID is outside the contract 4.1/4.3 alphabet")
         apps = env.get("DESKHAND_PERMITTED_APPS", "com.apple.TextEdit").split(",")
@@ -232,6 +233,7 @@ class Run:
         self.cfg, self.client, self.out, self.redact = cfg, client, out, redact
         self.results = []
         self.frame = None
+        self.terminated = False
 
     def emit(self, record):
         self.out.write(self.redact(json.dumps(record, sort_keys=True)) + "\n")
@@ -484,7 +486,8 @@ class Run:
             if held:
                 self.run_check("lease_renew", self.lease_renew)
         finally:
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a second SIGTERM must not skip the release
+            # A SIGTERM from here on must not skip the release; it is only recorded.
+            signal.signal(signal.SIGTERM, lambda signum, frame: setattr(self, "terminated", True))
             # Release even when acquire looked wrong (e.g. "renewed"): release is safe to repeat (5.1).
             if not (held and self.run_check("lease_release", self.lease_release)):
                 try:  # best effort; the TTL ends the lease anyway
@@ -542,6 +545,7 @@ def main(argv=None, env=None, out=None):
     finally:
         signal.signal(signal.SIGTERM, previous)
     failed = [r["check"] for r in run.results if not r["ok"]]
+    terminated = terminated or run.terminated
     ok = not failed and not terminated and bool(run.results)
     run.emit({"summary": {"mac": cfg.mac, "host": cfg.host, "port": cfg.port, "node": cfg.node,
                           "run_id": cfg.run_id, "holder_id": cfg.holder_id, "checks": len(run.results),
