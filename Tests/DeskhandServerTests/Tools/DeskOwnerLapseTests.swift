@@ -169,6 +169,34 @@ private func at(_ offsetMs: Int64) -> ClockReading { ToolFixture.t0.advanced(byM
         }
     }
 
+    @Test func aReductionAfterAForwardStepAcrossTheLapseEndsALeaseThatHadRunOutAsExpired() throws {
+        let admitted = try armedWithLease(ttlMs: 7000)
+        clock.set(7500)
+        #expect(owner.snapshot().lease.endCause(of: admitted, now: at(7500)) == .expired)
+
+        clock.set(wall: 20_000, monotonic: 8000)
+        let reduction = owner.reduce(signals: Self.signals(allowanceUntil: 10_000))
+        #expect(reduction.report.state(at: clock.reading) == .gated)
+        #expect(reduction.leaseEnds.map(\.cause) == [.expired])
+        #expect(owner.snapshot().lease.endCause(of: admitted, now: clock.reading) == .expired)
+    }
+
+    @Test func aFrameCheckCommitsALapseItSawAcrossAWallClockStepBack() async throws {
+        _ = try armedWithLease(ttlMs: 60_000)
+        let epoch = owner.beginRead().epoch
+
+        clock.set(10_500)
+        let scope = FrameScope(principal: ToolFixture.principal, holderID: ToolFixture.holder)
+        _ = await owner.check(try #require(FrameID("f-1")), in: scope, for: .pointer, now: clock.reading.wall)
+
+        clock.set(wall: 9000, monotonic: 11_000)
+        #expect(owner.beginRead().epoch != epoch)
+        let back = owner.reduce(signals: Self.signals(allowanceUntil: 10_000))
+        #expect(back.effects == Self.gated(at: at(10_000)))
+        #expect(back.leaseEnds.map(\.cause) == [.dropped(.gated)])
+        #expect(owner.reduce(signals: Self.signals(allowanceUntil: 10_000)).effects.isEmpty)
+    }
+
     @Test func theExecutorSeesALeaseThatOutlivedAnUnreducedLapseAsDropped() throws {
         let admitted = try armedWithLease(ttlMs: 12_000)
         clock.set(13_000)

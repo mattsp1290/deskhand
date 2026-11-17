@@ -91,7 +91,9 @@ public final class DeskOwner: StateSource, FrameSource {
 
     /// Takes one reading under the world lock, commits the clock's transitions by then, and runs
     /// `body` there. Every call that reads the report, the lease or the frames goes through here,
-    /// so none can act on a transition it has not committed.
+    /// so none can act on a transition it has not committed, except ``applyLease(_:principal:)``:
+    /// it calls `World.commitElapsed(at:)` itself because it hands the ends it commits to its
+    /// caller, and settling here would queue them for the next reduction as well.
     private func withSettledWorld<T: Sendable, E: Error>(
         _ body: (inout World, ClockReading) throws(E) -> T
     ) throws(E) -> T {
@@ -170,7 +172,9 @@ public final class DeskOwner: StateSource, FrameSource {
 
     private func apply(_ signals: StateSignals, command: ArmingCommand?) -> Reduction {
         withSettledWorld { world, reading in
-            // Settled first, so the reduction finds no elapsed transitions of its own.
+            // Settled first, so the reduction finds no elapsed transitions of its own and every
+            // lapse it finds is placed at `reading`.
+            assert(world.report.elapsed(until: reading).effects.isEmpty)
             let (report, effects) = StateReducer.reduce(
                 previous: world.report, signals: signals, command: command, configuration: stateConfiguration,
                 now: reading)
