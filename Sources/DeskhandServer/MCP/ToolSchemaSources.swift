@@ -110,6 +110,7 @@ enum ToolSchemaSources {
             },
             "no_holder_id": {
               "description": "No object anywhere in a tool result or tool error has a holder_id member (docs/contract.md section 5.4): not the caller's own label, and not the other holder's beside lease_held_by_other. Every output schema applies this at its root.",
+              "$comment": "additionalProperties here marks every member as evaluated, so a schema that applies this rule cannot also rely on unevaluatedProperties: false.",
               "not": { "type": "object", "required": ["holder_id"] },
               "additionalProperties": { "$ref": "#/$defs/no_holder_id" },
               "items": { "$ref": "#/$defs/no_holder_id" }
@@ -275,7 +276,7 @@ enum ToolSchemaSources {
               ]
             },
             "measured": {
-              "description": "Facts deskhand measured at an app-policy check. On the result of an admitted call other than denied_app: at the last look, the check immediately before the first event (docs/contract.md section 12.3 step 5). On log_unavailable: at the check before admission (section 9.5 step 14). On denied_app: at the check that failed.",
+              "description": "Facts deskhand measured at an app-policy check. On the result of an admitted call other than denied_app: at the last look, the check immediately before the first event (docs/contract.md section 12.3 step 5), or, on an internal_error that ended the call before the last look ran, at the check before admission (section 9.5 step 14). On log_unavailable: at the check before admission (section 9.5 step 14). On denied_app: at the check that failed.",
               "type": "object",
               "properties": {
                 "frontmost_app": { "$ref": "#/$defs/app_ref" },

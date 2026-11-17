@@ -92,12 +92,11 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   cuts a call short to enforce the cap. A caller MUST be ready to reconnect
   between requests.
 - Closing the connection before the response arrives cancels the call. An
-  effect call that is executing when deskhand observes the close is
-  aborted, and one that has not been admitted by then is never admitted
-  ([section 9.5](#95-order-of-refusals)). See
-  [section 4.3](#43-operation_id). deskhand reads the connection while a
-  call runs. Here and throughout, "closed" means that deskhand has observed
-  the close, a moment the caller cannot see
+  effect call that has not been admitted when deskhand observes the close
+  is never admitted ([section 9.5](#95-order-of-refusals)), and one that is
+  executing is aborted at its next check, if one is still to come
+  ([section 4.3](#43-operation_id)). A connection is "closed" once deskhand
+  has observed the close, a moment the caller cannot see
   ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
@@ -519,9 +518,14 @@ Results and input:
   same way.
 - A call whose connection deskhand has observed closed
   ([section 12.5](#125-repeats-and-stored-results)) before admission is
-  dropped: nothing is posted and no record is kept. Observed after
-  admission, the operation is aborted and recorded with code `cancelled`,
-  and repeating the `operation_id` returns it.
+  dropped: nothing is posted and no record is kept. After admission
+  deskhand looks at the connection before every event and at every poll of
+  a hold ([section 12.3](#123-write-ordering)). A close it observes at one
+  of those checks aborts the operation, recorded with code `cancelled`
+  unless the same check found another cause
+  ([section 12.4](#124-aborts)), and repeating the `operation_id` returns
+  it. A close it observes after the check before the last event does not
+  stop the call, which ends as it would have.
 
 Records are kept for a configured window and up to a configured number per
 principal. The defaults are 24 hours and 10,000, and `status.limits` reports
@@ -1348,7 +1352,7 @@ also used to end an admitted call part-way.
 | `operation_capacity` | effects | no | The principal's operation records inside the retention window are at the cap (10,000 in 24 h by default). | Wait. |
 | `log_unavailable` | effects | no | The action log could not record the intent, so nothing was posted. | An operator must look. |
 | `cleanup_pending` | effects | no | Input from an earlier operation still has to be released. | Wait. |
-| `cancelled` | effects | no | The caller closed the connection during an earlier call with this `operation_id`. Seen only on a replay. | Treat as an aborted operation; see `operation`. |
+| `cancelled` | effects | no | deskhand observed the connection closed during an earlier call with this `operation_id`. Seen only on a replay. | Treat as an aborted operation; see `operation`. |
 | `interrupted` | effects | no | deskhand restarted during an earlier call with this `operation_id`. Seen only on a replay. | See `operation.status`. |
 | `internal_error` | all | maybe | A fault inside deskhand. | Report it. Do not assume nothing was posted unless `operation` is absent. |
 
@@ -1945,7 +1949,7 @@ first event only.
 | The patch check was more than 250 ms old when the first event was due (`pointer` only) | `stale_frame`, reason `pixels_changed` | `aborted`, 0 events |
 | The lease ran out | `lease_expired` | `aborted` |
 | The holder released the lease | `lease_not_held` | `aborted` |
-| The caller closed the connection | `cancelled`, seen on a repeat | `aborted` |
+| deskhand observed the connection closed ([section 12.5](#125-repeats-and-stored-results)) | `cancelled`, seen on a repeat | `aborted` |
 | A fault inside deskhand | `internal_error` | `failed` |
 | deskhand stopped or crashed | `interrupted`, seen on a repeat | `aborted_by_restart` |
 
@@ -2221,7 +2225,7 @@ Every entry has these fields:
   It does not fail closed: a refusal posts nothing, so nothing is lost if the
   entry is.
 - There is no refusal entry when deskhand could not read the connection's
-  source address or compute the request digest (both `internal_error`), or
+  source address or compute the request digest, or
   for invalid arguments on a connection whose source address it could not
   read.
 - An intent entry with no outcome or refusal entry after it for the same
@@ -3009,7 +3013,8 @@ items 37, 46, 50 and 53 by the re-review.
 65. Action log entries: the fields of
     [section 12.10](#1210-action-log-entries), with `principal`,
     `holder_id`, kind and action added to the list in deskhand-r-nkjj. A
-    refused effect call is logged once, best effort.
+    refused effect call is logged at most once, best effort; section 12.10
+    lists the refusals that are not logged.
 66. `server/discover` and `tools/list` send `ttlMs` 300,000 and `cacheScope`
     `private`. `server/discover` sends no `instructions`. A notification is
     answered `202` only after the version header checks. A timestamp that is

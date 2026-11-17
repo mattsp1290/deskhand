@@ -271,7 +271,7 @@ SCHEMA_KEYWORDS = SUBSCHEMA_KEYWORDS | SUBSCHEMA_LIST_KEYWORDS | SUBSCHEMA_MAP_K
 
 
 def unwrap(text: str) -> str:
-    """Joins hard-wrapped prose lines into one line, keeping headings and table rows apart."""
+    """Joins hard-wrapped prose lines; a blank line, heading or table row is never joined onto the line before."""
     return re.sub(r"[ \t]*\n[ \t]*(?=[^\s|#])", " ", text)
 
 
@@ -507,8 +507,12 @@ class Checker:
                         self.fail(f"{rel}: top-level {kw} (input schemas stay flat)")
                 if s.get("type") != "object" or s.get("additionalProperties") is not False:
                     self.fail(f"{rel}: input schema must be a closed object")
-            elif s.get("type") != "object":
-                self.fail(f"{rel}: output schema root type must be object")
+            else:
+                if s.get("type") != "object":
+                    self.fail(f"{rel}: output schema root type must be object")
+                # Section 5.4: no result carries a holder_id, at any depth.
+                if {"$ref": "../defs.json#/$defs/no_holder_id"} not in s.get("allOf", []):
+                    self.fail(f"{rel}: output schema must apply $defs/no_holder_id in its root allOf")
 
     # Examples
 
@@ -1105,7 +1109,7 @@ class Checker:
                     self.fail(f"{rel}#{ptr}/{kw} is {got}, contract.md 16 says {name} {part} is {expected}")
 
         for prefix, pattern, parts in PROSE_SITES:
-            text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
+            text = unwrap(self.section(prefix))
             found = list(re.finditer(pattern, text))
             if not found:
                 self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update PROSE_SITES)")
@@ -1116,7 +1120,7 @@ class Checker:
                                   f"{part[0]} {part[1]} {want(*part)}")
         self.check_figures(want)
         for prefix, pattern, sites in SCHEMA_PROSE_SITES:
-            text = re.sub(r"[ \t]*\n[ \t]*(?![|#])", " ", self.section(prefix))
+            text = unwrap(self.section(prefix))
             found = list(re.finditer(pattern, text))
             if not found:
                 self.fail(f"contract.md {prefix.strip()}: prose site /{pattern}/ not found (update SCHEMA_PROSE_SITES)")
@@ -1136,7 +1140,7 @@ class Checker:
         # the figure is a default ("`NAME` is 0 by default", also with a unit: "is 5 ms by default").
         flat = unwrap(self.md)
         for name, verb, value, by_default in re.findall(
-                rf"`([A-Z][A-Z_]+)` (=|is) ({NUM})(?: (?!by\b)[a-z()]+){{0,3}}( by default)?", flat):
+                rf"`([A-Z][A-Z_]+)` (=|is) ({NUM})(?: (?!by\b)[a-z()]+){{0,3}}( by default\b)?", flat):
             part = "default" if by_default else "value"
             if name in consts and number(value) != want(name, part):
                 self.fail(f"contract.md: `{name}` {verb} {value}, section 16 gives {want(name, part)}")
