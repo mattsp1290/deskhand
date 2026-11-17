@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 from support import ACCEPTANCE, client as dh, jpeg, make_pki
@@ -95,6 +96,9 @@ class FakeDeskhand(http.server.BaseHTTPRequestHandler):
 
     def tool(self, name, args):
         st = self.state
+        if name in st["hang_tools"] or args.get("op") in st["hang_tools"]:
+            st["hanging"].set()
+            st["unhang"].wait(10)
         if name == "status":
             return {"contract_version": dh.CONTRACT_VERSION, "mcp_protocol_version": dh.PROTOCOL_VERSION,
                     "mac": "m1max2021", "state": "ok", "active_states": [], "conditions": [],
@@ -127,9 +131,6 @@ class FakeDeskhand(http.server.BaseHTTPRequestHandler):
             return {**err, "code": "lease_not_held"}, []
         if args["frame_id"] not in st["live"]:
             return {**err, "code": "stale_frame", "details": {"reason": "unknown"}}, []
-        if name in st["hang_tools"]:
-            st["hanging"].set()
-            st["unhang"].wait(10)
         if name in st["fail_tools"]:
             return {**err, "code": "user_active", "details": {"idle_ms": 0}}, []
         app = {"bundle_id": "com.apple.TextEdit", "team_id": None, "name": "TextEdit"}
@@ -210,13 +211,20 @@ class EndToEndTests(unittest.TestCase):
         self.assertIsNone(self.handler.state["holder"])
 
     def test_sigterm_releases_the_lease(self):
-        self.reset_state(hang_tools={"keyboard"})
+        for hang in ("keyboard", "release"):  # SIGTERM during an effect, then during the release itself
+            with self.subTest(hang=hang):
+                self.sigterm_while_hanging_on(hang)
+
+    def sigterm_while_hanging_on(self, hang):
+        self.reset_state(hang_tools={hang})
         proc = subprocess.Popen([sys.executable, "-I", str(ACCEPTANCE / "deskhand_acceptance.py"),
                                  "--checks", "type_text"], env=self.env, stdout=subprocess.PIPE, text=True)
         try:
-            self.assertTrue(self.handler.state["hanging"].wait(10), "client never reached the keyboard call")
+            self.assertTrue(self.handler.state["hanging"].wait(10), f"client never reached {hang}")
             self.assertIsNotNone(self.handler.state["holder"])
             proc.send_signal(signal.SIGTERM)
+            time.sleep(0.2)  # let the signal land while the call is still blocked
+            self.handler.state["unhang"].set()
             out, _ = proc.communicate(timeout=10)
         finally:
             self.handler.state["unhang"].set()
@@ -225,8 +233,9 @@ class EndToEndTests(unittest.TestCase):
                 proc.wait()
         self.assertEqual(proc.returncode, 1)
         self.assertIsNone(self.handler.state["holder"])
-        summary = json.loads(out.splitlines()[-1])["summary"]
-        self.assertTrue(summary["terminated"])
+        records = [json.loads(line) for line in out.splitlines()]
+        self.assertIn({"lease_release": True}, [{r.get("check"): r.get("ok")} for r in records])
+        self.assertTrue(records[-1]["summary"]["terminated"])
         self.assertNotIn(TOKEN, out)
 
     def test_wrong_ca_fails_tls(self):

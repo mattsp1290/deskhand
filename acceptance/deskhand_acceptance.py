@@ -160,7 +160,7 @@ class Response:
         """Return the JSON-RPC result of a complete reply or raise CheckFailed (contract 3)."""
         expect(self.status == 200, f"HTTP {self.status}, rpc error {self.rpc_error_code()}")
         result = (self.json() or {}).get("result")
-        expect(isinstance(result, dict), "no JSON-RPC result")
+        expect(isinstance(result, dict), f"no JSON-RPC result, rpc error {self.rpc_error_code()}")
         expect(result.get("resultType") == "complete", "resultType is not complete")
         return result
 

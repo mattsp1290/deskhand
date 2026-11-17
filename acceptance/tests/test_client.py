@@ -64,6 +64,10 @@ class ResponseTests(unittest.TestCase):
     def test_tool_result_rejects_rpc_error(self):
         with self.assertRaises(dh.CheckFailed):
             dh.Response(400, {}, b'{"error":{"code":-32020}}').tool_result()
+        with self.assertRaisesRegex(dh.CheckFailed, "-32603"):  # 9.4: some RPC errors come with HTTP 200
+            dh.Response(200, {}, b'{"error":{"code":-32603}}').result()
+        with self.assertRaisesRegex(dh.CheckFailed, "resultType"):
+            dh.Response(200, {}, b'{"result":{"resultType":"incomplete"}}').result()
 
     def test_image_size(self):
         self.assertEqual(dh.image_size(jpeg(9, 7)), (9, 7))
