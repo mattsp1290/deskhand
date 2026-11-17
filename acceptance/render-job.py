@@ -46,7 +46,7 @@ def build(args):
         "DESKHAND_HOST": host, "DESKHAND_PORT": str(args.port), "DESKHAND_MAC": args.mac,
         "DESKHAND_RUN_ID": args.run_id, "DESKHAND_CHECKS": args.checks,
         "DESKHAND_CREDENTIALS_DIR": MOUNT,
-        # Ten requests' worth of timeout fits well inside the deadline; SIGTERM then releases the lease.
+        # A run makes about 26 requests; a stalled one meets the deadline, and SIGTERM releases the lease.
         "DESKHAND_TIMEOUT_S": "10",
     }
     if args.permitted_apps:
@@ -151,12 +151,14 @@ def parse_args(argv):
                    help="Secret with tls.crt, tls.key and ca.crt (placeholder)")
     p.add_argument("--token-secret", help="Secret with the Mac's token; default deskhand-token-<mac> (placeholder)")
     p.add_argument("--token-key", default="token")
-    p.add_argument("--deadline", type=int, default=600, help="activeDeadlineSeconds")
+    p.add_argument("--deadline", type=int, default=600, help="activeDeadlineSeconds (at least 60)")
     args = p.parse_args(argv)
     if not RUN_ID_RE.match(args.run_id):
         p.error("--run-id must match " + RUN_ID_RE.pattern)
     if not NODE_RE.match(args.node):
         p.error("--node is not a valid node name")
+    if args.deadline < 60:
+        p.error("--deadline must be at least 60")
     if not 1 <= args.port <= 65535:
         p.error("--port must be 1 to 65535")
     try:

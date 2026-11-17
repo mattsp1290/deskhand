@@ -99,6 +99,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_refusal_names_preconditions(self):
         self.assertIn("state is disarmed", dh.refusal({"code": "disarmed", "state": "disarmed"}))
+        self.assertEqual(dh.refusal({"code": "invalid_argument", "state": "locked"}), "got invalid_argument")
         self.assertIn("another holder", dh.refusal({"code": "lease_held_by_other", "state": "ok"}))
         self.assertEqual(dh.refusal({"code": "busy", "state": "ok"}), "got busy")
 

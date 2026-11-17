@@ -66,7 +66,7 @@ the pointer or has focus, and `measured` in the evidence names the app.
 | `DESKHAND_TOKEN_FILE` | File holding the bearer token | `<base>/token/token` |
 | `DESKHAND_CHECKS` | Check selection | `default` |
 | `DESKHAND_PERMITTED_APPS` | Comma-separated bundle IDs for `pointer_move` and `type_text` | `com.apple.TextEdit` |
-| `DESKHAND_RUN_ID`, `DESKHAND_HOLDER_ID` | Labels for the evidence and the lease holder (4.1, 4.3 alphabet; run ID at most 17) | random |
+| `DESKHAND_RUN_ID`, `DESKHAND_HOLDER_ID` | Labels for the evidence and the lease holder (4.1, 4.3 alphabet and length) | random |
 | `DESKHAND_TIMEOUT_S` | Per-request socket timeout | `30` (`10` in the Job) |
 
 The token is read from its file and only ever sent in the `Authorization` header. It never appears in argv or in

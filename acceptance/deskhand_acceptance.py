@@ -102,11 +102,13 @@ class Config:
         self.token_file = env.get("DESKHAND_TOKEN_FILE", f"{base}/token/token")
         self.run_id = env.get("DESKHAND_RUN_ID") or secrets.token_hex(4)
         self.holder_id = env.get("DESKHAND_HOLDER_ID") or f"acceptance-{self.run_id}-{secrets.token_hex(4)}"
-        # operation_id is "acc-<run_id>-<12 hex>", so run_id leaves room for 17 characters.
+        # operation_id is "acc-<run_id>-<12 hex>": 17 characters around run_id, so it can be up to 111.
         if not HANDLE_RE.fullmatch(self.holder_id) or not HANDLE_RE.fullmatch(f"acc-{self.run_id}-{'0' * 12}"):
             raise ValueError("DESKHAND_RUN_ID or DESKHAND_HOLDER_ID is outside the contract 4.1/4.3 alphabet")
         apps = env.get("DESKHAND_PERMITTED_APPS", "com.apple.TextEdit").split(",")
         self.permitted_apps = list(dict.fromkeys(a.strip() for a in apps if a.strip()))
+        if not self.permitted_apps:  # an empty list is invalid_argument (6.8)
+            raise ValueError("DESKHAND_PERMITTED_APPS names no bundle identifier")
         self.node = env.get("NODE_NAME", "")
         self.timeout = float(env.get("DESKHAND_TIMEOUT_S", "30"))
 
@@ -200,11 +202,12 @@ class Client:
 def refusal(sc):
     """Describe a tool error, naming the precondition when one is not met (9.5 step 1, 5.1)."""
     sc = sc or {}
-    if sc.get("state", "ok") != "ok":
-        return f"precondition: deskhand state is {sc['state']}, not ok (9.5 step 1)"
-    if sc.get("code") == "lease_held_by_other":
-        return "precondition: another holder holds the lease"
-    return f"got {sc.get('code')}"
+    code = sc.get("code")
+    if code is not None and code == sc.get("state"):
+        return f"precondition: got {code}; deskhand state is {code}, not ok (9.5 step 1)"
+    if code == "lease_held_by_other":
+        return f"precondition: got {code}; another holder holds the lease"
+    return f"got {code}"
 
 
 def image_size(data, mime_type):
@@ -335,7 +338,10 @@ class Run:
 
     def lease_acquire(self, facts):
         sc = self.lease("acquire", facts, ttl_ms=120000)  # the longest TTL (5.1); renewed after the checks
-        expect(sc["lease_result"].get("outcome") == "acquired", "outcome is not acquired")
+        result = sc["lease_result"]
+        if result.get("code") == "lease_held_by_other":
+            raise CheckFailed("precondition: another holder holds the lease (5.1)")
+        expect(result.get("outcome") == "acquired", f"outcome {result.get('outcome')}, code {result.get('code')}")
         expect(sc["lease"].get("held_by_caller") is True, "held_by_caller")
 
     def lease_renew(self, facts):
@@ -467,8 +473,9 @@ class Run:
         under = [n for n in UNDER_LEASE if n in selected]
         if "lease" not in selected and not under:
             return
-        held = self.run_check("lease_acquire", self.lease_acquire)
-        try:
+        held = False
+        try:  # the acquire is inside, so a SIGTERM during it still reaches the release
+            held = self.run_check("lease_acquire", self.lease_acquire)
             for name in under:
                 if held:
                     self.run_check(name, getattr(self, name))
@@ -477,6 +484,7 @@ class Run:
             if held:
                 self.run_check("lease_renew", self.lease_renew)
         finally:
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a second SIGTERM must not skip the release
             # Release even when acquire looked wrong (e.g. "renewed"): release is safe to repeat (5.1).
             if not (held and self.run_check("lease_release", self.lease_release)):
                 try:  # best effort; the TTL ends the lease anyway
