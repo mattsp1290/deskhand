@@ -95,10 +95,9 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   effect call that is executing is aborted, and one that has not been
   admitted yet is never admitted ([section 9.5](#95-order-of-refusals)). See
   [section 4.3](#43-operation_id). deskhand reads the connection while a
-  call runs. When the caller closes its sending side (TLS `close_notify` or
-  end of stream), deskhand first cancels the call and then closes the
-  connection from its side, so a caller that reads deskhand's close knows
-  that the cancellation has taken effect
+  call runs. Once deskhand observes that the connection has closed, it
+  cancels the call, and every later check of that call sees the connection
+  closed. The caller cannot observe that moment
   ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
@@ -2056,20 +2055,17 @@ the call again.
   that was requested before the call was sent does not count, even if it
   arrives after: its frame can be older than the call's.
 
-"Closed" means that the close has reached the Mac, and the caller knows it
-when it sees deskhand's own close. When deskhand sees the caller close its
-sending side of the connection (a TLS `close_notify` or end of stream), it
-first cancels the call that the connection carries and then closes the
-connection itself ([section 2.1](#21-endpoint)). Every later check of that
-call sees the connection closed. So a caller that has shut down its sending
-side and has then read deskhand's TLS `close_notify` and end of stream
-knows that the call can no longer be admitted. A close that deskhand
-started is proof in the same way. A reset, a timeout or a close that the
-caller has not seen answered is not: the lookup travels on another
-connection and can overtake a close that is still in flight. While the
-path is stalled and the close is unanswered, the request can still be
-admitted, and `null` is not yet final. A caller in that position records
-the outcome as uncertain and looks again later.
+"Closed" means that deskhand has observed the connection closed. From then
+on the call is cancelled, and every later check of it sees the connection
+closed ([section 2.1](#21-endpoint)). In this version the caller has no
+signal for that moment. deskhand's TLS `close_notify` or end of stream
+shows that the connection is going away, but deskhand can send them before
+it cancels the call, and on a plain end of stream from the caller it sends
+no `close_notify` at all. A reset or a timeout proves nothing either. The
+lookup travels on another connection and can overtake a close that deskhand
+has not yet observed, and until then the request can still be admitted and
+`null` is not yet final. A caller that relies on this way alone records the
+outcome as uncertain and looks again later.
 
 Repeating the call stays allowed, and it is the only way to get the stored
 result itself. Inside the retention window a repeat of an admitted call
@@ -2211,7 +2207,7 @@ Every entry has these fields:
 | tool, action | The tool name and `action.type`. |
 | `frame_id`, frame digest | The frame the call named, and its `sha256` when deskhand still has the frame. |
 | frontmost app | `bundle_id`, `team_id` and name as measured; on an outcome also the target app. |
-| outcome | On an outcome: `completed` or the error code, `operation.status` and `events_posted`. On a refusal: the error code only, because no record exists and nothing was posted. |
+| outcome | On an outcome: `completed` or the error code, `operation.status` and `events_posted`. On a refusal: the error code only. A refusal entry never carries `operation`, even for `operation_in_progress` or `operation_id_conflict`, where a record of an earlier call can exist. |
 
 - Typed text is logged as its length only.
 - No entry holds image bytes, a window title, a token or any part of a
@@ -3014,12 +3010,12 @@ items 37, 46, 50 and 53 by the re-review.
     in `ok`.
 68. deskhand never admits a call whose connection is closed, and it checks
     the connection at the last look and before every event. A lookup's
-    `null` is final once the caller's own request has completed, once its
-    connection is closed and the caller has read deskhand's close, or once
-    a screenshot that the caller requested after it sent the call has made
-    the call's frame stale. The third way is this document's addition; it
-    follows from the `not_latest` rule. deskhand cancels the call before it
-    closes its side of the connection.
+    `null` is final once the caller's own request has completed, once
+    deskhand has observed its connection closed, or once a screenshot that
+    the caller requested after it sent the call has made the call's frame
+    stale. The third way is this document's addition; it follows from the
+    `not_latest` rule. The caller has no signal for when deskhand has
+    observed a close, so the second way leaves the outcome uncertain.
 69. `duration_ms` of a drag is a minimum. How deskhand looks through the
     drag-image window is a spike item.
 70. `measured` on a success, and on an error of an admitted call, is taken
