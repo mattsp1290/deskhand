@@ -275,13 +275,35 @@ private func owner(at x: Double, _ y: Double, in windows: [IdentityWindowEntry])
         #expect(probe(system).frontmostApp().uncertainty == .frontmostUnconfirmed)
     }
 
-    /// The pid is reused after the measurement's own start-time check, before the second activation
-    /// answer could be tied to it.
+    /// The pid is reused after the measurement's own start-time check; the final start-time re-read
+    /// catches it.
     @Test func frontmostPidReusedAfterTheMeasurementIsGone() {
         let system = FakeIdentitySystem(
             frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
             startTimes: reused(editorPID, afterReads: 2))
         #expect(probe(system).frontmostApp().uncertainty == .processGone)
+    }
+
+    /// The pid is reused, by an active process, after the second activation answer: that answer came
+    /// from the pinned process only if the start time is re-read after it.
+    @Test func frontmostPidReusedAfterTheSecondActivationIsGone() {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active],
+            reusedAfterReads: [editorPID: 4])
+        #expect(probe(system).frontmostApp().uncertainty == .processGone)
+    }
+
+    /// Activation is read inside the start-time pin, and the start time is re-read after the second
+    /// activation answer, so both answers are tied to the pinned process.
+    @Test func frontmostAppReadsActivationInsideTheStartTimePin() {
+        let system = FakeIdentitySystem(
+            frontmost: editorPID, signatures: signatures, activation: [editorPID: .active])
+        #expect(probe(system).frontmostApp().uncertainty == nil)
+        #expect(
+            system.readLog == [
+                .startTime(editorPID), .activation(editorPID), .startTime(editorPID), .activation(editorPID),
+                .startTime(editorPID),
+            ])
     }
 
     @Test func noFrontmostAppIsUncertain() {

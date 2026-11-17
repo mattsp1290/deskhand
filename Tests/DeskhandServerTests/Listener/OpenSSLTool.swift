@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The `openssl` command line the listener tests run. TLS 1.3 session resumption needs OpenSSL 1.1.1
 /// or later: LibreSSL, macOS's `/usr/bin/openssl`, issues sessions but never resumes them.
@@ -31,13 +32,24 @@ enum OpenSSLTool {
         let status: Int32
         /// Standard output and standard error, interleaved.
         let output: String
-        /// The process ended on a signal, as the timeout's `terminate()` ends it.
-        let killed: Bool
+        /// The timeout fired and terminated the process.
+        let timedOut: Bool
     }
+
+    private final class Flag: Sendable {
+        let value = Mutex(false)
+    }
+
+    #if os(Linux)
+        /// A write to an openssl that already exited must fail, not SIGPIPE the test runner. Darwin
+        /// sets `F_SETNOSIGPIPE` on the pipe instead.
+        private static let ignoreSIGPIPE: Void = { _ = signal(SIGPIPE, SIG_IGN) }()
+    #endif
 
     /// Runs the openssl at `url`, by default the resuming OpenSSL when there is one, else whatever
     /// `openssl` PATH names (which can still generate certificates). Writes `input` to its standard
     /// input and closes it, reads its output until it exits, and terminates it after `timeout` seconds.
+    /// A process that exits or is terminated before taking all of `input` still returns its output.
     static func run(
         _ arguments: [String], input: [UInt8] = [], in directory: URL? = nil, timeout: TimeInterval,
         at url: URL? = nil
@@ -57,34 +69,38 @@ enum OpenSSLTool {
         process.standardOutput = output
         process.standardError = output
         #if canImport(Darwin)
-            // A process that already exited must fail the write, not SIGPIPE the test runner. On Linux
-            // NIOPosix ignores SIGPIPE for the whole process.
+            // A process that already exited must fail the write, not SIGPIPE the test runner.
             _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        #else
+            ignoreSIGPIPE
         #endif
         try process.run()
-        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        let timedOut = Flag()
+        let watchdog = DispatchWorkItem {
+            guard process.isRunning else { return }
+            timedOut.value.withLock { $0 = true }
+            process.terminate()
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         defer { watchdog.cancel() }
-        do {
-            try stdin.fileHandleForWriting.write(contentsOf: input)
-            try stdin.fileHandleForWriting.close()
-        } catch {
-            process.terminate()
-            process.waitUntilExit()
-            throw error
-        }
+        // A failed write means the process stopped reading (it exited or was terminated); what it wrote
+        // and how it ended explain why, so fall through to read them.
+        try? stdin.fileHandleForWriting.write(contentsOf: input)
+        try? stdin.fileHandleForWriting.close()
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
-        return Run(
-            status: process.terminationStatus, output: text, killed: process.terminationReason == .uncaughtSignal)
+        return Run(status: process.terminationStatus, output: text, timedOut: timedOut.value.withLock { $0 })
     }
 
+    /// Always passes `at:`: running the default executable would read ``resuming`` inside its own
+    /// initializer.
     private static func isResumingOpenSSL(_ url: URL) -> Bool {
+        // Standard error shares the output, so a warning may precede the version line.
         guard FileManager.default.isExecutableFile(atPath: url.path),
-            let run = try? run(["version"], timeout: 5, at: url), !run.killed, run.status == 0,
-            run.output.hasPrefix("OpenSSL ")
+            let run = try? run(["version"], timeout: 5, at: url), !run.timedOut, run.status == 0,
+            let line = run.output.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("OpenSSL ") })
         else { return false }
-        let version = run.output.dropFirst("OpenSSL ".count).prefix { !$0.isWhitespace }
+        let version = line.dropFirst("OpenSSL ".count).prefix { !$0.isWhitespace }
         let numbers = version.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
         return numbers.lexicographicallyPrecedes([1, 1, 1]) == false
     }

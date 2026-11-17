@@ -127,7 +127,7 @@ struct TestPKI: Sendable {
     @discardableResult
     private static func openssl(_ arguments: [String], in directory: URL) throws -> String {
         let run = try OpenSSLTool.run(arguments, in: directory, timeout: 60)
-        guard run.status == 0, !run.killed else {
+        guard run.status == 0, !run.timedOut else {
             throw OpenSSLFailure(arguments: arguments, status: run.status, output: run.output)
         }
         return run.output

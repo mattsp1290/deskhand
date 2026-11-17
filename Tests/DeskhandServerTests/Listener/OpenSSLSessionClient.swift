@@ -46,7 +46,7 @@ struct OpenSSLSessionClient: Sendable {
         if let session { arguments += ["-sess_in", session.path] }
 
         let run = try OpenSSLTool.run(arguments, input: request, timeout: 10)
-        if run.killed { throw Failure(description: "s_client was killed after 10 seconds:\n\(run.output)") }
+        if run.timedOut { throw Failure(description: "s_client was killed after 10 seconds:\n\(run.output)") }
 
         let ticket = (try? Data(contentsOf: saved)).map { !$0.isEmpty } == true
         return Exchange(
