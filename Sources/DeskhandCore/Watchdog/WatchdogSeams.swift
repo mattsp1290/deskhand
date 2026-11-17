@@ -66,8 +66,8 @@ public protocol WatchdogStateOwner: StateSource {
     /// itself, and the time this takes counts against the bound of contract 13.1.
     ///
     /// It may call ``Watchdog/refreshState()`` from inside, and then awaits it here rather than on
-    /// another task: a refresh that lands after the reduction ends wakes the owner's loop at once,
-    /// so a passed deadline it leaves unsettled would be reduced again without the pause of
-    /// ``Watchdog/Configuration/deadlineRetryInterval``.
+    /// another task: a refresh that lands after the reduction ends evaluates and wakes the owner's
+    /// loop at once, so a passed deadline it leaves unsettled would be reduced, and refreshed,
+    /// again without the pause of ``Watchdog/Configuration/deadlineRetryInterval``.
     func reduceNow(allowanceChanged: Bool) async
 }

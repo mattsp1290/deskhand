@@ -199,8 +199,41 @@ struct WatchdogReentrancyTests {
         await watchdog.executionDidChange(executing: false)
 
         let retry = WatchdogFixture.at(250).monotonic
-        await clock.waitUntil { $0 == [retry, retry] }
+        await Self.firstOf(
+            { await clock.waitUntil { $0 == [retry, retry] } },
+            { await owner.waitForReductions(startup + 2 + 50) })
         #expect(owner.reductions == startup + 2, "the evaluation's reduction, then the owner's loop's")
+        running.cancel()
+        _ = await finished(running)
+    }
+
+    @Test("a refresh from another task during the owner's loop's own reduction moves that loop's wakeup")
+    func refreshDuringTheOwnerLoopsReductionIsNotLost() async {
+        let clock = ManualScheduler()
+        let desk = FakeDesk(clock: clock, leaseTTLMs: 60_000)
+        let owner = HeldReductionOwner(desk: desk)
+        let watchdog = Watchdog(
+            owner: owner, executor: FakeExecutor(clock: clock), activity: StaticActivity(), scheduler: clock)
+        let running = Task { await watchdog.run() }
+        let read = WatchdogFixture.at(500).monotonic
+        await clock.waitUntil { $0.sorted() == [read, WatchdogFixture.at(60_000).monotonic] }
+
+        // The periodic read at 500 ms is the owner's loop's own reduction. While it is held, a
+        // `lease` call moves the deadline to 700 ms and refreshes; the loop drops that ring before
+        // it sleeps, so its wakeup must come from the snapshot it reads after the reduction.
+        owner.holdNext()
+        clock.advance(to: read)
+        await owner.waitUntilHeld()
+        desk.renewLease(ttlMs: 200)
+        await watchdog.refreshState()
+        owner.release()
+
+        let deadline = WatchdogFixture.at(700).monotonic
+        let nextRead = WatchdogFixture.at(1000).monotonic
+        await Self.firstOf(
+            { await clock.waitUntil { $0 == [deadline, deadline] } },
+            { await clock.waitUntil { $0.sorted() == [deadline, nextRead] } })
+        #expect(clock.sleeperDeadlines == [deadline, deadline], "the owner's loop slept past the moved deadline")
         running.cancel()
         _ = await finished(running)
     }

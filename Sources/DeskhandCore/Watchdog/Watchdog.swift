@@ -39,7 +39,9 @@ public actor Watchdog {
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
         /// not settle it, and how soon the owner's loop looks again while a reduction that another
-        /// task started is still running.
+        /// task started is still running. A refresh that leaves a passed deadline while the owner's
+        /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
+        /// loop is woken at once either way.
         public var deadlineRetryInterval: Duration
 
         public init(
@@ -138,7 +140,9 @@ public actor Watchdog {
     /// both loops' wakeups. An owner may call it from inside its reduction: while a reduction runs
     /// it only wakes the executor's loop, so it starts no other reduction, and the reduction never
     /// waits for the executor through it. The executor's loop then evaluates, and the owner's loop
-    /// looks again once the reduction ends.
+    /// looks again once the reduction ends. Call it only once the change is in the owner's
+    /// ``StateSource/snapshot()``: the owner's loop drops a ring that arrives while it is awake and
+    /// relies on the snapshot it reads next.
     public func refreshState() async {
         if reducing {
             ownerRangDuringReduction = true
@@ -181,14 +185,14 @@ public actor Watchdog {
 
     private func ownerLoop() async {
         while !Task.isCancelled {
+            // `wakeup` comes from the snapshot readIfDue takes after the loop's last suspension, so
+            // a ring that reached this loop while it was awake, its own reduction's deferred ring
+            // among them, is already in it. Keeping that ring would end the sleep at once and
+            // reduce a passed deadline the owner does not settle again without the pause of
+            // ``Configuration/deadlineRetryInterval``. Do not add an `await` between that snapshot
+            // and this sleep: a ring that arrived there would be dropped.
             let wakeup = await readIfDue()
-            // `wakeup` comes from state read after the loop's last suspension, and nothing suspends
-            // before the sleep, so a ring that reached this loop while it was awake, its own
-            // reduction's deferred ring among them, is already in it. Keeping that ring would end
-            // the sleep at once and reduce a passed deadline the owner does not settle again
-            // without the pause of ``Configuration/deadlineRetryInterval``.
-            alarms[.owner, default: Alarm()].rangWhileAwake = false
-            await sleep(.owner, until: wakeup)
+            await sleep(.owner, until: wakeup, keepingRingsWhileAwake: false)
         }
     }
 
@@ -240,7 +244,8 @@ public actor Watchdog {
     }
 
     /// A refresh from inside the reduction rings the owner's loop once the reduction ends, so a
-    /// loop that slept through a reduction another task ran looks again at once.
+    /// loop that slept through a reduction another task ran looks again at once. When the owner's
+    /// loop ran the reduction itself, the loop drops that ring before it sleeps.
     private func reduce(allowanceChanged: Bool) async {
         allowanceChangePending = allowanceChangePending || allowanceChanged
         guard !reducing else { return }
@@ -260,11 +265,16 @@ public actor Watchdog {
         }
     }
 
-    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?) async {
-        if alarms[loop, default: Alarm()].rangWhileAwake {
-            alarms[loop, default: Alarm()].rangWhileAwake = false
-            return
-        }
+    /// Without `keepingRingsWhileAwake`, a ring that arrived while the loop was awake is dropped
+    /// rather than ending this sleep at once: the caller computed `wakeup` from state read after
+    /// that ring. Nothing here suspends before the continuation is installed, so no ring is lost
+    /// between that read and the sleep.
+    private func sleep(_ loop: Loop, until wakeup: ContinuousClock.Instant?, keepingRingsWhileAwake: Bool = true)
+        async
+    {
+        let rang = alarms[loop, default: Alarm()].rangWhileAwake
+        alarms[loop, default: Alarm()].rangWhileAwake = false
+        if rang && keepingRingsWhileAwake { return }
         alarms[loop, default: Alarm()].generation &+= 1
         let generation = alarms[loop, default: Alarm()].generation
         let timer = wakeup.map { wakeup in
