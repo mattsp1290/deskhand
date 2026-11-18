@@ -42,8 +42,9 @@ adding a schema or an example needs no edit here:
              `limits` and prose figure that carries them, wherever the figure
              is repeated, and the Swift sources in SWIFT_SITES; the HTTP
              status and JSON-RPC code pairs of 2.3 and 2.4 match 9.4; a status
-             result's state heads its active_states for every state; the header's versions match every contract_version
-             and protocol version; every JSON block validates; every intra-doc
+             result's state heads its active_states for every state; the
+             header's versions match every contract_version and protocol
+             version; every JSON block validates; every intra-doc
              #anchor resolves.
 
 Date-time formats are asserted (rfc3339-validator), so 29 February of a common
@@ -201,11 +202,13 @@ UNSCHEMATIZED_CONSTANTS = {
     "TOKEN_MIN_LENGTH",
 }
 # Section 16 constants that a Swift source states: (file under the repository,
-# regex with one group, part). The regex must match exactly once, so moving or
-# renaming the Swift constant means updating this list.
+# regex with one group, part). The regex must match exactly once and covers the
+# whole declaration, so an expression such as `32 + 1`, a move or a rename fails
+# until this list is updated.
 SWIFT_SITES = {
     "TOKEN_MIN_LENGTH": [
-        ("Sources/DeskhandServer/Credentials/TokenRotation.swift", r"static let minimumLength = (\d+)\b", "value"),
+        ("Sources/DeskhandServer/Credentials/TokenRotation.swift",
+         r"(?m)static let minimumLength = (\d+)[ \t]*(?://[^\n]*)?$", "value"),
     ],
 }
 # status.limits members whose name is not the constant's name in lower case.
@@ -248,6 +251,8 @@ PROSE_SITES = [
      [("MAX_LONG_EDGE", "value"), ("MAX_PIXELS", "value")]),
     ("17.1 ", rf"down to ({NUM}) px", [("MIN_LONG_EDGE", "value")]),
     ("19. ", rf"an image has at most ({NUM}) pixels", [("MAX_PIXELS", "value")]),
+    # The generic "`NAME` = N" scan also compares these figures; these sites make
+    # each statement required, so they must stay even though they repeat it.
     ("2.2 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) visible ASCII characters", [("TOKEN_MIN_LENGTH", "value")]),
     ("11.1 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) bytes or more", [("TOKEN_MIN_LENGTH", "value")]),
     ("Appendix A", rf"shorter than `TOKEN_MIN_LENGTH` = ({NUM}) visible", [("TOKEN_MIN_LENGTH", "value")]),
@@ -1131,7 +1136,7 @@ class Checker:
             for rel, pattern, part in sites:
                 try:
                     found = re.findall(pattern, (REPO / rel).read_text(encoding="utf-8"))
-                except OSError as e:
+                except (OSError, UnicodeDecodeError) as e:
                     self.fail(f"{rel}: cannot read for {name}: {e}")
                     continue
                 if len(found) != 1:
@@ -1292,7 +1297,7 @@ class Checker:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--docs", type=Path, default=Path(__file__).resolve().parent.parent / "docs",
+    ap.add_argument("--docs", type=Path, default=REPO / "docs",
                     help="docs directory holding contract.md and schemas/ (default: %(default)s); "
                          "SWIFT_SITES are always read from this script's checkout")
     args = ap.parse_args()

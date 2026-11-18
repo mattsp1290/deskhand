@@ -2927,9 +2927,10 @@ items 37, 46, 50 and 53 by the re-review.
 30. The login window always gives the state `not_console`, also when the two
     platform signals disagree.
 31. A rejected token file is not treated like a rejected certificate: the old
-    token is not kept, and every request gets `401` until the file is fixed.
+    token is not kept, and every request that reaches the token check gets
+    `401` until the file is fixed. At startup deskhand starts with no token.
     A token shorter than `TOKEN_MIN_LENGTH` = 32 visible ASCII characters is
-    rejected in the same way, at startup too.
+    rejected.
 32. The `log_unavailable` condition refuses nothing by itself. A call is
     refused only when its own intent entry fails. A failed outcome entry does
     not change the result of the call.
