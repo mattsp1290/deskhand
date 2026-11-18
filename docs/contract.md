@@ -96,7 +96,9 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   is never admitted ([section 9.5](#95-order-of-refusals)), and one that is
   executing is aborted at its next check, if one is still to come
   ([section 4.3](#43-operation_id)). A connection is "closed" once deskhand
-  has observed the close, a moment the caller cannot see
+  has observed the close. A caller that ends its side of the connection and
+  reads on can see that moment: deskhand observes the close before it sends
+  its own TLS `close_notify`
   ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
@@ -2051,9 +2053,9 @@ the call again.
   admission section, again before it creates the record, and before every
   event ([section 12.3](#123-write-ordering)). So the caller closes the
   connection that carried the call first, and then looks the call up on
-  another connection. The caller cannot tell when this way has taken
-  effect (see "Closed" below), so on its own it leaves the outcome
-  uncertain.
+  another connection. This way has taken effect once the caller has seen
+  deskhand's `close_notify` after ending its side (see "Closed" below).
+  Without that, it leaves the outcome uncertain.
 - **Its frame is no longer the latest.** After it sent the call, the caller
   sent a `screenshot` request for the same display under the same
   `holder_id`, and it received that request's frame before the lookup.
@@ -2065,15 +2067,19 @@ the call again.
 
 "Closed" means that deskhand has observed the connection closed. From then
 on the call is cancelled ([section 2.1](#21-endpoint)), and every later
-check of it sees the connection closed. In this version the caller has no
-signal for that moment. deskhand's TLS `close_notify` or end of stream
-shows that the connection is going away, but deskhand can send them before
-it cancels the call, and on a plain end of stream from the caller it sends
-no `close_notify` at all. A reset or a timeout proves nothing either. The
+check of it sees the connection closed. A caller can see that moment by
+ending its side of the connection, with TLS `close_notify` or with an end
+of stream without one, and then reading until deskhand closes. Once the
+caller has ended its side, deskhand observes the close before it sends its
+own `close_notify` and before it ends the stream. So deskhand's
+`close_notify`, with no response before it, shows that deskhand has
+observed the close. A reset, a timeout or an end of stream without
+`close_notify` proves nothing. A caller without that signal, because it
+closed the connection outright or the connection broke, cannot tell: the
 lookup travels on another connection and can overtake a close that deskhand
 has not yet observed, and until then the request can still be admitted and
-`null` is not yet final. A caller that relies on this way alone records the
-outcome as uncertain and looks again later.
+`null` is not yet final. Such a caller records the outcome as uncertain and
+looks again later.
 
 Repeating the call stays allowed, and it is the only way to get the stored
 result itself. Inside the retention window a repeat of an admitted call
@@ -2749,7 +2755,8 @@ no approval note, and they are listed so that nobody finds them by surprise.
    ([section 12.5](#125-repeats-and-stored-results)). Crew closes the
    connection of the lost call before it asks. Until deskhand has observed
    that close, a `null` answer is "no record now" and the outcome stays
-   uncertain. Crew has no signal for that moment
+   uncertain. While the connection still works, Crew sees that moment by
+   ending its side and waiting for deskhand's `close_notify`
    ([section 12.5](#125-repeats-and-stored-results)).
 
 ## 18. Verified against the specification on 2026-11-14
@@ -3028,8 +3035,10 @@ items 37, 46, 50 and 53 by the re-review.
     deskhand has observed its connection closed, or once a screenshot that
     the caller requested after it sent the call has made the call's frame
     stale. The third way is this document's addition; it follows from the
-    `not_latest` rule. The caller has no signal for when deskhand has
-    observed a close, so the second way leaves the outcome uncertain.
+    `not_latest` rule. The caller sees that deskhand has observed the close
+    only by ending its side of the connection and receiving deskhand's
+    `close_notify`. Without that, the second way leaves the outcome
+    uncertain.
 69. `duration_ms` of a drag is a minimum. How deskhand looks through the
     drag-image window is a spike item.
 70. `measured` on a success, and on an error of an admitted call, is taken

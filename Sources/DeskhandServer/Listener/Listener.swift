@@ -129,6 +129,11 @@ public final class DeskhandListener: Sendable {
             .serverChannelOption(.backlog, value: 64)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
             .childChannelOption(.tcpOption(.tcp_nodelay), value: 1)
+            // A caller's close_notify or end of stream reaches the ConnectionHandler as `inputClosed`
+            // while the connection is still open, so the call is cancelled before deskhand answers
+            // with its own close_notify and closes. Without this, NIOSSL answers a close_notify and
+            // NIO closes on end of stream before the handler hears of either.
+            .childChannelOption(.allowRemoteHalfClosure, value: true)
             .childChannelOption(.socketOption(.so_keepalive), value: 1)
             .childChannelOption(.tcpOption(.keepAliveIdle), value: Self.seconds(configuration.keepAliveIdle))
             .childChannelOption(.tcpOption(.keepAliveInterval), value: Self.seconds(configuration.keepAliveInterval))
@@ -185,6 +190,7 @@ public final class DeskhandListener: Sendable {
             }
         }
         let pipeline = channel.pipeline.syncOperations
+        try pipeline.addHandler(EndOfStreamCloser())
         try pipeline.addHandler(tlsHandler)
         try BoundedHTTPCodec.install(on: channel, limit: configuration.maxRequestHeaderBytes)
         try pipeline.addHandler(

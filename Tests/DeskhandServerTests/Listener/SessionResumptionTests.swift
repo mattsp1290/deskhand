@@ -13,12 +13,7 @@ import Testing
     .enabled(if: OpenSSLTool.resumptionTestsEnabled, Comment(rawValue: OpenSSLTool.resumptionRequirement))
 )
 struct SessionResumptionTests {
-    private static let request: [UInt8] = {
-        let request = TestRequest.valid().setting("Connection", to: "close")
-        var head = "POST \(request.uri) HTTP/1.1\r\n"
-        for (name, value) in request.headers { head += "\(name): \(value)\r\n" }
-        return Array((head + "\r\n").utf8) + request.body
-    }()
+    private static let request = TestRequest.valid().setting("Connection", to: "close").bytes
 
     private static func client(_ pki: TestPKI, _ client: TestPKI.Client?) -> OpenSSLSessionClient {
         OpenSSLSessionClient(pki: pki, client: client)

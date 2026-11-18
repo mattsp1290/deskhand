@@ -19,8 +19,15 @@ final class ConnectionSession {
 /// Every way the connection can end leads through `enterClosing()`, which cancels a running call:
 /// a clean close, a reset, a hang-up without TLS close_notify, a parse error and each timer. Once
 /// the connection is going away nobody can receive the response, so the call must not go on.
-final class ConnectionHandler: ChannelInboundHandler {
+///
+/// A caller that ends its side, with TLS close_notify or with end of stream, is seen as
+/// `inputClosed` while the connection is still open (the listener allows remote half-closure). The
+/// call is cancelled first, and only then does deskhand send its own close_notify and close, so a
+/// caller that sees deskhand's close knows the cancellation was signalled (contract 12.5). A close
+/// requested from outside, by the listener stopping, passes through here and cancels first too.
+final class ConnectionHandler: ChannelDuplexHandler {
     typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundIn = HTTPServerResponsePart
     typealias OutboundOut = HTTPServerResponsePart
 
     private enum State {
@@ -85,14 +92,25 @@ final class ConnectionHandler: ChannelInboundHandler {
         context.fireChannelInactive()
     }
 
+    /// The caller sent TLS close_notify (NIOSSL reports it as `inputClosed`) or ended the stream. The
+    /// caller is hanging up: `close(context:)` cancels the call before the close goes down to NIOSSL,
+    /// which then sends deskhand's close_notify. After a close_notify NIOSSL then closes the
+    /// connection; after an end of stream ``EndOfStreamCloser`` does. An end of stream without
+    /// close_notify arrives as `NIOSSLError.uncleanShutdown` first, and `errorCaught` already closes
+    /// the same way.
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        // Unreachable while remote half-closure is off: a caller's half-close arrives as
-        // `channelInactive`. Kept for deskhand-ab6z, which decides the half-close behaviour.
         if case .inputClosed? = event as? ChannelEvent {
             close(context: context)
             return
         }
         context.fireUserInboundEventTriggered(event)
+    }
+
+    /// A close from outside the handler, which is the listener stopping. Cancelling here, before the
+    /// close reaches NIOSSL, keeps deskhand's close_notify after the cancellation on this path too.
+    func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
+        enterClosing()
+        context.close(mode: mode, promise: promise)
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
@@ -274,5 +292,18 @@ extension NodeAddress {
         case .v6(let address): self.init(bytes: withUnsafeBytes(of: address.address.sin6_addr) { Array($0) })
         case .unixDomainSocket: return nil
         }
+    }
+}
+
+/// Sits at the socket end of a connection's pipeline, below TLS. When the caller ends the stream,
+/// the handlers above react first: the ``ConnectionHandler`` cancels the call and NIOSSL sends
+/// close_notify. Then this closes the socket. Without it a close that NIOSSL had already begun would
+/// wait out its shutdown timeout for a close_notify the caller can no longer send.
+final class EndOfStreamCloser: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        context.fireUserInboundEventTriggered(event)
+        if case .inputClosed? = event as? ChannelEvent { context.close(promise: nil) }
     }
 }

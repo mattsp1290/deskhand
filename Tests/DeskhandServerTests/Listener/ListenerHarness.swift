@@ -146,6 +146,13 @@ struct TestRequest {
         )
     }
 
+    /// The request as HTTP/1.1 bytes, for a client that writes raw bytes.
+    var bytes: [UInt8] {
+        var head = "\(method.rawValue) \(uri) HTTP/1.1\r\n"
+        for (name, value) in headers { head += "\(name): \(value)\r\n" }
+        return Array((head + "\r\n").utf8) + body
+    }
+
     func setting(_ name: String, to value: String?) -> TestRequest {
         var copy = self
         copy.headers.removeAll { $0.0.lowercased() == name.lowercased() }
