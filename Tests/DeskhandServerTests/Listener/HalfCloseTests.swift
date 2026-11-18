@@ -22,7 +22,7 @@ enum CallerHalfClose: CaseIterable, Sendable {
 /// A call that runs until it is cancelled, after answering the first `answering` requests at once.
 /// Its cancellation handler blocks the canceller for ``recordDelay`` before it records the
 /// cancellation, so a close that deskhand sends before it cancels reaches the client well before
-/// the record: the ordering check cannot pass by luck.
+/// the record: a wrong order fails unless the client is stalled for longer than the delay.
 final class CancellationOrderHandler: RequestHandler {
     static let recordDelay: useconds_t = 150_000
 
@@ -56,10 +56,10 @@ final class CancellationOrderHandler: RequestHandler {
 /// What a ``HalfClosingClient`` saw of deskhand closing, each with whether the call had already
 /// been cancelled at that moment.
 struct Sightings: Sendable {
-    /// deskhand's TLS close_notify.
-    var closeNotify: Bool?
-    /// deskhand's end of stream.
-    var endOfStream: Bool?
+    /// `nil` until deskhand's TLS close_notify arrives, then whether the call was cancelled by then.
+    var cancelledAtCloseNotify: Bool?
+    /// `nil` until deskhand's end of stream arrives, then whether the call was cancelled by then.
+    var cancelledAtEndOfStream: Bool?
     /// The close_notify had been seen when the stream ended.
     var closeNotifyBeforeEndOfStream = false
     /// The stream ended without a close_notify before it.
@@ -154,19 +154,19 @@ struct HalfClosingClient {
 
         func closeNotify() {
             let cancelled = callCancelled()
-            seen.withLock { if $0.closeNotify == nil, !$0.ragged { $0.closeNotify = cancelled } }
+            seen.withLock { if $0.cancelledAtCloseNotify == nil, !$0.ragged { $0.cancelledAtCloseNotify = cancelled } }
         }
 
         func endOfStream() {
             let cancelled = callCancelled()
             seen.withLock {
-                guard $0.endOfStream == nil else { return }
-                $0.endOfStream = cancelled
-                $0.closeNotifyBeforeEndOfStream = $0.closeNotify != nil
+                guard $0.cancelledAtEndOfStream == nil else { return }
+                $0.cancelledAtEndOfStream = cancelled
+                $0.closeNotifyBeforeEndOfStream = $0.cancelledAtCloseNotify != nil
             }
         }
 
-        func ragged() { seen.withLock { if $0.closeNotify == nil { $0.ragged = true } } }
+        func ragged() { seen.withLock { if $0.cancelledAtCloseNotify == nil { $0.ragged = true } } }
 
         func read(_ bytes: ByteBufferView) { seen.withLock { $0.response += bytes } }
     }
@@ -288,7 +288,7 @@ struct HalfClosingClient {
 
     private static func startCall(_ handler: CancellationOrderHandler, on client: HalfClosingClient) async throws {
         try await client.send(TestRequest.valid().bytes)
-        #expect(await eventually { handler.started })
+        try #require(await eventually { handler.started }, "the call never started")
     }
 
     /// deskhand's close_notify, then its end of stream, both after the cancellation, with no bytes
@@ -297,11 +297,11 @@ struct HalfClosingClient {
     private static func expectCancelledThenClosed(
         _ client: HalfClosingClient, since halfClosed: ContinuousClock.Instant, response: Int = 0
     ) async {
-        #expect(await eventually { client.sightings.endOfStream != nil })
+        #expect(await eventually { client.sightings.cancelledAtEndOfStream != nil })
         #expect(ContinuousClock.now - halfClosed < .seconds(4))
         let seen = client.sightings
-        #expect(seen.closeNotify == true, "close_notify missing or sent before the call was cancelled")
-        #expect(seen.endOfStream == true, "end of stream missing or sent before the call was cancelled")
+        #expect(seen.cancelledAtCloseNotify == true, "close_notify missing or sent before the call was cancelled")
+        #expect(seen.cancelledAtEndOfStream == true, "end of stream missing or sent before the call was cancelled")
         #expect(seen.closeNotifyBeforeEndOfStream)
         #expect(!seen.ragged)
         #expect(seen.response.count == response)
@@ -327,7 +327,7 @@ struct HalfClosingClient {
         try await Self.withListener(handler) { _, address, pki in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await client.send(TestRequest.valid().bytes)
-            #expect(await eventually { HTTPResponseBytes.isComplete(client.sightings.response) })
+            try #require(await eventually { HTTPResponseBytes.isComplete(client.sightings.response) })
             let firstResponse = client.sightings.response.count
             #expect(firstResponse > 0)
             let head = String(decoding: client.sightings.response, as: UTF8.self).lowercased()
@@ -350,9 +350,9 @@ struct HalfClosingClient {
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await client.send(Array(TestRequest.valid().bytes.dropLast(5)))
             try await client.halfClose(halfClose)
-            #expect(await eventually { client.sightings.endOfStream != nil })
+            #expect(await eventually { client.sightings.cancelledAtEndOfStream != nil })
             let seen = client.sightings
-            #expect(seen.closeNotify != nil)
+            #expect(seen.cancelledAtCloseNotify != nil)
             #expect(seen.closeNotifyBeforeEndOfStream)
             #expect(seen.response.isEmpty, "deskhand answered a request the caller abandoned")
             #expect(!handler.started)
@@ -369,8 +369,8 @@ struct HalfClosingClient {
             // The listener's close waits for the client's close_notify, which this client never
             // sends, so the stop finishes once the client lets go of the socket.
             async let stopped: Void = listener.stop()
-            #expect(await eventually { client.sightings.closeNotify != nil })
-            #expect(client.sightings.closeNotify == true, "close_notify sent before the call was cancelled")
+            #expect(await eventually { client.sightings.cancelledAtCloseNotify != nil })
+            #expect(client.sightings.cancelledAtCloseNotify == true, "close_notify sent before the call was cancelled")
             await client.release()
             await stopped
         }

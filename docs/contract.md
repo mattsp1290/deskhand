@@ -97,9 +97,9 @@ The words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
   executing is aborted at its next check, if one is still to come
   ([section 4.3](#43-operation_id)). A connection is "closed" once deskhand
   has observed the close. A caller that ends its side of the connection and
-  reads on can tell when that has happened: deskhand observes the close
-  before it sends its own TLS `close_notify`
-  ([section 12.5](#125-repeats-and-stored-results)).
+  reads on can tell when that has happened: deskhand's TLS `close_notify`,
+  read before any response to the call, comes only after deskhand has
+  observed the close ([section 12.5](#125-repeats-and-stored-results)).
 - A Mac that is away, asleep with the lid closed or logged out answers
   nothing. A caller treats a refused or timed-out connection as
   "unavailable", not as an error from deskhand. A Mac whose LAN gate has
@@ -2071,11 +2071,12 @@ on the call is cancelled ([section 2.1](#21-endpoint)), and every later
 check of it sees the connection closed. A caller can tell when that has
 happened by ending its side of the connection, with TLS `close_notify` or
 with an end of stream without one, and then reading until deskhand closes.
-Once the caller has ended its side, deskhand observes the close before it
-sends its own `close_notify` and before it ends the stream. So deskhand's
+Once the caller has ended its side, deskhand's own `close_notify`, and the
+end of stream after it, come after deskhand has observed the close, unless
+deskhand had already sent the response to that call. So deskhand's
 `close_notify`, read before any response to that call, shows that deskhand
-has observed the close. A response read first means the request completed. On
-deskhand's side, a reset, a timeout or an end of stream with no
+has observed the close. A response read first means the request completed.
+On deskhand's side, a reset, a timeout or an end of stream with no
 `close_notify` before it proves nothing. A caller without that signal,
 because it closed the connection outright or the connection broke, cannot
 tell: the lookup travels on another connection and can overtake a close that
