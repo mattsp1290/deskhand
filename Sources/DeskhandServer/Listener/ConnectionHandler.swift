@@ -108,6 +108,9 @@ final class ConnectionHandler: ChannelDuplexHandler {
 
     /// A close from outside the handler, which is the listener stopping. Cancelling here, before the
     /// close reaches NIOSSL, keeps deskhand's close_notify after the cancellation on this path too.
+    /// `channelInactive` would cancel only after NIOSSL had sent close_notify, so this is not
+    /// redundant: contract 12.5 lets a caller read any close_notify before its response as proof of
+    /// the cancellation.
     func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
         enterClosing()
         context.close(mode: mode, promise: promise)
@@ -115,6 +118,10 @@ final class ConnectionHandler: ChannelDuplexHandler {
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         switch (error as? HTTPParserError, state) {
+        case (.invalidEOFState?, _):
+            // The caller ended its side partway through a request: a hang-up, not a bad request.
+            // Answering 400 would put a response before deskhand's close_notify.
+            close(context: context)
         case (.some(let parserError), .idle), (.some(let parserError), .receiving):
             let status: HTTPResponseStatus =
                 parserError == .headerOverflow ? .requestHeaderFieldsTooLarge : .badRequest
@@ -299,6 +306,11 @@ extension NodeAddress {
 /// the handlers above react first: the ``ConnectionHandler`` cancels the call and NIOSSL sends
 /// close_notify. Then this closes the socket. Without it a close that NIOSSL had already begun would
 /// wait out its shutdown timeout for a close_notify the caller can no longer send.
+///
+/// A close_notify that the socket could not yet take is dropped by the close; the caller then sees
+/// an end of stream without one, which the contract treats as no signal, so this fails safe.
+/// NIOSSL's shutdown timer stays scheduled after the close and fires harmlessly within 5 s; the
+/// socket itself is released at once.
 final class EndOfStreamCloser: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
 
