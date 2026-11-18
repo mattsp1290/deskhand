@@ -8,7 +8,8 @@ public struct DeskSnapshot: Sendable {
     public var policy: AppPolicy
     /// Whether the owner committed a transition the clock made (an allowance or arming period that
     /// a read found ended) whose effects no reduction has returned yet. ``report`` already shows
-    /// the transition, so it is no longer a passed deadline: the watchdog reduces on this instead.
+    /// the transition, so only this keeps its deadline passed: ``Watchdog/deadline(of:)`` is the
+    /// reading while it is set, and the watchdog reduces.
     /// Always `false` for an owner that commits transitions only when it reduces.
     public var hasUnreducedEffects: Bool
 

@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Watchdog: effects a read committed and no reduction returned", .timeLimit(.minutes(1)))
 struct WatchdogUnreducedEffectsTests {
-    @Test("unreduced effects are reduced at once, with no deadline passed and no read due")
+    @Test("unreduced effects are reduced at once, with no read due and the report's deadline ahead")
     func reducedAtOnce() async {
         let clock = ManualScheduler()
         let desk = FakeDesk(clock: clock)

@@ -8,16 +8,18 @@
 ///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed. An owner
 ///   that commits a lapse when any read finds it, its own loop's snapshot among them, keeps the
 ///   deadline passed through ``DeskSnapshot/hasUnreducedEffects`` (``deadline(of:)``), so the loop
-///   reduces at its wake at the deadline, not at the next periodic read. A wall clock stepped forward across `expires_at` can
-///   bring the lapse before that wake; the periodic read then reduces it. A change of the file
+///   reduces at its wake at the deadline, not at the next periodic read. A wall clock stepped
+///   forward across `expires_at` can bring the lapse before that wake; the loop's next wake reduces
+///   it, the periodic read at the latest. A change of the file
 ///   reported by a ``FileChangeSource`` reduces at once. None of these waits for the executor: the
 ///   executor reads the owner's new snapshot itself before its next event.
 /// - The executor's loop passes everything that stops the effect to
 ///   ``WatchdogExecutor/interrupt(_:)``, which keeps the first cause in the order of contract 9.5
 ///   and ignores everything while no call is in the admission section, polls the person while an
 ///   operation executes, and calls ``WatchdogExecutor/retryCleanup(now:)``. It wakes at the
-///   deadline, the next activity poll, the next cleanup retry, after every reduction, and at
-///   ``refreshState()`` and ``executionDidChange(executing:)``.
+///   deadline (``Configuration/deadlineRetryInterval`` after it once it has passed, as while
+///   effects wait for a reduction), the next activity poll, the next cleanup retry, after every
+///   reduction, and at ``refreshState()`` and ``executionDidChange(executing:)``.
 ///
 /// A revocation is therefore noticed without any file-change source, by the periodic read, at most
 /// ``Configuration/maxAllowanceReadInterval`` (500 ms) plus the timer's tolerance plus the owner's
