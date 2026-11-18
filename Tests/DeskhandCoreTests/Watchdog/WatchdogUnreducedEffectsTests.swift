@@ -27,14 +27,19 @@ struct WatchdogUnreducedEffectsTests {
         let desk = FakeDesk(clock: clock)
         let owner = CommittingOwner(desk: desk)
         let watchdog = Watchdog(
-            owner: owner, executor: FakeExecutor(clock: clock), activity: StaticActivity(), scheduler: clock)
+            owner: owner, executor: FakeExecutor(clock: clock), activity: StaticActivity(), scheduler: clock,
+            configuration: Watchdog.Configuration(deadlineRetryInterval: .milliseconds(150)))
         _ = await watchdog.evaluate()
 
         clock.advance(byMilliseconds: 100)
         owner.commit()
         owner.commitDuringNextReduction()
-        #expect(await watchdog.evaluate() == WatchdogFixture.at(200).monotonic)
+        #expect(await watchdog.evaluate() == WatchdogFixture.at(250).monotonic)
         #expect(desk.read(\.reductions.count) == 2)
+
+        clock.advance(byMilliseconds: 150)
+        #expect(await watchdog.evaluate() == WatchdogFixture.at(500).monotonic)
+        #expect(desk.read(\.reductions.count) == 3)
     }
 }
 

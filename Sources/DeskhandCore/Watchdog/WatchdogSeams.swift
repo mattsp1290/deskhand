@@ -59,8 +59,9 @@ public protocol WatchdogStateOwner: StateSource {
     /// when a deadline has passed, when a snapshot shows ``DeskSnapshot/hasUnreducedEffects``, and
     /// with `allowanceChanged` at least every ``Watchdog/Configuration/allowanceReadInterval``.
     ///
-    /// An owner whose ``StateSource/snapshot()`` commits the clock's transitions MUST set
-    /// ``DeskSnapshot/hasUnreducedEffects`` while their effects wait for a reduction: the committed
+    /// An owner that commits the clock's transitions when anything reads it, its
+    /// ``StateSource/snapshot()`` among them, MUST set ``DeskSnapshot/hasUnreducedEffects`` while
+    /// their effects wait for a reduction: the committed
     /// transition is no longer a passed deadline, so without it the watchdog reduces only at the
     /// next periodic read. This call MUST carry those effects out with its own and clear the flag,
     /// so a later snapshot sets it again only when a newer read committed another transition; while

@@ -7,7 +7,7 @@
 /// - The owner's loop has the owner read the allowance file again, bypassing its copy, every
 ///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed or the
 ///   snapshot shows effects no reduction has returned (``DeskSnapshot/hasUnreducedEffects``). An
-///   owner that commits a lapse when any snapshot finds it, its own loop's among them, leaves no
+///   owner that commits a lapse when any read finds it, its own loop's snapshot among them, leaves no
 ///   passed deadline, only those effects; the loop wakes at the deadline either way and reduces
 ///   then, not at the next periodic read. A wall clock stepped forward across `expires_at` can
 ///   bring the lapse before that wake; the periodic read then reduces it. A change of the file
@@ -109,8 +109,8 @@ public actor Watchdog {
     /// `expires_at`, the held lease's expiry and the end of arming, read afresh so a renewal moves
     /// it. Already past when a lease is held while the allowance or arming has ended. With no lease
     /// held it is when the clock alone next changes the state (``StateReport/validUntil(at:)``);
-    /// `nil` when nothing can end. An owner that commits the clock's transitions when a snapshot is
-    /// taken reports the next deadline instead, once one has passed, and
+    /// `nil` when nothing can end. An owner that commits the clock's transitions when anything reads
+    /// it reports the next deadline instead, once one has passed, and
     /// ``DeskSnapshot/hasUnreducedEffects`` until it reduces.
     public static func deadline(of snapshot: DeskSnapshot) -> ContinuousClock.Instant? {
         if case .held(let lease) = snapshot.lease.lease {
