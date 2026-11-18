@@ -5,15 +5,21 @@
 /// It runs two loops, so a busy executor never holds up a read of the allowance file:
 ///
 /// - The owner's loop has the owner read the allowance file again, bypassing its copy, every
-///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed. A change
-///   of the file reported by a ``FileChangeSource`` does the same at once. None of these waits for
-///   the executor: the executor reads the owner's new snapshot itself before its next event.
+///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed. An owner
+///   that commits a lapse when any read finds it, its own loop's snapshot among them, keeps the
+///   deadline passed through ``DeskSnapshot/hasUnreducedEffects`` (``deadline(of:)``), so the loop
+///   reduces at its wake at the deadline, not at the next periodic read. A wall clock stepped
+///   forward across `expires_at` can bring the lapse before that wake; the loop's next wake reduces
+///   it, the periodic read at the latest. A change of the file
+///   reported by a ``FileChangeSource`` reduces at once. None of these waits for the executor: the
+///   executor reads the owner's new snapshot itself before its next event.
 /// - The executor's loop passes everything that stops the effect to
 ///   ``WatchdogExecutor/interrupt(_:)``, which keeps the first cause in the order of contract 9.5
 ///   and ignores everything while no call is in the admission section, polls the person while an
 ///   operation executes, and calls ``WatchdogExecutor/retryCleanup(now:)``. It wakes at the
-///   deadline, the next activity poll, the next cleanup retry, after every reduction, and at
-///   ``refreshState()`` and ``executionDidChange(executing:)``.
+///   deadline (``Configuration/deadlineRetryInterval`` after it once it has passed, as while
+///   effects wait for a reduction), the next activity poll, the next cleanup retry, after every
+///   reduction, and at ``refreshState()`` and ``executionDidChange(executing:)``.
 ///
 /// A revocation is therefore noticed without any file-change source, by the periodic read, at most
 /// ``Configuration/maxAllowanceReadInterval`` (500 ms) plus the timer's tolerance plus the owner's
@@ -21,7 +27,10 @@
 /// returns, and the executor stops before its next event or within one 100 ms activity poll. That
 /// leaves about 390 ms of `DEADLINE_BOUND_MS` for the owner to reach its reduction and for the
 /// releases (contract 13.1, 14.4). A platform watch or a ``PollingFileChangeSource`` only makes it
-/// sooner.
+/// sooner. A lapse the clock alone makes is reduced at the owner's wake at its deadline, plus the
+/// timer's tolerance, or ``Configuration/deadlineRetryInterval`` later when a read commits it after
+/// the owner's reduction. A lapse a wall clock stepped forward brings earlier waits for the
+/// periodic read at most, as a revocation does.
 ///
 /// One instance per Mac. The app calls ``run()`` once, on a task it cancels at stop.
 public actor Watchdog {
@@ -38,10 +47,10 @@ public actor Watchdog {
         /// than ``maxAllowanceReadInterval`` is shortened to it.
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
-        /// not settle it, and how soon the owner's loop looks again while a reduction that another
-        /// task started is still running. A refresh that leaves a passed deadline while the owner's
-        /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
-        /// loop is woken at once either way.
+        /// not settle it or a read committed another lapse after it, and how soon the owner's loop
+        /// looks again while a reduction that another task started is still running. A refresh that
+        /// leaves a passed deadline while the owner's loop is reducing is therefore acted on by the
+        /// owner up to this much later; the executor's loop is woken at once either way.
         public var deadlineRetryInterval: Duration
 
         public init(
@@ -101,8 +110,12 @@ public actor Watchdog {
     /// `expires_at`, the held lease's expiry and the end of arming, read afresh so a renewal moves
     /// it. Already past when a lease is held while the allowance or arming has ended. With no lease
     /// held it is when the clock alone next changes the state (``StateReport/validUntil(at:)``);
-    /// `nil` when nothing can end.
+    /// `nil` when nothing can end. The snapshot's reading while it shows
+    /// ``DeskSnapshot/hasUnreducedEffects``: an owner that commits the clock's transitions when
+    /// anything reads it has already moved its report past the deadline that queued them, which
+    /// has passed all the same until a reduction returns them.
     public static func deadline(of snapshot: DeskSnapshot) -> ContinuousClock.Instant? {
+        if snapshot.hasUnreducedEffects { return snapshot.reading.monotonic }
         if case .held(let lease) = snapshot.lease.lease {
             return snapshot.report.effectDeadline(of: lease, leases: snapshot.lease, at: snapshot.reading)
         }

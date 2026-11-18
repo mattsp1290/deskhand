@@ -44,6 +44,17 @@ struct WatchdogDeadlineTests {
         #expect(Watchdog.deadline(of: desk.snapshot()) == nil)
     }
 
+    @Test("effects no reduction returned put the deadline at the reading", arguments: [nil, 30_000])
+    func unreducedEffects(leaseTTLMs: Int?) {
+        let clock = ManualScheduler()
+        let desk = FakeDesk(clock: clock, leaseTTLMs: leaseTTLMs)
+        clock.advance(byMilliseconds: 250)
+        var snapshot = desk.snapshot()
+        #expect(Watchdog.deadline(of: snapshot) != snapshot.reading.monotonic)
+        snapshot.hasUnreducedEffects = true
+        #expect(Watchdog.deadline(of: snapshot) == WatchdogFixture.at(250).monotonic)
+    }
+
     @Test("a lease held after arming ran out puts the deadline in the past")
     func pastDeadline() {
         let clock = ManualScheduler()
