@@ -5,9 +5,13 @@
 /// It runs two loops, so a busy executor never holds up a read of the allowance file:
 ///
 /// - The owner's loop has the owner read the allowance file again, bypassing its copy, every
-///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed. A change
-///   of the file reported by a ``FileChangeSource`` does the same at once. None of these waits for
-///   the executor: the executor reads the owner's new snapshot itself before its next event.
+///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed or the
+///   snapshot shows effects no reduction has returned (``DeskSnapshot/hasUnreducedEffects``). An
+///   owner that commits a lapse when any snapshot finds it, its own loop's among them, leaves no
+///   passed deadline, only those effects; the loop wakes at the deadline either way and reduces
+///   then, not at the next periodic read. A change of the file reported by a ``FileChangeSource``
+///   reduces at once. None of these waits for the executor: the executor reads the owner's new
+///   snapshot itself before its next event.
 /// - The executor's loop passes everything that stops the effect to
 ///   ``WatchdogExecutor/interrupt(_:)``, which keeps the first cause in the order of contract 9.5
 ///   and ignores everything while no call is in the admission section, polls the person while an
@@ -38,7 +42,7 @@ public actor Watchdog {
         /// than ``maxAllowanceReadInterval`` is shortened to it.
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
-        /// not settle it, and how soon the owner's loop looks again while a reduction that another
+        /// not settle it or a read committed another lapse after it, and how soon the owner's loop looks again while a reduction that another
         /// task started is still running. A refresh that leaves a passed deadline while the owner's
         /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
         /// loop is woken at once either way.
@@ -101,7 +105,9 @@ public actor Watchdog {
     /// `expires_at`, the held lease's expiry and the end of arming, read afresh so a renewal moves
     /// it. Already past when a lease is held while the allowance or arming has ended. With no lease
     /// held it is when the clock alone next changes the state (``StateReport/validUntil(at:)``);
-    /// `nil` when nothing can end.
+    /// `nil` when nothing can end. An owner that commits the clock's transitions when a snapshot is
+    /// taken reports the next deadline instead, once one has passed, and
+    /// ``DeskSnapshot/hasUnreducedEffects`` until it reduces.
     public static func deadline(of snapshot: DeskSnapshot) -> ContinuousClock.Instant? {
         if case .held(let lease) = snapshot.lease.lease {
             return snapshot.report.effectDeadline(of: lease, leases: snapshot.lease, at: snapshot.reading)
@@ -174,7 +180,7 @@ public actor Watchdog {
 
     /// One evaluation at the owner's clock reading: the owner's side, then the executor's. Has the
     /// owner read the allowance file when the periodic read is due and reduce when a deadline has
-    /// passed, passes every cause it finds to the executor, polls the person while an operation
+    /// passed or the snapshot shows unreduced effects, passes every cause it finds to the executor, polls the person while an operation
     /// executes, retries cleanup, and returns when it next needs to run: `nil` when nothing is due
     /// until something changes.
     public func evaluate() async -> ContinuousClock.Instant? {
@@ -203,17 +209,23 @@ public actor Watchdog {
         }
     }
 
+    /// Reduces when the periodic read is due, a deadline has passed, or the snapshot shows effects
+    /// no reduction has returned: an owner that commits a lapse on read, as this snapshot may, shows
+    /// that instead of a passed deadline. Such effects that `after` shows, committed by a read since
+    /// the reduction, are acted on after ``Configuration/deadlineRetryInterval``, as a passed
+    /// deadline the reduction did not settle is.
     private func readIfDue() async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
         let readDue = nextAllowanceRead.map { $0 <= now } ?? true
         let deadlinePassed = Self.deadline(of: snapshot).map { $0 <= now } ?? false
-        if readDue || deadlinePassed {
+        if readDue || deadlinePassed || snapshot.hasUnreducedEffects {
             await reduce(allowanceChanged: readDue)
             ring(.executor)
         }
         let after = owner.snapshot()
-        if reducing { return after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval) }
+        let retry = after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval)
+        if reducing || after.hasUnreducedEffects { return retry }
         return [nextAllowanceRead, deadlineWakeup(of: after)].compactMap { $0 }.min()
     }
 

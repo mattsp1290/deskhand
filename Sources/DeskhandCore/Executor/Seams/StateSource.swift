@@ -5,12 +5,20 @@ public struct DeskSnapshot: Sendable {
     public var report: StateReport
     public var lease: LeaseManager
     public var policy: AppPolicy
+    /// Whether the owner committed a transition the clock made (an allowance or arming period that
+    /// a read found ended) whose effects no reduction has returned yet. ``report`` already shows
+    /// the transition, so it is no longer a passed deadline: the watchdog reduces on this instead.
+    public var hasUnreducedEffects: Bool
 
-    public init(reading: ClockReading, report: StateReport, lease: LeaseManager, policy: AppPolicy) {
+    public init(
+        reading: ClockReading, report: StateReport, lease: LeaseManager, policy: AppPolicy,
+        hasUnreducedEffects: Bool = false
+    ) {
         self.reading = reading
         self.report = report
         self.lease = lease
         self.policy = policy
+        self.hasUnreducedEffects = hasUnreducedEffects
     }
 
     /// The state at ``reading``: a report goes stale when arming or the allowance runs out.
