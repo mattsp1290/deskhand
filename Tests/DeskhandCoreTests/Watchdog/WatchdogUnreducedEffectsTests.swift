@@ -40,7 +40,7 @@ struct WatchdogUnreducedEffectsTests {
 
 /// An owner that reports ``DeskSnapshot/hasUnreducedEffects`` from a lapse a read committed until
 /// the next reduction, as the server's `DeskOwner` does.
-final class CommittingOwner: WatchdogStateOwner {
+private final class CommittingOwner: WatchdogStateOwner {
     private struct State {
         var unreduced = false
         var commitDuringReduction = false

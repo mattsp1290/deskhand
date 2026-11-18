@@ -9,9 +9,10 @@
 ///   snapshot shows effects no reduction has returned (``DeskSnapshot/hasUnreducedEffects``). An
 ///   owner that commits a lapse when any snapshot finds it, its own loop's among them, leaves no
 ///   passed deadline, only those effects; the loop wakes at the deadline either way and reduces
-///   then, not at the next periodic read. A change of the file reported by a ``FileChangeSource``
-///   reduces at once. None of these waits for the executor: the executor reads the owner's new
-///   snapshot itself before its next event.
+///   then, not at the next periodic read. A wall clock stepped forward across `expires_at` can
+///   bring the lapse before that wake; the periodic read then reduces it. A change of the file
+///   reported by a ``FileChangeSource`` reduces at once. None of these waits for the executor: the
+///   executor reads the owner's new snapshot itself before its next event.
 /// - The executor's loop passes everything that stops the effect to
 ///   ``WatchdogExecutor/interrupt(_:)``, which keeps the first cause in the order of contract 9.5
 ///   and ignores everything while no call is in the admission section, polls the person while an
@@ -27,7 +28,8 @@
 /// releases (contract 13.1, 14.4). A platform watch or a ``PollingFileChangeSource`` only makes it
 /// sooner. A lapse the clock alone makes is reduced at the owner's wake at its deadline, plus the
 /// timer's tolerance, or ``Configuration/deadlineRetryInterval`` later when a read commits it after
-/// the owner's reduction: well inside `DEADLINE_BOUND_MS` either way.
+/// the owner's reduction. A lapse a wall clock stepped forward brings earlier waits for the
+/// periodic read at most, as a revocation does.
 ///
 /// One instance per Mac. The app calls ``run()`` once, on a task it cancels at stop.
 public actor Watchdog {
@@ -45,9 +47,9 @@ public actor Watchdog {
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
         /// not settle it or a read committed another lapse after it, and how soon the owner's loop
-        /// looks again while a reduction that another task started is still running. A refresh that leaves a passed deadline while the owner's
-        /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
-        /// loop is woken at once either way.
+        /// looks again while a reduction that another task started is still running. A refresh that
+        /// leaves a passed deadline while the owner's loop is reducing is therefore acted on by the
+        /// owner up to this much later; the executor's loop is woken at once either way.
         public var deadlineRetryInterval: Duration
 
         public init(
@@ -227,8 +229,9 @@ public actor Watchdog {
         }
         let after = owner.snapshot()
         let retry = after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval)
-        if reducing || after.hasUnreducedEffects { return retry }
-        return [nextAllowanceRead, deadlineWakeup(of: after)].compactMap { $0 }.min()
+        if reducing { return retry }
+        let unreduced = after.hasUnreducedEffects ? retry : nil
+        return [nextAllowanceRead, deadlineWakeup(of: after), unreduced].compactMap { $0 }.min()
     }
 
     private func act(on snapshot: DeskSnapshot) async -> ContinuousClock.Instant? {

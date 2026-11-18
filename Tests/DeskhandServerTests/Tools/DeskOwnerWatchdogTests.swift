@@ -37,22 +37,31 @@ private struct NobodyAtTheMac: UserActivitySource {
     func idleMilliseconds() -> Int? { 3_600_000 }
 }
 
-/// ``FakeClockScheduler``, recording the deadline of every sleep still in progress, so a test moves
-/// the clock only once both loops have gone to sleep.
+/// ``FakeClockScheduler``, recording the deadline of every sleep that is neither over nor
+/// cancelled, so a test moves the clock only once both loops have gone to sleep. A cancelled timer
+/// leaves at once, not at its next poll, so it never stands in for a loop that is awake.
 private final class SleepRecordingScheduler: WatchdogScheduler {
     private let base: FakeClockScheduler
-    private let sleeping = Mutex<[ContinuousClock.Instant]>([])
+    private let sleeping = Mutex<(next: UInt64, deadlines: [UInt64: ContinuousClock.Instant])>((0, [:]))
 
     init(clock: ToolClock) { base = FakeClockScheduler(clock: clock) }
 
     var now: ContinuousClock.Instant { base.now }
 
-    var deadlines: [ContinuousClock.Instant] { sleeping.withLock { $0 } }
+    var deadlines: [ContinuousClock.Instant] { sleeping.withLock { $0.deadlines.values.sorted() } }
 
     func sleep(until deadline: ContinuousClock.Instant) async {
-        sleeping.withLock { $0.append(deadline) }
-        await base.sleep(until: deadline)
-        sleeping.withLock { $0.remove(at: $0.firstIndex(of: deadline)!) }
+        let id = sleeping.withLock { sleeping in
+            sleeping.next += 1
+            sleeping.deadlines[sleeping.next] = deadline
+            return sleeping.next
+        }
+        await withTaskCancellationHandler {
+            await base.sleep(until: deadline)
+        } onCancel: {
+            _ = sleeping.withLock { $0.deadlines.removeValue(forKey: id) }
+        }
+        _ = sleeping.withLock { $0.deadlines.removeValue(forKey: id) }
     }
 }
 
@@ -87,7 +96,7 @@ private final class SleepRecordingScheduler: WatchdogScheduler {
         let reductions = desk.reductions
         try #require(reductions.count == 2)
         let lapse = reductions[1]
-        #expect(lapse.reading.monotonic < ToolFixture.t0.monotonic.advanced(by: .milliseconds(500)))
+        #expect(lapse.reading.monotonic == ToolFixture.t0.monotonic.advanced(by: .milliseconds(250)))
         #expect(lapse.effects.contains(.cancelInFlight(.gated)))
         #expect(lapse.leaseEnds.map(\.cause) == [.dropped(.gated)])
         #expect(owner.snapshot().hasUnreducedEffects == false)
