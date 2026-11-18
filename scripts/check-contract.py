@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check docs/schemas and docs/contract.md against each other.
+"""Check docs/schemas, docs/contract.md and the Swift constants against each other.
 
 Schemas and examples are discovered by convention under docs/schemas/, so
 adding a schema or an example needs no edit here:
@@ -40,10 +40,11 @@ adding a schema or an example needs no edit here:
              9.2 tool_error tables match the schema's if/then rules; the
              constants of section 16 match every schema keyword, example
              `limits` and prose figure that carries them, wherever the figure
-             is repeated; the HTTP status and JSON-RPC code pairs of 2.3 and
-             2.4 match 9.4; a status result's state heads its active_states for
-             every state; the header's versions match every contract_version
-             and protocol version; every JSON block validates; every intra-doc
+             is repeated, and the Swift sources in SWIFT_SITES; the HTTP
+             status and JSON-RPC code pairs of 2.3 and 2.4 match 9.4; a status
+             result's state heads its active_states for every state; the
+             header's versions match every contract_version and protocol
+             version; every JSON block validates; every intra-doc
              #anchor resolves.
 
 Date-time formats are asserted (rfc3339-validator), so 29 February of a common
@@ -65,6 +66,7 @@ from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
+REPO = Path(__file__).resolve().parent.parent
 DEFS = "defs.json"
 TOOLS_DIR = "tools"
 WIRE_DIR = "wire"
@@ -197,6 +199,17 @@ UNSCHEMATIZED_CONSTANTS = {
     "DEADLINE_BOUND_MS", "ALLOWANCE_CACHE_MAX_MS", "ALLOWANCE_SKEW_TOLERANCE_MS", "ACTIONS_PER_MINUTE",
     "GATED_ENDS_ARMING", "BIND_RETRY_MS", "OPERATION_RETENTION_MS", "OPERATION_MAX_RECORDS",
     "MAX_REQUEST_BODY_BYTES", "MAX_REQUEST_HEADER_BYTES", "MAX_RESPONSE_BODY_BYTES", "CONNECTION_MAX_AGE",
+    "TOKEN_MIN_LENGTH",
+}
+# Section 16 constants that a Swift source states: (file under the repository,
+# regex whose one group is the value). The regex must match exactly once and covers the
+# whole declaration, so an expression such as `32 + 1`, a move or a rename fails
+# until this list is updated.
+SWIFT_SITES = {
+    "TOKEN_MIN_LENGTH": [
+        ("Sources/DeskhandServer/Credentials/TokenRotation.swift",
+         r"(?m)static let minimumLength = (\d+)[ \t]*(?://[^\n]*)?$"),
+    ],
 }
 # status.limits members whose name is not the constant's name in lower case.
 LIMIT_PARTS = {"lease_ttl_min_ms": ("LEASE_TTL_MS", "min"), "lease_ttl_max_ms": ("LEASE_TTL_MS", "max")}
@@ -238,6 +251,11 @@ PROSE_SITES = [
      [("MAX_LONG_EDGE", "value"), ("MAX_PIXELS", "value")]),
     ("17.1 ", rf"down to ({NUM}) px", [("MIN_LONG_EDGE", "value")]),
     ("19. ", rf"an image has at most ({NUM}) pixels", [("MAX_PIXELS", "value")]),
+    # The generic "`NAME` = N" scan also compares these figures; these sites make
+    # each statement required, so they must stay even though they repeat it.
+    ("2.2 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) visible ASCII characters", [("TOKEN_MIN_LENGTH", "value")]),
+    ("11.1 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) bytes or more", [("TOKEN_MIN_LENGTH", "value")]),
+    ("Appendix A", rf"shorter than `TOKEN_MIN_LENGTH` = ({NUM}) visible", [("TOKEN_MIN_LENGTH", "value")]),
     ("6.3 ", rf"\| `max_long_edge` \| no \| ({NUM}) \| Integer, ({NUM}) to ({NUM})\.",
      [("MAX_LONG_EDGE", "value"), ("MIN_LONG_EDGE", "value"), ("MAX_LONG_EDGE", "value")]),
 ]
@@ -1086,7 +1104,7 @@ class Checker:
         for name in sorted(set(consts) - set(CONSTANT_SITES) - UNSCHEMATIZED_CONSTANTS):
             self.fail(f"contract.md 16: {name} is in neither CONSTANT_SITES nor UNSCHEMATIZED_CONSTANTS "
                       "of scripts/check-contract.py")
-        for name in sorted((set(CONSTANT_SITES) | UNSCHEMATIZED_CONSTANTS) - set(consts)):
+        for name in sorted((set(CONSTANT_SITES) | UNSCHEMATIZED_CONSTANTS | set(SWIFT_SITES)) - set(consts)):
             self.fail(f"scripts/check-contract.py names {name}, which contract.md 16 does not list")
 
         def want(name: str, part: str):
@@ -1110,6 +1128,8 @@ class Checker:
                     continue
                 if got != expected:
                     self.fail(f"{rel}#{ptr}/{kw} is {got}, contract.md 16 says {name} {part} is {expected}")
+
+        self.check_swift_sites(want)
 
         for prefix, pattern, parts in PROSE_SITES:
             text = unwrap(self.section(prefix))
@@ -1172,6 +1192,23 @@ class Checker:
                         self.fail(f"{where}: limits.{key} is {got}, contract.md 16 says {name} {part} is {exp}")
                     elif exp is None and "min" in c and not c["min"] <= got <= c["max"]:
                         self.fail(f"{where}: limits.{key} {got} is outside {name} {c['min']} to {c['max']}")
+
+    def check_swift_sites(self, want) -> None:
+        """Each SWIFT_SITES declaration states its section 16 value."""
+        for name, sites in SWIFT_SITES.items():
+            expected = want(name, "value")
+            if expected is None:
+                continue  # check_constants already reported the missing constant
+            for rel, pattern in sites:
+                try:
+                    found = re.findall(pattern, (REPO / rel).read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError) as e:
+                    self.fail(f"{rel}: cannot read for {name}: {e}")
+                    continue
+                if len(found) != 1:
+                    self.fail(f"{rel}: /{pattern}/ matches {len(found)} times for {name} (update SWIFT_SITES)")
+                elif number(found[0]) != expected:
+                    self.fail(f"{rel}: says {found[0]} where contract.md 16 gives {name} {expected}")
 
     def check_figures(self, want) -> None:
         """Every figure of a million or more that is given in bytes, pixels or characters, anywhere."""
@@ -1262,8 +1299,9 @@ class Checker:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--docs", type=Path, default=Path(__file__).resolve().parent.parent / "docs",
-                    help="docs directory holding contract.md and schemas/ (default: %(default)s)")
+    ap.add_argument("--docs", type=Path, default=REPO / "docs",
+                    help="docs directory holding contract.md and schemas/ (default: %(default)s); "
+                         "SWIFT_SITES are always read from this script's checkout")
     args = ap.parse_args()
     return Checker(args.docs).run()
 

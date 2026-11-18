@@ -78,7 +78,8 @@ The checker also compares `docs/contract.md` with the schemas:
 - Every constant in section 16 against each schema keyword that carries it
   (`CONSTANT_SITES` in the script), against `limits` in the examples, and
   against the prose that restates it (`PROSE_SITES`, every match in the
-  section). A new constant must be added to `CONSTANT_SITES` or
+  section), and against the Swift source that defines it (`SWIFT_SITES`). A
+  new constant must be added to `CONSTANT_SITES` or
   `UNSCHEMATIZED_CONSTANTS`.
 - Prose that restates a schema bound which is not a section 16 constant, such
   as the length of `holder_id`, against that bound (`SCHEMA_PROSE_SITES`).
