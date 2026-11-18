@@ -202,13 +202,13 @@ UNSCHEMATIZED_CONSTANTS = {
     "TOKEN_MIN_LENGTH",
 }
 # Section 16 constants that a Swift source states: (file under the repository,
-# regex with one group, part). The regex must match exactly once and covers the
+# regex whose one group is the value). The regex must match exactly once and covers the
 # whole declaration, so an expression such as `32 + 1`, a move or a rename fails
 # until this list is updated.
 SWIFT_SITES = {
     "TOKEN_MIN_LENGTH": [
         ("Sources/DeskhandServer/Credentials/TokenRotation.swift",
-         r"(?m)static let minimumLength = (\d+)[ \t]*(?://[^\n]*)?$", "value"),
+         r"(?m)static let minimumLength = (\d+)[ \t]*(?://[^\n]*)?$"),
     ],
 }
 # status.limits members whose name is not the constant's name in lower case.
@@ -1104,7 +1104,7 @@ class Checker:
         for name in sorted(set(consts) - set(CONSTANT_SITES) - UNSCHEMATIZED_CONSTANTS):
             self.fail(f"contract.md 16: {name} is in neither CONSTANT_SITES nor UNSCHEMATIZED_CONSTANTS "
                       "of scripts/check-contract.py")
-        for name in sorted((set(CONSTANT_SITES) | UNSCHEMATIZED_CONSTANTS) - set(consts)):
+        for name in sorted((set(CONSTANT_SITES) | UNSCHEMATIZED_CONSTANTS | set(SWIFT_SITES)) - set(consts)):
             self.fail(f"scripts/check-contract.py names {name}, which contract.md 16 does not list")
 
         def want(name: str, part: str):
@@ -1129,22 +1129,7 @@ class Checker:
                 if got != expected:
                     self.fail(f"{rel}#{ptr}/{kw} is {got}, contract.md 16 says {name} {part} is {expected}")
 
-        for name, sites in SWIFT_SITES.items():
-            if name not in consts:
-                self.fail(f"scripts/check-contract.py SWIFT_SITES names {name}, which contract.md 16 does not list")
-                continue
-            for rel, pattern, part in sites:
-                try:
-                    found = re.findall(pattern, (REPO / rel).read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError) as e:
-                    self.fail(f"{rel}: cannot read for {name}: {e}")
-                    continue
-                if len(found) != 1:
-                    self.fail(f"{rel}: /{pattern}/ matches {len(found)} times for {name} (update SWIFT_SITES)")
-                elif want(name, part) is None:
-                    self.fail(f"contract.md 16: {name} has no {part} to compare with {rel}")
-                elif number(found[0]) != want(name, part):
-                    self.fail(f"{rel}: says {found[0]} where contract.md 16 gives {name} {part} {want(name, part)}")
+        self.check_swift_sites(want)
 
         for prefix, pattern, parts in PROSE_SITES:
             text = unwrap(self.section(prefix))
@@ -1207,6 +1192,23 @@ class Checker:
                         self.fail(f"{where}: limits.{key} is {got}, contract.md 16 says {name} {part} is {exp}")
                     elif exp is None and "min" in c and not c["min"] <= got <= c["max"]:
                         self.fail(f"{where}: limits.{key} {got} is outside {name} {c['min']} to {c['max']}")
+
+    def check_swift_sites(self, want) -> None:
+        """Each SWIFT_SITES declaration states its section 16 value."""
+        for name, sites in SWIFT_SITES.items():
+            expected = want(name, "value")
+            if expected is None:
+                continue  # check_constants already reported the missing constant
+            for rel, pattern in sites:
+                try:
+                    found = re.findall(pattern, (REPO / rel).read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError) as e:
+                    self.fail(f"{rel}: cannot read for {name}: {e}")
+                    continue
+                if len(found) != 1:
+                    self.fail(f"{rel}: /{pattern}/ matches {len(found)} times for {name} (update SWIFT_SITES)")
+                elif number(found[0]) != expected:
+                    self.fail(f"{rel}: says {found[0]} where contract.md 16 gives {name} {expected}")
 
     def check_figures(self, want) -> None:
         """Every figure of a million or more that is given in bytes, pixels or characters, anywhere."""
