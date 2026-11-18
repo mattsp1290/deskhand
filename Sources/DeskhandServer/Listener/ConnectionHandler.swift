@@ -24,8 +24,8 @@ final class ConnectionSession {
 /// `inputClosed` while the connection is still open (the listener allows remote half-closure). The
 /// call is cancelled first, and only then does deskhand send its own close_notify and close, so a
 /// caller that reads deskhand's close_notify before any response knows the cancellation was
-/// signalled (contract 12.5). A close
-/// requested from outside, by the listener stopping, passes through here and cancels first too.
+/// signalled (contract 12.5). A close requested from outside, by the listener stopping, passes
+/// through here and cancels first too.
 final class ConnectionHandler: ChannelDuplexHandler {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundIn = HTTPServerResponsePart
@@ -94,25 +94,24 @@ final class ConnectionHandler: ChannelDuplexHandler {
     }
 
     /// The caller sent TLS close_notify (NIOSSL reports it as `inputClosed`) or ended the stream. The
-    /// caller is hanging up: `cancelAndClose(context:)` cancels the call before the close goes down to NIOSSL,
-    /// which then sends deskhand's close_notify. After a close_notify NIOSSL then closes the
+    /// caller is hanging up: the close cancels the call before it goes down to NIOSSL, which then
+    /// sends deskhand's close_notify. After a close_notify NIOSSL then closes the
     /// connection; after an end of stream ``EndOfStreamCloser`` does. An end of stream without
     /// close_notify arrives as `NIOSSLError.uncleanShutdown` first, and `errorCaught` already closes
     /// the same way.
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if case .inputClosed? = event as? ChannelEvent {
-            cancelAndClose(context: context)
+            close(context: context)
             return
         }
         context.fireUserInboundEventTriggered(event)
     }
 
-    /// A close from outside the handler, which is the listener stopping. Cancelling here, before the
-    /// close reaches NIOSSL, keeps deskhand's close_notify after the cancellation on this path too.
-    /// `channelInactive` would cancel only after NIOSSL had sent close_notify, so this is not
-    /// redundant: it keeps every close_notify on a running call's connection after the cancellation,
-    /// which the signal of contract 12.5 (a caller that has ended its side reads deskhand's
-    /// close_notify before any response) relies on.
+    /// Every full close of the connection, the handler's own (`close(context:)`) and one from outside
+    /// (the listener stopping), cancels the call here before the close reaches NIOSSL. So every
+    /// close_notify on a running call's connection comes after the cancellation, which the signal of
+    /// contract 12.5 (a caller that has ended its side reads deskhand's close_notify before any
+    /// response) relies on. `channelInactive` alone would cancel only after NIOSSL had sent it.
     func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
         if mode != .input { enterClosing() }
         context.close(mode: mode, promise: promise)
@@ -123,13 +122,13 @@ final class ConnectionHandler: ChannelDuplexHandler {
         case (.invalidEOFState?, _):
             // The caller ended its side partway through a request: a hang-up, not a bad request.
             // Answering 400 would put a response before deskhand's close_notify.
-            cancelAndClose(context: context)
+            close(context: context)
         case (.some(let parserError), .idle), (.some(let parserError), .receiving):
             let status: HTTPResponseStatus =
                 parserError == .headerOverflow ? .requestHeaderFieldsTooLarge : .badRequest
             answerAndClose(status: status, headers: [], context: context)
         default:
-            cancelAndClose(context: context)
+            close(context: context)
         }
     }
 
@@ -139,7 +138,7 @@ final class ConnectionHandler: ChannelDuplexHandler {
             // The verification callback sets the principal before any application data is read,
             // so its absence means the handshake did not authenticate the peer.
             guard session.principal != nil else {
-                cancelAndClose(context: context)
+                close(context: context)
                 return
             }
             switch screen.screenHead(head, tokens: tokens.acceptedTokens(), now: ContinuousClock.now) {
@@ -191,7 +190,7 @@ final class ConnectionHandler: ChannelDuplexHandler {
     private func respond(_ response: HandlerResponse, to admitted: AdmittedHead, context: ChannelHandlerContext) {
         guard case .handling = state, context.channel.isActive else { return }
         if response.closesWithoutResponse {
-            cancelAndClose(context: context)
+            close(context: context)
             return
         }
         var status = response.status
@@ -235,9 +234,8 @@ final class ConnectionHandler: ChannelDuplexHandler {
         cancelBodyTimer()
     }
 
-    private func cancelAndClose(context: ChannelHandlerContext) {
-        enterClosing()
-        context.close(promise: nil)
+    private func close(context: ChannelHandlerContext) {
+        close(context: context, mode: .all, promise: nil)
     }
 
     /// Closing outright while request bytes are still arriving makes the kernel answer them with a
@@ -268,7 +266,7 @@ final class ConnectionHandler: ChannelDuplexHandler {
         // The verification callback sets the principal just before the handshake completes.
         handshakeTimer = loop.scheduleTask(in: handshakeTimeout) {
             guard self.session.principal == nil else { return }
-            self.cancelAndClose(context: context)
+            self.close(context: context)
         }
         maxAgeTimer = loop.scheduleTask(in: maxAge) {
             self.closeAfterResponse = true
@@ -276,7 +274,7 @@ final class ConnectionHandler: ChannelDuplexHandler {
             case .handling, .closing:
                 return
             case .idle, .receiving:
-                self.cancelAndClose(context: context)
+                self.close(context: context)
             }
         }
     }
@@ -284,7 +282,7 @@ final class ConnectionHandler: ChannelDuplexHandler {
     private func startBodyTimer(context: ChannelHandlerContext) {
         bodyTimer = context.eventLoop.assumeIsolated().scheduleTask(in: bodyTimeout) {
             guard case .receiving = self.state else { return }
-            self.cancelAndClose(context: context)
+            self.close(context: context)
         }
     }
 

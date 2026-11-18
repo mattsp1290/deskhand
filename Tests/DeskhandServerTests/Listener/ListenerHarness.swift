@@ -99,8 +99,25 @@ enum ListenerHarness {
     static func withListener(
         configuration: ListenerConfiguration = configuration(),
         handler: any RequestHandler = RecordingHandler(),
+        group: any EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
         wallClock: @escaping @Sendable () -> Timestamp = { ClockReading.now().wall },
         _ body: (SocketAddress, TestPKI, EventLog) async throws -> Void
+    ) async throws {
+        try await withRunningListener(
+            configuration: configuration, handler: handler, group: group, wallClock: wallClock
+        ) { _, address, pki, log in
+            try await body(address, pki, log)
+        }
+    }
+
+    /// As ``withListener``, also handing over the listener, for a test that stops it itself: the
+    /// listener is stopped again afterwards, which `stop()` allows.
+    static func withRunningListener(
+        configuration: ListenerConfiguration = configuration(),
+        handler: any RequestHandler = RecordingHandler(),
+        group: any EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+        wallClock: @escaping @Sendable () -> Timestamp = { ClockReading.now().wall },
+        _ body: (DeskhandListener, SocketAddress, TestPKI, EventLog) async throws -> Void
     ) async throws {
         let pki = try TestPKI.get()
         let log = EventLog()
@@ -109,12 +126,13 @@ enum ListenerHarness {
             tls: try makeTLS(pki),
             tokens: FixedTokenProvider(tokens: acceptedTokens),
             handler: handler,
+            group: group,
             wallClock: wallClock,
             events: { log.record($0) }
         )
         let address = try await listener.start()
         do {
-            try await body(address, pki, log)
+            try await body(listener, address, pki, log)
         } catch {
             await listener.stop()
             throw error
@@ -236,17 +254,7 @@ enum TestClient {
         tlsVersion: TLSVersion = .tlsv13,
         _ body: (inout TestConnection) async throws -> Result
     ) async throws -> Result {
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.trustRoots = .certificates([pki.caCertificate])
-        tls.certificateVerification = .fullVerification
-        tls.minimumTLSVersion = tlsVersion
-        tls.maximumTLSVersion = tlsVersion
-        if let client {
-            let identity = pki.identity(client)
-            tls.certificateChain = [.certificate(identity.certificate)]
-            tls.privateKey = .privateKey(identity.key)
-        }
-        let context = try NIOSSLContext(configuration: tls)
+        let context = try pki.clientContext(as: client, tlsVersion: tlsVersion)
         let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .connect(to: address) { channel in
                 channel.eventLoop.makeCompletedFuture {

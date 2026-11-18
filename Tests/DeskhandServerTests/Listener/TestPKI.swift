@@ -173,3 +173,21 @@ struct TestPKI: Sendable {
 
         """
 }
+
+extension TestPKI {
+    /// A client context that trusts this CA, speaks only `tlsVersion` and presents `client`'s
+    /// certificate, or none.
+    func clientContext(as client: Client? = .valid, tlsVersion: TLSVersion = .tlsv13) throws -> NIOSSLContext {
+        var tls = TLSConfiguration.makeClientConfiguration()
+        tls.trustRoots = .certificates([caCertificate])
+        tls.certificateVerification = .fullVerification
+        tls.minimumTLSVersion = tlsVersion
+        tls.maximumTLSVersion = tlsVersion
+        if let client {
+            let identity = identity(client)
+            tls.certificateChain = [.certificate(identity.certificate)]
+            tls.privateKey = .privateKey(identity.key)
+        }
+        return try NIOSSLContext(configuration: tls)
+    }
+}

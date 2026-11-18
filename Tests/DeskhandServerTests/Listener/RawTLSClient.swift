@@ -27,17 +27,7 @@ struct RawTLSClient: Sendable {
     private let context: NIOSSLContext
 
     init(pki: TestPKI, as client: TestPKI.Client? = .valid) throws {
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.trustRoots = .certificates([pki.caCertificate])
-        tls.certificateVerification = .fullVerification
-        tls.minimumTLSVersion = .tlsv13
-        tls.maximumTLSVersion = .tlsv13
-        if let client {
-            let identity = pki.identity(client)
-            tls.certificateChain = [.certificate(identity.certificate)]
-            tls.privateKey = .privateKey(identity.key)
-        }
-        context = try NIOSSLContext(configuration: tls)
+        context = try pki.clientContext(as: client)
     }
 
     /// Sends `request` after the handshake, in flushed writes of `fragmentSize` bytes when given, and

@@ -53,19 +53,20 @@ final class CancellationOrderHandler: RequestHandler {
     }
 }
 
-/// What a ``HalfClosingClient`` saw of deskhand closing, each with whether the call had already
-/// been cancelled at that moment.
-struct Sightings: Sendable {
-    /// `nil` until deskhand's TLS close_notify arrives, then whether the call was cancelled by then.
-    var cancelledAtCloseNotify: Bool?
-    /// `nil` until deskhand's end of stream arrives, then whether the call was cancelled by then.
-    var cancelledAtEndOfStream: Bool?
-    /// The close_notify had been seen when the stream ended.
-    var closeNotifyBeforeEndOfStream = false
-    /// The stream ended without a close_notify before it.
-    var ragged = false
-    /// Application bytes deskhand sent.
-    var response: [UInt8] = []
+/// One way deskhand's closing showed at a ``HalfClosingClient``, and whether the call had been
+/// cancelled when it arrived.
+struct Sighting: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        /// deskhand's TLS close_notify.
+        case closeNotify
+        /// deskhand's end of stream.
+        case endOfStream
+        /// NIOSSL saw the stream end with no close_notify before it.
+        case ragged
+    }
+
+    let kind: Kind
+    let cancelled: Bool
 }
 
 /// A TLS client that can end its side of the connection in each ``CallerHalfClose`` way and then
@@ -79,18 +80,15 @@ struct HalfClosingClient {
     let channel: any Channel
     private let record: Recorder
 
-    var sightings: Sightings { record.seen.withLock { $0 } }
+    /// What arrived, in arrival order, each kind once.
+    var sightings: [Sighting] { record.state.withLock { $0.sightings } }
+    /// Application bytes deskhand sent.
+    var response: [UInt8] { record.state.withLock { $0.response } }
 
     static func connect(
         to address: SocketAddress, pki: TestPKI, callCancelled: @escaping @Sendable () -> Bool
     ) async throws -> HalfClosingClient {
-        let identity = pki.identity(.valid)
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.trustRoots = .certificates([pki.caCertificate])
-        tls.minimumTLSVersion = .tlsv13
-        tls.certificateChain = [.certificate(identity.certificate)]
-        tls.privateKey = .privateKey(identity.key)
-        let context = try NIOSSLContext(configuration: tls)
+        let context = try pki.clientContext()
         let record = Recorder(callCancelled: callCancelled)
         let loop = group.next()
         let handshake = loop.makePromise(of: Void.self)
@@ -147,28 +145,23 @@ struct HalfClosingClient {
     }
 
     private final class Recorder: Sendable {
-        let seen = Mutex(Sightings())
+        let state = Mutex((sightings: [Sighting](), response: [UInt8]()))
         let callCancelled: @Sendable () -> Bool
 
         init(callCancelled: @escaping @Sendable () -> Bool) { self.callCancelled = callCancelled }
 
-        func closeNotify() {
+        /// Keeps the first of each kind: NIO and NIOSSL can report the same ending twice.
+        func saw(_ kind: Sighting.Kind) {
             let cancelled = callCancelled()
-            seen.withLock { if $0.cancelledAtCloseNotify == nil, !$0.ragged { $0.cancelledAtCloseNotify = cancelled } }
-        }
-
-        func endOfStream() {
-            let cancelled = callCancelled()
-            seen.withLock {
-                guard $0.cancelledAtEndOfStream == nil else { return }
-                $0.cancelledAtEndOfStream = cancelled
-                $0.closeNotifyBeforeEndOfStream = $0.cancelledAtCloseNotify != nil
+            state.withLock { state in
+                guard !state.sightings.contains(where: { $0.kind == kind }) else { return }
+                state.sightings.append(Sighting(kind: kind, cancelled: cancelled))
             }
         }
 
-        func ragged() { seen.withLock { if $0.cancelledAtCloseNotify == nil { $0.ragged = true } } }
+        func hasSeen(_ kind: Sighting.Kind) -> Bool { state.withLock { $0.sightings.contains { $0.kind == kind } } }
 
-        func read(_ bytes: ByteBufferView) { seen.withLock { $0.response += bytes } }
+        func read(_ bytes: ByteBufferView) { state.withLock { $0.response += bytes } }
     }
 
     /// The socket end of the pipeline, below TLS. It reports deskhand's end of stream and holds back
@@ -185,7 +178,7 @@ struct HalfClosingClient {
         init(_ record: Recorder) { self.record = record }
 
         func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-            if case .inputClosed? = event as? ChannelEvent { record.endOfStream() }
+            if case .inputClosed? = event as? ChannelEvent { record.saw(.endOfStream) }
             context.fireUserInboundEventTriggered(event)
         }
 
@@ -197,7 +190,7 @@ struct HalfClosingClient {
 
         /// Once the client has closed its output, NIO reports deskhand's end of stream by closing.
         func channelInactive(context: ChannelHandlerContext) {
-            if !failed, !passesClose { record.endOfStream() }
+            if !failed, !passesClose { record.saw(.endOfStream) }
             context.fireChannelInactive()
         }
 
@@ -234,12 +227,17 @@ struct HalfClosingClient {
                 shookHands = true
                 handshake.succeed()
             }
-            if case .shutdownCompleted = event as? TLSUserEvent { record.closeNotify() }
-            if case .inputClosed? = event as? ChannelEvent { record.closeNotify() }
+            // After a ragged end NIOSSL also reports `inputClosed`, which is no close_notify.
+            if case .shutdownCompleted = event as? TLSUserEvent { record.saw(.closeNotify) }
+            if case .inputClosed? = event as? ChannelEvent, !record.hasSeen(.ragged) { record.saw(.closeNotify) }
         }
 
         func errorCaught(context: ChannelHandlerContext, error: any Error) {
-            if case .uncleanShutdown? = error as? NIOSSLError { record.ragged() }
+            // NIOSSL also reports `uncleanShutdown` when the socket closes after deskhand's
+            // close_notify; only an end with no close_notify before it is ragged.
+            if case .uncleanShutdown? = error as? NIOSSLError, !record.hasSeen(.closeNotify) {
+                record.saw(.ragged)
+            }
         }
 
         func channelInactive(context: ChannelHandlerContext) {
@@ -256,29 +254,6 @@ struct HalfClosingClient {
     /// The listeners' own group, so the handler's blocking cancellation stalls no other suite. It
     /// lives as long as the test process.
     private static let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
-
-    /// Stops the listener afterwards even if `body` already did: `stop()` is idempotent.
-    private static func withListener(
-        _ handler: CancellationOrderHandler,
-        _ body: (DeskhandListener, SocketAddress, TestPKI) async throws -> Void
-    ) async throws {
-        let pki = try TestPKI.get()
-        let listener = DeskhandListener(
-            configuration: ListenerHarness.configuration(),
-            tls: try ListenerHarness.makeTLS(pki),
-            tokens: FixedTokenProvider(tokens: ListenerHarness.acceptedTokens),
-            handler: handler,
-            group: group
-        )
-        let address = try await listener.start()
-        do {
-            try await body(listener, address, pki)
-        } catch {
-            await listener.stop()
-            throw error
-        }
-        await listener.stop()
-    }
 
     private static func connect(
         _ handler: CancellationOrderHandler, address: SocketAddress, pki: TestPKI
@@ -297,20 +272,19 @@ struct HalfClosingClient {
     private static func expectCancelledThenClosed(
         _ client: HalfClosingClient, since halfClosed: ContinuousClock.Instant, response: Int = 0
     ) async {
-        #expect(await eventually { client.sightings.cancelledAtEndOfStream != nil })
+        #expect(await eventually { client.sightings.contains { $0.kind == .endOfStream } })
         #expect(ContinuousClock.now - halfClosed < .seconds(4))
-        let seen = client.sightings
-        #expect(seen.cancelledAtCloseNotify == true, "close_notify missing or sent before the call was cancelled")
-        #expect(seen.cancelledAtEndOfStream == true, "end of stream missing or sent before the call was cancelled")
-        #expect(seen.closeNotifyBeforeEndOfStream)
-        #expect(!seen.ragged)
-        #expect(seen.response.count == response)
+        #expect(
+            client.sightings == [
+                Sighting(kind: .closeNotify, cancelled: true), Sighting(kind: .endOfStream, cancelled: true),
+            ], "deskhand must send close_notify, then end the stream, both after the cancellation")
+        #expect(client.response.count == response)
     }
 
     @Test(arguments: CallerHalfClose.allCases)
     func theCallIsCancelledBeforeDeskhandCloses(_ halfClose: CallerHalfClose) async throws {
         let handler = CancellationOrderHandler()
-        try await Self.withListener(handler) { _, address, pki in
+        try await ListenerHarness.withListener(handler: handler, group: Self.group) { address, pki, _ in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await Self.startCall(handler, on: client)
             let halfClosed = ContinuousClock.now
@@ -324,13 +298,13 @@ struct HalfClosingClient {
     /// nothing from the running call: the signal is per call, not per connection.
     @Test func aKeptAliveConnectionSignalsForTheRunningCall() async throws {
         let handler = CancellationOrderHandler(answering: 1)
-        try await Self.withListener(handler) { _, address, pki in
+        try await ListenerHarness.withListener(handler: handler, group: Self.group) { address, pki, _ in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await client.send(TestRequest.valid().bytes)
-            try #require(await eventually { HTTPResponseBytes.isComplete(client.sightings.response) })
-            let firstResponse = client.sightings.response.count
+            try #require(await eventually { HTTPResponseBytes.isComplete(client.response) })
+            let firstResponse = client.response.count
             #expect(firstResponse > 0)
-            let head = String(decoding: client.sightings.response, as: UTF8.self).lowercased()
+            let head = String(decoding: client.response, as: UTF8.self).lowercased()
             #expect(head.contains("connection: keep-alive"), "the first response closed the connection")
             try await Self.startCall(handler, on: client)
             let halfClosed = ContinuousClock.now
@@ -346,15 +320,13 @@ struct HalfClosingClient {
     @Test(arguments: CallerHalfClose.allCases)
     func endingMidRequestGetsNoResponse(_ halfClose: CallerHalfClose) async throws {
         let handler = CancellationOrderHandler()
-        try await Self.withListener(handler) { _, address, pki in
+        try await ListenerHarness.withListener(handler: handler, group: Self.group) { address, pki, _ in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await client.send(Array(TestRequest.valid().bytes.dropLast(5)))
             try await client.halfClose(halfClose)
-            #expect(await eventually { client.sightings.cancelledAtEndOfStream != nil })
-            let seen = client.sightings
-            #expect(seen.cancelledAtCloseNotify != nil)
-            #expect(seen.closeNotifyBeforeEndOfStream)
-            #expect(seen.response.isEmpty, "deskhand answered a request the caller abandoned")
+            #expect(await eventually { client.sightings.contains { $0.kind == .endOfStream } })
+            #expect(client.sightings.map(\.kind) == [.closeNotify, .endOfStream])
+            #expect(client.response.isEmpty, "deskhand answered a request the caller abandoned")
             #expect(!handler.started)
             await client.release()
         }
@@ -362,15 +334,18 @@ struct HalfClosingClient {
 
     @Test func stoppingTheListenerCancelsTheCallBeforeCloseNotify() async throws {
         let handler = CancellationOrderHandler()
-        try await Self.withListener(handler) { listener, address, pki in
+        try await ListenerHarness.withRunningListener(handler: handler, group: Self.group) {
+            listener, address, pki, _ in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await Self.startCall(handler, on: client)
 
             // The listener's close waits for the client's close_notify, which this client never
             // sends, so the stop finishes once the client lets go of the socket.
             async let stopped: Void = listener.stop()
-            #expect(await eventually { client.sightings.cancelledAtCloseNotify != nil })
-            #expect(client.sightings.cancelledAtCloseNotify == true, "close_notify sent before the call was cancelled")
+            #expect(await eventually { client.sightings.contains { $0.kind == .closeNotify } })
+            #expect(
+                client.sightings.first == Sighting(kind: .closeNotify, cancelled: true),
+                "close_notify sent before the call was cancelled")
             await client.release()
             await stopped
         }
