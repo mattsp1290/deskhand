@@ -234,6 +234,8 @@ final class ConnectionHandler: ChannelDuplexHandler {
         cancelBodyTimer()
     }
 
+    /// Goes through this handler's own `close(context:mode:promise:)`, which cancels the call first.
+    /// `context.close` would skip the cancellation, and nothing would fail to compile.
     private func close(context: ChannelHandlerContext) {
         close(context: context, mode: .all, promise: nil)
     }

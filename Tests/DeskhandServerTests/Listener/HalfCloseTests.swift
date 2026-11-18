@@ -75,6 +75,8 @@ struct HalfClosingClient {
     /// Not the listener's group: the handler's cancellation blocks the listener's event loop, and
     /// the client must go on reading meanwhile. Like NIO's singleton it lives as long as the test
     /// process and is never shut down.
+    /// Nothing may block it: the ordering check relies on the client reading within the handler's
+    /// 150 ms record delay.
     private static let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
     let channel: any Channel
@@ -144,6 +146,8 @@ struct HalfClosingClient {
         try? await channel.closeFuture.get()
     }
 
+    /// Called only from the client channel's event loop, so each sighting reads `callCancelled` and
+    /// appends in arrival order; the lock is for the test reading it from another thread.
     private final class Recorder: Sendable {
         let state = Mutex((sightings: [Sighting](), response: [UInt8]()))
         let callCancelled: @Sendable () -> Bool
@@ -205,7 +209,8 @@ struct HalfClosingClient {
 
     /// Above TLS. NIOSSL reports deskhand's close_notify as `shutdownCompleted` when the client has
     /// already sent its own, and as `inputClosed` when it has not. An end of stream without
-    /// close_notify comes as `uncleanShutdown` first, then `inputClosed`.
+    /// close_notify comes as `uncleanShutdown` then `inputClosed` while the client's output is
+    /// open, and as `channelInactive` then `uncleanShutdown` once it is shut.
     private final class Watcher: ChannelInboundHandler {
         typealias InboundIn = ByteBuffer
 
@@ -323,8 +328,11 @@ struct HalfClosingClient {
         try await ListenerHarness.withListener(handler: handler, group: Self.group) { address, pki, _ in
             let client = try await Self.connect(handler, address: address, pki: pki)
             try await client.send(Array(TestRequest.valid().bytes.dropLast(5)))
+            let halfClosed = ContinuousClock.now
             try await client.halfClose(halfClose)
             #expect(await eventually { client.sightings.contains { $0.kind == .endOfStream } })
+            // As in expectCancelledThenClosed: well inside NIOSSL's default 5 s shutdown timeout.
+            #expect(ContinuousClock.now - halfClosed < .seconds(4))
             #expect(client.sightings.map(\.kind) == [.closeNotify, .endOfStream])
             #expect(client.response.isEmpty, "deskhand answered a request the caller abandoned")
             #expect(!handler.started)

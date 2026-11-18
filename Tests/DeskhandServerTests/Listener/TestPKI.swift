@@ -184,9 +184,9 @@ extension TestPKI {
         tls.minimumTLSVersion = tlsVersion
         tls.maximumTLSVersion = tlsVersion
         if let client {
-            let identity = identity(client)
-            tls.certificateChain = [.certificate(identity.certificate)]
-            tls.privateKey = .privateKey(identity.key)
+            let presented = identity(client)
+            tls.certificateChain = [.certificate(presented.certificate)]
+            tls.privateKey = .privateKey(presented.key)
         }
         return try NIOSSLContext(configuration: tls)
     }
