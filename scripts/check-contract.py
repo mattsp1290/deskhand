@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check docs/schemas and docs/contract.md against each other.
+"""Check docs/schemas, docs/contract.md and the Swift constants against each other.
 
 Schemas and examples are discovered by convention under docs/schemas/, so
 adding a schema or an example needs no edit here:
@@ -40,9 +40,9 @@ adding a schema or an example needs no edit here:
              9.2 tool_error tables match the schema's if/then rules; the
              constants of section 16 match every schema keyword, example
              `limits` and prose figure that carries them, wherever the figure
-             is repeated, and every Swift source in SWIFT_SITES; the HTTP status and JSON-RPC code pairs of 2.3 and
-             2.4 match 9.4; a status result's state heads its active_states for
-             every state; the header's versions match every contract_version
+             is repeated, and the Swift sources in SWIFT_SITES; the HTTP
+             status and JSON-RPC code pairs of 2.3 and 2.4 match 9.4; a status
+             result's state heads its active_states for every state; the header's versions match every contract_version
              and protocol version; every JSON block validates; every intra-doc
              #anchor resolves.
 
@@ -1136,6 +1136,8 @@ class Checker:
                     continue
                 if len(found) != 1:
                     self.fail(f"{rel}: /{pattern}/ matches {len(found)} times for {name} (update SWIFT_SITES)")
+                elif want(name, part) is None:
+                    self.fail(f"contract.md 16: {name} has no {part} to compare with {rel}")
                 elif number(found[0]) != want(name, part):
                     self.fail(f"{rel}: says {found[0]} where contract.md 16 gives {name} {part} {want(name, part)}")
 
@@ -1291,7 +1293,8 @@ class Checker:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--docs", type=Path, default=Path(__file__).resolve().parent.parent / "docs",
-                    help="docs directory holding contract.md and schemas/ (default: %(default)s)")
+                    help="docs directory holding contract.md and schemas/ (default: %(default)s); "
+                         "SWIFT_SITES are always read from this script's checkout")
     args = ap.parse_args()
     return Checker(args.docs).run()
 

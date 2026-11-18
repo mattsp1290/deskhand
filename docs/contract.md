@@ -1688,9 +1688,10 @@ other file is malformed, a shorter token included.
 
 A token file that is missing, unreadable or malformed at startup or after a
 change also sets the condition, but the old token is not kept. deskhand still
-starts. No token is valid until the file is fixed, and every request gets
-`401` ([section 2.4](#24-order-of-checks-and-http-status-codes)). The
-condition can then only be seen on the Mac.
+starts. No token is valid until the file is fixed, and every request that
+reaches the token check gets `401`
+([section 2.4](#24-order-of-checks-and-http-status-codes)). The condition can
+then only be seen on the Mac.
 
 What a caller sees across a rotation that succeeds:
 
