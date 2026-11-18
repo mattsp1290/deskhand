@@ -19,8 +19,16 @@ final class ConnectionSession {
 /// Every way the connection can end leads through `enterClosing()`, which cancels a running call:
 /// a clean close, a reset, a hang-up without TLS close_notify, a parse error and each timer. Once
 /// the connection is going away nobody can receive the response, so the call must not go on.
-final class ConnectionHandler: ChannelInboundHandler {
+///
+/// A caller that ends its side, with TLS close_notify or with end of stream, is seen as
+/// `inputClosed` while the connection is still open (the listener allows remote half-closure). The
+/// call is cancelled first, and only then does deskhand send its own close_notify and close, so a
+/// caller that reads deskhand's close_notify before any response knows the cancellation was
+/// signalled (contract 12.5). A close requested from outside, by the listener stopping, passes
+/// through here and cancels first too.
+final class ConnectionHandler: ChannelDuplexHandler {
     typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundIn = HTTPServerResponsePart
     typealias OutboundOut = HTTPServerResponsePart
 
     private enum State {
@@ -85,9 +93,13 @@ final class ConnectionHandler: ChannelInboundHandler {
         context.fireChannelInactive()
     }
 
+    /// The caller sent TLS close_notify (NIOSSL reports it as `inputClosed`) or ended the stream. The
+    /// caller is hanging up: the close cancels the call before it goes down to NIOSSL, which then
+    /// sends deskhand's close_notify. After a close_notify NIOSSL then closes the
+    /// connection; after an end of stream ``EndOfStreamCloser`` does. An end of stream without
+    /// close_notify arrives as `NIOSSLError.uncleanShutdown` first, and `errorCaught` already closes
+    /// the same way.
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        // Unreachable while remote half-closure is off: a caller's half-close arrives as
-        // `channelInactive`. Kept for deskhand-ab6z, which decides the half-close behaviour.
         if case .inputClosed? = event as? ChannelEvent {
             close(context: context)
             return
@@ -95,8 +107,22 @@ final class ConnectionHandler: ChannelInboundHandler {
         context.fireUserInboundEventTriggered(event)
     }
 
+    /// Every full close of the connection, the handler's own (`close(context:)`) and one from outside
+    /// (the listener stopping), cancels the call here before the close reaches NIOSSL. So every
+    /// close_notify on a running call's connection comes after the cancellation, which the signal of
+    /// contract 12.5 (a caller that has ended its side reads deskhand's close_notify before any
+    /// response) relies on. `channelInactive` alone would cancel only after NIOSSL had sent it.
+    func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
+        if mode != .input { enterClosing() }
+        context.close(mode: mode, promise: promise)
+    }
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         switch (error as? HTTPParserError, state) {
+        case (.invalidEOFState?, _):
+            // The caller ended its side partway through a request: a hang-up, not a bad request.
+            // Answering 400 would put a response before deskhand's close_notify.
+            close(context: context)
         case (.some(let parserError), .idle), (.some(let parserError), .receiving):
             let status: HTTPResponseStatus =
                 parserError == .headerOverflow ? .requestHeaderFieldsTooLarge : .badRequest
@@ -208,9 +234,10 @@ final class ConnectionHandler: ChannelInboundHandler {
         cancelBodyTimer()
     }
 
+    /// Goes through this handler's own `close(context:mode:promise:)`, which cancels the call first.
+    /// `context.close` would skip the cancellation, and nothing would fail to compile.
     private func close(context: ChannelHandlerContext) {
-        enterClosing()
-        context.close(promise: nil)
+        close(context: context, mode: .all, promise: nil)
     }
 
     /// Closing outright while request bytes are still arriving makes the kernel answer them with a

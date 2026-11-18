@@ -129,6 +129,11 @@ public final class DeskhandListener: Sendable {
             .serverChannelOption(.backlog, value: 64)
             .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
             .childChannelOption(.tcpOption(.tcp_nodelay), value: 1)
+            // A caller's close_notify or end of stream reaches the ConnectionHandler as `inputClosed`
+            // while the connection is still open, so the call is cancelled before deskhand answers
+            // with its own close_notify and closes. Without this, NIOSSL answers a close_notify and
+            // NIO closes on end of stream before the handler hears of either.
+            .childChannelOption(.allowRemoteHalfClosure, value: true)
             .childChannelOption(.socketOption(.so_keepalive), value: 1)
             .childChannelOption(.tcpOption(.keepAliveIdle), value: Self.seconds(configuration.keepAliveIdle))
             .childChannelOption(.tcpOption(.keepAliveInterval), value: Self.seconds(configuration.keepAliveInterval))
@@ -185,6 +190,7 @@ public final class DeskhandListener: Sendable {
             }
         }
         let pipeline = channel.pipeline.syncOperations
+        try pipeline.addHandler(EndOfStreamCloser())
         try pipeline.addHandler(tlsHandler)
         try BoundedHTTPCodec.install(on: channel, limit: configuration.maxRequestHeaderBytes)
         try pipeline.addHandler(
@@ -207,4 +213,22 @@ extension NIOBSDSocket.Option {
     #endif
     fileprivate static let keepAliveInterval = NIOBSDSocket.Option(rawValue: TCP_KEEPINTVL)
     fileprivate static let keepAliveCount = NIOBSDSocket.Option(rawValue: TCP_KEEPCNT)
+}
+
+/// Sits at the socket end of a connection's pipeline, below TLS. When the caller ends the stream,
+/// the handlers above react first: the ``ConnectionHandler`` cancels the call and NIOSSL sends
+/// close_notify. Then this closes the socket. Without it a close that NIOSSL had already begun would
+/// wait out its shutdown timeout for a close_notify the caller can no longer send.
+///
+/// A close_notify that the socket could not yet take is dropped by the close; the caller then sees
+/// an end of stream without one, which the contract treats as no signal, so this fails safe.
+/// NIOSSL's shutdown timer stays scheduled after the close and fires harmlessly within 5 s; the
+/// socket itself is released at once.
+final class EndOfStreamCloser: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        context.fireUserInboundEventTriggered(event)
+        if case .inputClosed? = event as? ChannelEvent { context.close(promise: nil) }
+    }
 }

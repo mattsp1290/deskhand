@@ -231,13 +231,7 @@ final class ManualClock<Value: Sendable>: Sendable {
 
 enum PresentedCertificate {
     static func serialNumber(at address: SocketAddress, pki: TestPKI) async throws -> [UInt8] {
-        let identity = pki.identity(.valid)
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.trustRoots = .certificates([pki.caCertificate])
-        tls.minimumTLSVersion = .tlsv13
-        tls.certificateChain = [.certificate(identity.certificate)]
-        tls.privateKey = .privateKey(identity.key)
-        let context = try NIOSSLContext(configuration: tls)
+        let context = try pki.clientContext()
         let presented = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: [UInt8].self)
         let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .channelInitializer { channel in
