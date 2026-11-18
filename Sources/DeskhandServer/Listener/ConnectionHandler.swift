@@ -109,8 +109,9 @@ final class ConnectionHandler: ChannelDuplexHandler {
     /// A close from outside the handler, which is the listener stopping. Cancelling here, before the
     /// close reaches NIOSSL, keeps deskhand's close_notify after the cancellation on this path too.
     /// `channelInactive` would cancel only after NIOSSL had sent close_notify, so this is not
-    /// redundant: contract 12.5 lets a caller read any close_notify before its response as proof of
-    /// the cancellation.
+    /// redundant: it keeps every close_notify on a running call's connection after the cancellation,
+    /// which the signal of contract 12.5 (a caller that has ended its side reads deskhand's
+    /// close_notify before any response) relies on.
     func close(context: ChannelHandlerContext, mode: CloseMode, promise: EventLoopPromise<Void>?) {
         enterClosing()
         context.close(mode: mode, promise: promise)

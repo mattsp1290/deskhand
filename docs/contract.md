@@ -2074,7 +2074,7 @@ with an end of stream without one, and then reading until deskhand closes.
 Once the caller has ended its side, deskhand observes the close before it
 sends its own `close_notify` and before it ends the stream. So deskhand's
 `close_notify`, read before any response to that call, shows that deskhand
-has observed the close. A response read first means the call completed. On
+has observed the close. A response read first means the request completed. On
 deskhand's side, a reset, a timeout or an end of stream with no
 `close_notify` before it proves nothing. A caller without that signal,
 because it closed the connection outright or the connection broke, cannot

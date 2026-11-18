@@ -257,6 +257,7 @@ struct HalfClosingClient {
     /// lives as long as the test process.
     private static let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
 
+    /// Stops the listener afterwards even if `body` already did: `stop()` is idempotent.
     private static func withListener(
         _ handler: CancellationOrderHandler,
         _ body: (DeskhandListener, SocketAddress, TestPKI) async throws -> Void
@@ -329,6 +330,8 @@ struct HalfClosingClient {
             #expect(await eventually { HTTPResponseBytes.isComplete(client.sightings.response) })
             let firstResponse = client.sightings.response.count
             #expect(firstResponse > 0)
+            let head = String(decoding: client.sightings.response, as: UTF8.self).lowercased()
+            #expect(head.contains("connection: keep-alive"), "the first response closed the connection")
             try await Self.startCall(handler, on: client)
             let halfClosed = ContinuousClock.now
             try await client.halfClose(.closeNotify)
@@ -338,7 +341,8 @@ struct HalfClosingClient {
     }
 
     /// A caller that ends its side partway through a request has hung up: deskhand answers nothing
-    /// before its close_notify.
+    /// before its close_notify. The close_notify variants reach the decoder's end-of-input error
+    /// (`invalidEOFState`); a plain end of stream closes through NIOSSL's `uncleanShutdown` first.
     @Test(arguments: CallerHalfClose.allCases)
     func endingMidRequestGetsNoResponse(_ halfClose: CallerHalfClose) async throws {
         let handler = CancellationOrderHandler()
@@ -374,7 +378,8 @@ struct HalfClosingClient {
 }
 
 /// Just enough HTTP/1.1 response framing to tell when one response with a `Content-Length` body has
-/// fully arrived.
+/// fully arrived. It handles only `Content-Length` framing, which is all deskhand sends, and
+/// searches naively: test responses are a few hundred bytes.
 enum HTTPResponseBytes {
     static func isComplete(_ bytes: [UInt8]) -> Bool {
         let separator: [UInt8] = Array("\r\n\r\n".utf8)
