@@ -56,8 +56,15 @@ public protocol WatchdogStateOwner: StateSource {
     /// ``LeaseManager/expire(now:)``; and, when `allowanceChanged`, first drops the copy of the
     /// allowance with ``AllowanceCache/invalidate()`` so the file is read again. The new snapshot is
     /// in place when it returns. The watchdog calls it when the allowance file may have changed,
-    /// when a deadline has passed, and with `allowanceChanged` at least every
-    /// ``Watchdog/Configuration/allowanceReadInterval``.
+    /// when a deadline has passed, when a snapshot shows ``DeskSnapshot/hasUnreducedEffects``, and
+    /// with `allowanceChanged` at least every ``Watchdog/Configuration/allowanceReadInterval``.
+    ///
+    /// An owner whose ``StateSource/snapshot()`` commits the clock's transitions MUST set
+    /// ``DeskSnapshot/hasUnreducedEffects`` while their effects wait for a reduction: the committed
+    /// transition is no longer a passed deadline, so without it the watchdog reduces only at the
+    /// next periodic read. This call MUST carry those effects out with its own and clear the flag,
+    /// so a later snapshot sets it again only when a newer read committed another transition; while
+    /// it stays set the watchdog reduces again every ``Watchdog/Configuration/deadlineRetryInterval``.
     ///
     /// It passes what the reduction stops (a ``TransitionEffect/cancelInFlight(_:)``, a lease it
     /// ended) to ``InputExecutor/interrupt(_:)`` as soon as it has reduced, since a state that ends

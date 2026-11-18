@@ -37,10 +37,29 @@ private struct NobodyAtTheMac: UserActivitySource {
     func idleMilliseconds() -> Int? { 3_600_000 }
 }
 
+/// ``FakeClockScheduler``, recording the deadline of every sleep still in progress, so a test moves
+/// the clock only once both loops have gone to sleep.
+private final class SleepRecordingScheduler: WatchdogScheduler {
+    private let base: FakeClockScheduler
+    private let sleeping = Mutex<[ContinuousClock.Instant]>([])
+
+    init(clock: ToolClock) { base = FakeClockScheduler(clock: clock) }
+
+    var now: ContinuousClock.Instant { base.now }
+
+    var deadlines: [ContinuousClock.Instant] { sleeping.withLock { $0 } }
+
+    func sleep(until deadline: ContinuousClock.Instant) async {
+        sleeping.withLock { $0.append(deadline) }
+        await base.sleep(until: deadline)
+        sleeping.withLock { $0.remove(at: $0.firstIndex(of: deadline)!) }
+    }
+}
+
 @Suite(.timeLimit(.minutes(1))) struct DeskOwnerWatchdogTests {
-    /// The owner's loop wakes at the allowance's end, and its own snapshot commits the lapse, so
-    /// no deadline shows as passed. It reduces at that wake all the same, not at the next periodic
-    /// read of the allowance file, which the clock never reaches here.
+    /// Both loops wake at the allowance's end, and whichever snapshot comes first commits the
+    /// lapse, so the owner's loop finds no passed deadline. It reduces at that wake all the same,
+    /// not at the next periodic read of the allowance file, which the clock never reaches here.
     @Test func aLapseASnapshotCommitsIsReducedAtTheWakeThatFoundIt() async throws {
         let clock = ToolClock()
         let owner = DeskOwner(policy: ToolFixture.policy, displays: FakeDisplays(), clock: { clock.reading })
@@ -52,12 +71,14 @@ private struct NobodyAtTheMac: UserActivitySource {
             principal: ToolFixture.principal)
 
         let desk = LapseOwner(owner: owner, signals: signals)
+        let scheduler = SleepRecordingScheduler(clock: clock)
         let watchdog = Watchdog(
             owner: desk, executor: IdleExecutor(), activity: NobodyAtTheMac(),
-            scheduler: FakeClockScheduler(clock: clock),
-            configuration: Watchdog.Configuration(allowanceReadInterval: .milliseconds(500)))
+            scheduler: scheduler, configuration: Watchdog.Configuration(allowanceReadInterval: .milliseconds(500)))
         let run = Task { await watchdog.run() }
-        #expect(await eventually(timeout: .seconds(5)) { desk.reductions.count == 1 })
+        let lapseAt = ToolFixture.t0.monotonic.advanced(by: .milliseconds(200))
+        #expect(await eventually(timeout: .seconds(5)) { scheduler.deadlines == [lapseAt, lapseAt] })
+        #expect(desk.reductions.count == 1)
         clock.advance(byMilliseconds: 250)
         #expect(await eventually(timeout: .seconds(5)) { desk.reductions.count >= 2 })
         run.cancel()
@@ -66,7 +87,7 @@ private struct NobodyAtTheMac: UserActivitySource {
         let reductions = desk.reductions
         try #require(reductions.count == 2)
         let lapse = reductions[1]
-        #expect(lapse.reading == clock.reading)
+        #expect(lapse.reading.monotonic < ToolFixture.t0.monotonic.advanced(by: .milliseconds(500)))
         #expect(lapse.effects.contains(.cancelInFlight(.gated)))
         #expect(lapse.leaseEnds.map(\.cause) == [.dropped(.gated)])
         #expect(owner.snapshot().hasUnreducedEffects == false)

@@ -25,7 +25,9 @@
 /// returns, and the executor stops before its next event or within one 100 ms activity poll. That
 /// leaves about 390 ms of `DEADLINE_BOUND_MS` for the owner to reach its reduction and for the
 /// releases (contract 13.1, 14.4). A platform watch or a ``PollingFileChangeSource`` only makes it
-/// sooner.
+/// sooner. A lapse the clock alone makes is reduced at the owner's wake at its deadline, plus the
+/// timer's tolerance, or ``Configuration/deadlineRetryInterval`` later when a read commits it after
+/// the owner's reduction: well inside `DEADLINE_BOUND_MS` either way.
 ///
 /// One instance per Mac. The app calls ``run()`` once, on a task it cancels at stop.
 public actor Watchdog {
@@ -42,8 +44,8 @@ public actor Watchdog {
         /// than ``maxAllowanceReadInterval`` is shortened to it.
         public var allowanceReadInterval: Duration
         /// How soon a deadline that has passed is acted on again, when the owner's reduction did
-        /// not settle it or a read committed another lapse after it, and how soon the owner's loop looks again while a reduction that another
-        /// task started is still running. A refresh that leaves a passed deadline while the owner's
+        /// not settle it or a read committed another lapse after it, and how soon the owner's loop
+        /// looks again while a reduction that another task started is still running. A refresh that leaves a passed deadline while the owner's
         /// loop is reducing is therefore acted on by the owner up to this much later; the executor's
         /// loop is woken at once either way.
         public var deadlineRetryInterval: Duration
@@ -180,9 +182,9 @@ public actor Watchdog {
 
     /// One evaluation at the owner's clock reading: the owner's side, then the executor's. Has the
     /// owner read the allowance file when the periodic read is due and reduce when a deadline has
-    /// passed or the snapshot shows unreduced effects, passes every cause it finds to the executor, polls the person while an operation
-    /// executes, retries cleanup, and returns when it next needs to run: `nil` when nothing is due
-    /// until something changes.
+    /// passed or the snapshot shows unreduced effects, passes every cause it finds to the executor,
+    /// polls the person while an operation executes, retries cleanup, and returns when it next
+    /// needs to run: `nil` when nothing is due until something changes.
     public func evaluate() async -> ContinuousClock.Instant? {
         let ownerWakeup = await readIfDue()
         let executorWakeup = await act(on: owner.snapshot())

@@ -113,9 +113,10 @@ public final class DeskOwner: StateSource, FrameSource {
     }
 
     /// Checks the frame at `now`, the wall reading of the snapshot admission took just before. It
-    /// does not judge the state or the lease: admission judged them on that snapshot, which
-    /// committed every transition up to its reading. This call commits again at its own reading,
-    /// so a transition since then has invalidated the frames before they are checked.
+    /// judges neither the state nor the lease: admission judged the state on an earlier snapshot
+    /// and the lease on that one, which committed every transition up to its reading, so a lapse
+    /// by then had already dropped the lease it checked. This call commits again at its own
+    /// reading, so a transition since then has invalidated the frames before they are checked.
     public func check(_ id: FrameID, in scope: FrameScope, for use: FrameUse, now: Timestamp) async -> FrameCheck {
         let generation = displays.generation
         return withSettledWorld { world, _ in

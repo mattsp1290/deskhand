@@ -1,5 +1,6 @@
-/// What the executor reads about the Mac before admission and before every event: the state, the
-/// lease, the app policy in force, and the clock reading all three are judged at.
+/// What the executor reads about the Mac before admission and before every event, and the watchdog
+/// on every wake: the state, the lease, the app policy in force, and the clock reading all three are
+/// judged at.
 public struct DeskSnapshot: Sendable {
     public var reading: ClockReading
     public var report: StateReport
@@ -8,6 +9,7 @@ public struct DeskSnapshot: Sendable {
     /// Whether the owner committed a transition the clock made (an allowance or arming period that
     /// a read found ended) whose effects no reduction has returned yet. ``report`` already shows
     /// the transition, so it is no longer a passed deadline: the watchdog reduces on this instead.
+    /// Always `false` for an owner that commits transitions only when it reduces.
     public var hasUnreducedEffects: Bool
 
     public init(
