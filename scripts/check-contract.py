@@ -40,7 +40,7 @@ adding a schema or an example needs no edit here:
              9.2 tool_error tables match the schema's if/then rules; the
              constants of section 16 match every schema keyword, example
              `limits` and prose figure that carries them, wherever the figure
-             is repeated; the HTTP status and JSON-RPC code pairs of 2.3 and
+             is repeated, and every Swift source in SWIFT_SITES; the HTTP status and JSON-RPC code pairs of 2.3 and
              2.4 match 9.4; a status result's state heads its active_states for
              every state; the header's versions match every contract_version
              and protocol version; every JSON block validates; every intra-doc
@@ -65,6 +65,7 @@ from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
 
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
+REPO = Path(__file__).resolve().parent.parent
 DEFS = "defs.json"
 TOOLS_DIR = "tools"
 WIRE_DIR = "wire"
@@ -197,6 +198,15 @@ UNSCHEMATIZED_CONSTANTS = {
     "DEADLINE_BOUND_MS", "ALLOWANCE_CACHE_MAX_MS", "ALLOWANCE_SKEW_TOLERANCE_MS", "ACTIONS_PER_MINUTE",
     "GATED_ENDS_ARMING", "BIND_RETRY_MS", "OPERATION_RETENTION_MS", "OPERATION_MAX_RECORDS",
     "MAX_REQUEST_BODY_BYTES", "MAX_REQUEST_HEADER_BYTES", "MAX_RESPONSE_BODY_BYTES", "CONNECTION_MAX_AGE",
+    "TOKEN_MIN_LENGTH",
+}
+# Section 16 constants that a Swift source states: (file under the repository,
+# regex with one group, part). The regex must match exactly once, so moving or
+# renaming the Swift constant means updating this list.
+SWIFT_SITES = {
+    "TOKEN_MIN_LENGTH": [
+        ("Sources/DeskhandServer/Credentials/TokenRotation.swift", r"static let minimumLength = (\d+)\b", "value"),
+    ],
 }
 # status.limits members whose name is not the constant's name in lower case.
 LIMIT_PARTS = {"lease_ttl_min_ms": ("LEASE_TTL_MS", "min"), "lease_ttl_max_ms": ("LEASE_TTL_MS", "max")}
@@ -238,6 +248,9 @@ PROSE_SITES = [
      [("MAX_LONG_EDGE", "value"), ("MAX_PIXELS", "value")]),
     ("17.1 ", rf"down to ({NUM}) px", [("MIN_LONG_EDGE", "value")]),
     ("19. ", rf"an image has at most ({NUM}) pixels", [("MAX_PIXELS", "value")]),
+    ("2.2 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) visible ASCII characters", [("TOKEN_MIN_LENGTH", "value")]),
+    ("11.1 ", rf"`TOKEN_MIN_LENGTH` = ({NUM}) bytes or more", [("TOKEN_MIN_LENGTH", "value")]),
+    ("Appendix A", rf"shorter than `TOKEN_MIN_LENGTH` = ({NUM}) visible", [("TOKEN_MIN_LENGTH", "value")]),
     ("6.3 ", rf"\| `max_long_edge` \| no \| ({NUM}) \| Integer, ({NUM}) to ({NUM})\.",
      [("MAX_LONG_EDGE", "value"), ("MIN_LONG_EDGE", "value"), ("MAX_LONG_EDGE", "value")]),
 ]
@@ -1110,6 +1123,21 @@ class Checker:
                     continue
                 if got != expected:
                     self.fail(f"{rel}#{ptr}/{kw} is {got}, contract.md 16 says {name} {part} is {expected}")
+
+        for name, sites in SWIFT_SITES.items():
+            if name not in consts:
+                self.fail(f"scripts/check-contract.py SWIFT_SITES names {name}, which contract.md 16 does not list")
+                continue
+            for rel, pattern, part in sites:
+                try:
+                    found = re.findall(pattern, (REPO / rel).read_text(encoding="utf-8"))
+                except OSError as e:
+                    self.fail(f"{rel}: cannot read for {name}: {e}")
+                    continue
+                if len(found) != 1:
+                    self.fail(f"{rel}: /{pattern}/ matches {len(found)} times for {name} (update SWIFT_SITES)")
+                elif number(found[0]) != want(name, part):
+                    self.fail(f"{rel}: says {found[0]} where contract.md 16 gives {name} {part} {want(name, part)}")
 
         for prefix, pattern, parts in PROSE_SITES:
             text = unwrap(self.section(prefix))

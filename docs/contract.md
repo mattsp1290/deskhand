@@ -121,7 +121,9 @@ Both factors are required on every request.
    certificate, which is why chaining to the CA is not enough: a server
    certificate, or any other certificate from that CA, is refused.
 2. **Bearer token.** `Authorization: Bearer <token>`, where the token is the
-   per-Mac token. It is compared in constant time.
+   per-Mac token. It is compared in constant time. The token is at least
+   `TOKEN_MIN_LENGTH` = 32 visible ASCII characters
+   ([section 11.1](#111-credentials_warning)).
 
 The caller MUST verify the server certificate against the same private CA and
 MUST check that the name it connected to is one of the certificate's subject
@@ -1679,11 +1681,16 @@ reload that succeeds.
 **Effect on calls:** none. It tells an operator that a rotation did not take
 effect: the certificate in use is the old one, and it will run out.
 
-A token file that is missing, unreadable or malformed after a change also
-sets the condition, but the old token is not kept. No token is valid until
-the file is fixed, and every request gets `401`
-([section 2.4](#24-order-of-checks-and-http-status-codes)). The condition can
-then only be seen on the Mac.
+The token file holds the token and nothing else: `TOKEN_MIN_LENGTH` = 32
+bytes or more, each a visible ASCII character (`0x21` to `0x7E`, so no space,
+tab or non-ASCII byte). One final LF, CR or CRLF is not part of the token. Any
+other file is malformed, a shorter token included.
+
+A token file that is missing, unreadable or malformed at startup or after a
+change also sets the condition, but the old token is not kept. deskhand still
+starts. No token is valid until the file is fixed, and every request gets
+`401` ([section 2.4](#24-order-of-checks-and-http-status-codes)). The
+condition can then only be seen on the Mac.
 
 What a caller sees across a rotation that succeeds:
 
@@ -2557,6 +2564,7 @@ Mac and, unless the table says otherwise, reported by `status.limits`.
 | `MAX_REQUEST_HEADER_BYTES` | 16,384 | contract |
 | `MAX_RESPONSE_BODY_BYTES` | 5,400,000 | contract |
 | `CONNECTION_MAX_AGE` | 5 min | contract |
+| `TOKEN_MIN_LENGTH` | 32 bytes, each a visible ASCII character | contract |
 
 - **`USER_ACTIVITY_LOOKBACK_MS`.** An effect call is refused with `user_active`
   when the person at the Mac produced keyboard or pointer input less than
@@ -2919,6 +2927,8 @@ items 37, 46, 50 and 53 by the re-review.
     platform signals disagree.
 31. A rejected token file is not treated like a rejected certificate: the old
     token is not kept, and every request gets `401` until the file is fixed.
+    A token shorter than `TOKEN_MIN_LENGTH` = 32 visible ASCII characters is
+    rejected in the same way, at startup too.
 32. The `log_unavailable` condition refuses nothing by itself. A call is
     refused only when its own intent entry fails. A failed outcome entry does
     not change the result of the call.
