@@ -5,11 +5,10 @@
 /// It runs two loops, so a busy executor never holds up a read of the allowance file:
 ///
 /// - The owner's loop has the owner read the allowance file again, bypassing its copy, every
-///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed or the
-///   snapshot shows effects no reduction has returned (``DeskSnapshot/hasUnreducedEffects``). An
-///   owner that commits a lapse when any read finds it, its own loop's snapshot among them, leaves no
-///   passed deadline, only those effects; the loop wakes at the deadline either way and reduces
-///   then, not at the next periodic read. A wall clock stepped forward across `expires_at` can
+///   ``Configuration/allowanceReadInterval``, and reduce whenever a deadline has passed. An owner
+///   that commits a lapse when any read finds it, its own loop's snapshot among them, keeps the
+///   deadline passed through ``DeskSnapshot/hasUnreducedEffects`` (``deadline(of:)``), so the loop
+///   reduces at its wake at the deadline, not at the next periodic read. A wall clock stepped forward across `expires_at` can
 ///   bring the lapse before that wake; the periodic read then reduces it. A change of the file
 ///   reported by a ``FileChangeSource`` reduces at once. None of these waits for the executor: the
 ///   executor reads the owner's new snapshot itself before its next event.
@@ -109,10 +108,12 @@ public actor Watchdog {
     /// `expires_at`, the held lease's expiry and the end of arming, read afresh so a renewal moves
     /// it. Already past when a lease is held while the allowance or arming has ended. With no lease
     /// held it is when the clock alone next changes the state (``StateReport/validUntil(at:)``);
-    /// `nil` when nothing can end. An owner that commits the clock's transitions when anything reads
-    /// it reports the next deadline instead, once one has passed, and
-    /// ``DeskSnapshot/hasUnreducedEffects`` until it reduces.
+    /// `nil` when nothing can end. The snapshot's reading while it shows
+    /// ``DeskSnapshot/hasUnreducedEffects``: an owner that commits the clock's transitions when
+    /// anything reads it has already moved its report past the deadline that queued them, which
+    /// has passed all the same until a reduction returns them.
     public static func deadline(of snapshot: DeskSnapshot) -> ContinuousClock.Instant? {
+        if snapshot.hasUnreducedEffects { return snapshot.reading.monotonic }
         if case .held(let lease) = snapshot.lease.lease {
             return snapshot.report.effectDeadline(of: lease, leases: snapshot.lease, at: snapshot.reading)
         }
@@ -184,9 +185,9 @@ public actor Watchdog {
 
     /// One evaluation at the owner's clock reading: the owner's side, then the executor's. Has the
     /// owner read the allowance file when the periodic read is due and reduce when a deadline has
-    /// passed or the snapshot shows unreduced effects, passes every cause it finds to the executor,
-    /// polls the person while an operation executes, retries cleanup, and returns when it next
-    /// needs to run: `nil` when nothing is due until something changes.
+    /// passed, passes every cause it finds to the executor, polls the person while an operation
+    /// executes, retries cleanup, and returns when it next needs to run: `nil` when nothing is due
+    /// until something changes.
     public func evaluate() async -> ContinuousClock.Instant? {
         let ownerWakeup = await readIfDue()
         let executorWakeup = await act(on: owner.snapshot())
@@ -213,25 +214,18 @@ public actor Watchdog {
         }
     }
 
-    /// Reduces when the periodic read is due, a deadline has passed, or the snapshot shows effects
-    /// no reduction has returned: an owner that commits a lapse on read, as this snapshot may, shows
-    /// that instead of a passed deadline. Such effects that `after` shows, committed by a read since
-    /// the reduction, are acted on after ``Configuration/deadlineRetryInterval``, as a passed
-    /// deadline the reduction did not settle is.
     private func readIfDue() async -> ContinuousClock.Instant? {
         let snapshot = owner.snapshot()
         let now = snapshot.reading.monotonic
         let readDue = nextAllowanceRead.map { $0 <= now } ?? true
         let deadlinePassed = Self.deadline(of: snapshot).map { $0 <= now } ?? false
-        if readDue || deadlinePassed || snapshot.hasUnreducedEffects {
+        if readDue || deadlinePassed {
             await reduce(allowanceChanged: readDue)
             ring(.executor)
         }
         let after = owner.snapshot()
-        let retry = after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval)
-        if reducing { return retry }
-        let unreduced = after.hasUnreducedEffects ? retry : nil
-        return [nextAllowanceRead, deadlineWakeup(of: after), unreduced].compactMap { $0 }.min()
+        if reducing { return after.reading.monotonic.advanced(by: configuration.deadlineRetryInterval) }
+        return [nextAllowanceRead, deadlineWakeup(of: after)].compactMap { $0 }.min()
     }
 
     private func act(on snapshot: DeskSnapshot) async -> ContinuousClock.Instant? {
